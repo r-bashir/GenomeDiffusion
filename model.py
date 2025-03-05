@@ -6,6 +6,7 @@ import math
 import time
 import numpy as np
 import pandas as pd
+from functools import partial
 
 import dataclasses
 from typing import Sequence
@@ -35,46 +36,6 @@ def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
         return x.view(x.shape + (1,) * difference)
     else:
         return x
-
-
-# Positional Embedding
-
-# - Takes in a batch of scalar time steps and ensures they are 1D.
-# - Computes frequency scales using an exponential decay function.
-# - Generates sinusoidal embeddings by applying sin and cos transformations.
-# - Ensures correct feature dimension by adding padding if necessary.
-# - Returns structured time embeddings that can be used in U-Net-based diffusion models.
-
-class SinusoidalPositionalEmbeddings(nn.Module):
-    """Sinusoidal positional embedding (used for time steps in diffusion models)."""
-    
-    def __init__(self, dim: int):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, time: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            time: Tensor of shape [batch_size] containing scalar time steps.
-
-        Returns:
-            Tensor of shape [batch_size, dim], sinusoidal embeddings.
-        """
-        if time.dim() == 2 and time.shape[1] == 1:
-            time = time.view(-1)  # Flatten if shape is [batch_size, 1]
-        
-        device = time.device
-        half_dim = self.dim // 2
-        e = math.log(10000.0) / (half_dim - 1)
-        inv_freq = torch.exp(-e * torch.arange(half_dim, device=device).float())
-
-        embeddings = time[:, None] * inv_freq[None, :]
-        embeddings = torch.cat([torch.cos(embeddings), torch.sin(embeddings)], dim=-1)
-
-        if self.dim % 2 == 1:
-            embeddings = nn.functional.pad(embeddings, (0, 1))  # Pad last dimension if odd
-
-        return embeddings
 
 
 # Time Sampling
@@ -180,6 +141,45 @@ class DDPMProcess:
         return alpha_t * x0 + sigma_t * eps
 
 # --------------------------------------- Denoising Process
+# Positional Embedding
+
+# - Takes in a batch of scalar time steps and ensures they are 1D.
+# - Computes frequency scales using an exponential decay function.
+# - Generates sinusoidal embeddings by applying sin and cos transformations.
+# - Ensures correct feature dimension by adding padding if necessary.
+# - Returns structured time embeddings that can be used in U-Net-based diffusion models.
+
+class SinusoidalPositionalEmbeddings(nn.Module):
+    """Sinusoidal positional embedding (used for time steps in diffusion models)."""
+    
+    def __init__(self, dim: int):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, time: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            time: Tensor of shape [batch_size] containing scalar time steps.
+
+        Returns:
+            Tensor of shape [batch_size, dim], sinusoidal embeddings.
+        """
+        if time.dim() == 2 and time.shape[1] == 1:
+            time = time.view(-1)  # Flatten if shape is [batch_size, 1]
+        
+        device = time.device
+        half_dim = self.dim // 2
+        e = math.log(10000.0) / (half_dim - 1)
+        inv_freq = torch.exp(-e * torch.arange(half_dim, device=device).float())
+
+        embeddings = time[:, None] * inv_freq[None, :]
+        embeddings = torch.cat([torch.cos(embeddings), torch.sin(embeddings)], dim=-1)
+
+        if self.dim % 2 == 1:
+            embeddings = nn.functional.pad(embeddings, (0, 1))  # Pad last dimension if odd
+
+        return embeddings
+
 # Residual Join
 class Residual(nn.Module):
     def __init__(self, fn):
@@ -214,8 +214,10 @@ class UpsampleConv(nn.Module):
             out_channels=dim, 
             kernel_size=3, 
             stride=2, 
-            padding=1
+            padding=1, 
+            output_padding=1
         )
+
         
     def forward(self, x):
         return self.conv(x)
@@ -276,7 +278,8 @@ class ResnetBlock(nn.Module):
 
         # Add time embedding if available
         if self.mlp is not None and time_emb is not None:
-            time_emb = self.mlp(time_emb)[:, :, None]  # Reshape for 1D addition
+            time_emb = self.mlp(time_emb)
+            time_emb = time_emb.view(time_emb.shape[0], time_emb.shape[1], 1)  # Ensure correct shape
             h = h + time_emb
 
         # Second convolution
@@ -286,34 +289,38 @@ class ResnetBlock(nn.Module):
         return h + self.res_conv(x)
 
 # Denoising Process: UNet
-class Unet1D(nn.Module):
+class UNet1D(nn.Module):
     def __init__(
         self,
-        dim,
-        init_dim=None,
-        out_dim=None,
-        dim_mults=(1, 2, 4, 8),
-        channels=1,  # 1D SNP data assumed to have a single channel
-        with_time_emb=True,
-        resnet_block_groups=8,
+        embedding_dim=64,          # Embedding dimension for time embeddings
+        dim_mults=(1, 2, 4, 8),    # Multipliers for feature dimensions at each UNet level
+        channels=1,                # Input channels (SNP data has a single channel)
+        with_time_emb=True,        # Whether to include time embeddings
+        resnet_block_groups=8,     # Number of groups in ResNet blocks for GroupNorm
     ):
         super().__init__()
 
         self.channels = channels
-        init_dim = init_dim or dim // 3 * 2
-        self.init_conv = ConvBlock(channels, init_dim, kernel_size=7, padding=3)
+        init_dim = (2 * embedding_dim) // 3  # Ensure integer division
+        init_dim = init_dim - (init_dim % resnet_block_groups)  # Ensure divisibility        
+        out_dim = channels  # Default output channels to match input
+        
+        # Initial convolutional layer (expands input channels to init_dim)
+        self.init_conv = nn.Conv1d(channels, init_dim, kernel_size=7, padding=3)
 
-        dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
+	
+    	# Compute feature dimensions for each UNet level
+        dims = [init_dim, *map(lambda m: embedding_dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
         resnet_block = partial(ResnetBlock, groups=resnet_block_groups)
 
         # Time embeddings
         if with_time_emb:
-            time_dim = dim
+            time_dim = embedding_dim
             self.time_mlp = nn.Sequential(
-                SinusoidalPositionEmbeddings(dim),
-                nn.Linear(dim, time_dim),
+                SinusoidalPositionalEmbeddings(embedding_dim),
+                nn.Linear(embedding_dim, time_dim),
                 nn.GELU(),
                 nn.Linear(time_dim, time_dim)
             )
@@ -321,18 +328,19 @@ class Unet1D(nn.Module):
             time_dim = None
             self.time_mlp = None
 
-        self.downs = nn.ModuleList([])
-        self.ups = nn.ModuleList([])
+        
+        # number of block iterators
         num_resolutions = len(in_out)
 
         # Downsampling
+        self.downs = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
             self.downs.append(
                 nn.ModuleList([
                     resnet_block(dim_in, dim_out, time_emb_dim=time_dim),
                     resnet_block(dim_out, dim_out, time_emb_dim=time_dim),
-                    nn.Identity(),  # Removed Attention layer
+                    nn.Identity(),  # No Attention
                     DownsampleConv(dim_out) if not is_last else nn.Identity(),
                 ])
             )
@@ -343,24 +351,46 @@ class Unet1D(nn.Module):
         self.mid_block2 = resnet_block(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         # Upsampling
+        self.ups = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (num_resolutions - 1)
             self.ups.append(
                 nn.ModuleList([
                     resnet_block(dim_out * 2, dim_in, time_emb_dim=time_dim),
                     resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
-                    nn.Identity(),  # Removed Attention layer
+                    nn.Identity(),  # No Attention
                     UpsampleConv(dim_in) if not is_last else nn.Identity(),
                 ])
             )
-        
-        out_dim = out_dim or channels
+
+        # Final Convolution
+        # self.final_conv = nn.Sequential(
+        #    resnet_block(embedding_dim, embedding_dim),
+        #    nn.Conv1d(embedding_dim, out_dim, 1)
+        #)
+
+        # New: final convolution should match the last upsampled feature dimension instead of blindly assuming embedding_dim
         self.final_conv = nn.Sequential(
-            resnet_block(dim, dim),
-            nn.Conv1d(dim, out_dim, 1)
+            resnet_block(dims[0], dims[0]),  # dims[0] is the first level of feature map size
+            nn.Conv1d(dims[0], out_dim, 1)   # dims[0] should match the final upsampled layer output
         )
 
     def forward(self, x, time):
+        """
+        Forward pass for UNet1D.
+
+        Args:
+            x (torch.Tensor): Input SNP data of shape [batch, 1, seq_len].
+            time (torch.Tensor): Diffusion timesteps of shape [batch].
+        
+        Returns:
+            torch.Tensor: Denoised output.
+        """
+        # Ensure input has shape [batch, 1, seq_len]
+        if x.dim() == 2:  
+            x = x.unsqueeze(1)  # Convert [batch, seq_len] → [batch, 1, seq_len]
+
+        # Rest of Forward pass
         x = self.init_conv(x)
         t = self.time_mlp(time) if self.time_mlp else None
         h = []
@@ -384,7 +414,6 @@ class Unet1D(nn.Module):
             x = upsample(x)
 
         return self.final_conv(x)
-        
         
 # Final Diffusion Model
 class DiffusionModel(nn.Module):
