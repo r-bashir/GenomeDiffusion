@@ -15,20 +15,22 @@ def load_data(input_path=""):
     data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
     data = np.where(data == 1, 0.5, data)  # Map 1 to 0.5
     data = np.where(data == 2, 1.0, data)  # Map 2 to 1.0
-    
+
     return torch.FloatTensor(data)
+
 
 # SNP Dataset
 class SNPDataset(Dataset):
     def __init__(self, input_path):
         self.data = load_data(input_path)
-        
+
     def __len__(self):
         return self.data.shape[0]  # Number of samples
 
     def __getitem__(self, idx):
         return self.data[idx]  # Return one sample (row)
-        
+
+
 # SNP Data Module
 class SNPDataModule(pl.LightningDataModule):
     def __init__(self, input_path, batch_size=256, num_workers=1):
@@ -36,7 +38,7 @@ class SNPDataModule(pl.LightningDataModule):
         self.path = input_path
         self.batch_size = batch_size
         self.workers = num_workers
-        self.data_split = [128686, 16086, 16086] # 80%, 10% and 10%
+        self.data_split = [128686, 16086, 16086]  # 80%, 10% and 10%
 
     # Setup Data
     def setup(self, stage=None):
@@ -45,28 +47,41 @@ class SNPDataModule(pl.LightningDataModule):
         self.trainset, self.valset, self.testset = random_split(
             full_dataset,
             self.data_split,
-            generator=torch.Generator().manual_seed(42)  # Fixed seed for reproducibility
+            generator=torch.Generator().manual_seed(
+                42
+            ),  # Fixed seed for reproducibility
         )
 
     # Data Loaders
     def train_dataloader(self):
         return DataLoader(
-            self.trainset, batch_size=self.batch_size, shuffle=True, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
+            self.trainset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
 
     def val_dataloader(self):
         return DataLoader(
-            self.valset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
-        
+            self.valset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
+
     def test_dataloader(self):
         return DataLoader(
-            self.testset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
-            
+            self.testset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
+
 
 class SNPDataModule_v2(pl.LightningDataModule):
-    def __init__(self, input_path, batch_size=256, num_workers=1, impute_strategy="mode"):
+    def __init__(
+        self, input_path, batch_size=256, num_workers=1, impute_strategy="mode"
+    ):
         """
         Args:
             input_path (str): Path to SNP dataset.
@@ -83,7 +98,9 @@ class SNPDataModule_v2(pl.LightningDataModule):
 
     def preprocess(self, dataset):
         """Handles missing values (9s) by either mode or mean imputation."""
-        data = dataset.tensors[0]  # Extract SNP data (assuming dataset is TensorDataset)
+        data = dataset.tensors[
+            0
+        ]  # Extract SNP data (assuming dataset is TensorDataset)
 
         mask = (data != 9).float()  # Mask: 1 for valid, 0 for missing
 
@@ -91,10 +108,14 @@ class SNPDataModule_v2(pl.LightningDataModule):
             mode_values = self.compute_mode(data)
             data = torch.where(mask.bool(), data, mode_values)
         elif self.impute_strategy == "mean":
-            mean_values = torch.nanmean(torch.where(mask.bool(), data, torch.nan), dim=0)
+            mean_values = torch.nanmean(
+                torch.where(mask.bool(), data, torch.nan), dim=0
+            )
             data = torch.where(mask.bool(), data, mean_values)
 
-        return torch.utils.data.TensorDataset(data, dataset.tensors[1])  # Reconstruct dataset
+        return torch.utils.data.TensorDataset(
+            data, dataset.tensors[1]
+        )  # Reconstruct dataset
 
     def compute_mode(self, data):
         """Computes mode per SNP column, ignoring missing values (9s)."""
@@ -110,7 +131,9 @@ class SNPDataModule_v2(pl.LightningDataModule):
         self.trainset, self.valset, self.testset = random_split(
             full_dataset,
             self.data_split,
-            generator=torch.Generator().manual_seed(42)  # Fixed seed for reproducibility
+            generator=torch.Generator().manual_seed(
+                42
+            ),  # Fixed seed for reproducibility
         )
 
         # Apply preprocessing
@@ -119,10 +142,25 @@ class SNPDataModule_v2(pl.LightningDataModule):
         self.testset = self.preprocess(self.testset)
 
     def train_dataloader(self):
-        return DataLoader(self.trainset, batch_size=self.batch_size, shuffle=True, num_workers=self.workers)
+        return DataLoader(
+            self.trainset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.workers,
+        )
 
     def val_dataloader(self):
-        return DataLoader(self.valset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers)
+        return DataLoader(
+            self.valset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )
 
     def test_dataloader(self):
-        return DataLoader(self.testset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers)
+        return DataLoader(
+            self.testset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )

@@ -3,19 +3,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+
 # TODO: Create a base LightingModule with necessary hooks, this
 # module will be inherited by DiffusionNetwork in model.py script.
 class NetworkBase(pl.LightningModule):
     def __init__(self, input_path, hparams):
         super().__init__()
-        
+
         self.path = hparams["input_path"]
         self.split = [10, 1, 1]
         self.batch = 64
         self.workers = 4
-        self.data_split = [128686, 16086, 16086] # 80%, 10% and 10%
+        self.data_split = [128686, 16086, 16086]  # 80%, 10% and 10%
         self.trainset, self.valset, self.testset = None, None, None
-        
+
         # Save hyperparameters
         self.save_hyperparameters(hparams)
 
@@ -26,24 +27,35 @@ class NetworkBase(pl.LightningModule):
         self.trainset, self.valset, self.testset = random_split(
             full_dataset,
             self.data_split,
-            generator=torch.Generator().manual_seed(42)  # Fixed seed for reproducibility
+            generator=torch.Generator().manual_seed(
+                42
+            ),  # Fixed seed for reproducibility
         )
 
     # Data Loaders
     def train_dataloader(self):
         return DataLoader(
-            self.trainset, batch_size=self.batch_size, shuffle=True, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
+            self.trainset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
 
     def val_dataloader(self):
         return DataLoader(
-            self.valset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
-        
+            self.valset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
+
     def test_dataloader(self):
         return DataLoader(
-            self.testset, batch_size=self.batch_size, shuffle=False, num_workers=self.workers
-            )  # , pin_memory=True, persistent_workers=True)
+            self.testset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.workers,
+        )  # , pin_memory=True, persistent_workers=True)
 
     # Configure Optimizer & Scheduler
     def configure_optimizers(self):
@@ -69,7 +81,7 @@ class NetworkBase(pl.LightningModule):
             }
         ]
         return optimizer, scheduler
-    
+
     # Trainig Step
     def training_step(self, batch, batch_idx):
         # YOUR CODE HERE:
