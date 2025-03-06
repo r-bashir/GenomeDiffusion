@@ -1,0 +1,63 @@
+# Input data path
+input_path: "HO_data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
+
+# Diffusion process parameters
+diffusion:
+  num_diffusion_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+
+# Time sampling parameters
+time_sampler:
+  tmin: 1
+  tmax: 1000  # Should match num_diffusion_timesteps
+
+# UNet architecture parameters (memory-optimized)
+unet:
+  embedding_dim: 32  # Reduced from 64 for memory efficiency
+  dim_mults: [1, 2, 4]  # Reduced from [1, 2, 4, 8] for memory efficiency
+  channels: 1  # For SNP data
+  with_time_emb: true
+  resnet_block_groups: 8
+
+# Data parameters
+data:
+  seq_length: 2067  # SNP sequence length
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+
+# Training parameters
+training:
+  # Basic training settings
+  num_epochs: 100
+  gradient_clip_val: 1.0
+  save_top_k: 3
+  
+  # Memory optimization
+  gradient_checkpointing: true  # Enable gradient checkpointing
+  precision: 16  # Use mixed precision training
+  
+  # Training optimization
+  grad_accum: 2  # Gradient accumulation steps
+  val_check_interval: 0.5  # Validate twice per epoch
+  
+  # Early stopping
+  patience: 10  # Number of epochs to wait for improvement
+  test_threshold: 0.1  # Only test if validation loss is below this
+  
+  # Learning rate warmup
+  warmup_epochs: 5  # Number of epochs for learning rate warmup
+  
+  # Generation settings
+  num_samples: 10  # Number of samples to generate
+
+# Optimizer parameters
+optimizer:
+  name: 'adamw'  # Using AdamW optimizer
+  lr: 1.0e-4
+  min_lr: 1.0e-6  # Minimum learning rate for scheduler
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  amsgrad: true  # Use AMSGrad variant
