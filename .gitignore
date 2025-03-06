@@ -1,5 +1,5 @@
 .ipynb_checkpoints
 __pycache__
 HO_data
-.png
-.pdf
+*.png
+*.pdf

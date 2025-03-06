@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, random_split
 
-from data_loading import load_data
+from dataset import load_data
 
 
 class NetworkBase(pl.LightningModule):
