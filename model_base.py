@@ -1,7 +1,10 @@
+#!/usr/bin/env python
+# coding: utf-8
+
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
+from torch.utils.data import DataLoader, random_split
+
+from data_loading import load_data
 
 
 # TODO: Create a base LightingModule with necessary hooks, this

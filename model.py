@@ -1,33 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import os
 import math
-import time
-import numpy as np
-import pandas as pd
 from functools import partial
-
-import dataclasses
 from typing import Sequence
-import functools
-from typing import Tuple  # Add this line to import Tuple
-from torch import optim
 
-# import pytorch_warmup as warmup
-
-
-# Pytorch
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import random_split, Dataset, DataLoader
-
-# Pytorch Lightening
-import pytorch_lightning as pl
 
 
-# ???
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
     """Util function for broadcasting to the right."""
     if x.ndim > ndim:
@@ -455,7 +437,7 @@ class DiffusionModel(nn.Module):
         self._time_sampler = time_sampler
         self._net_config = net_config
         self._data_shape = data_shape
-        self.net_fwd = Net(net_config)  # Uses Net with ResidualConv1D
+        self.net_fwd = UNet1D(net_config)  # Uses Net with ResidualConv1D
 
     def loss(self, x0: torch.Tensor) -> torch.Tensor:
         """
@@ -490,6 +472,7 @@ class DiffusionModel(nn.Module):
             torch.Tensor: Loss values for each timestep.
         """
         losses = []
+        timesteps = timesteps.to(x0.device)
         for t in timesteps:
             t = int(t.item()) * torch.ones(
                 (x0.shape[0],), dtype=torch.int32, device=x0.device
@@ -513,7 +496,10 @@ class DiffusionModel(nn.Module):
         """
         t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=xt.device)
         eps_pred = self.net_fwd(xt, t)  # Predict epsilon
-        sqrt_a_t = self._process.alpha(t) / self._process.alpha(t - 1)
+        if t > 1:
+            sqrt_a_t = self._process.alpha(t) / self._process.alpha(t - 1)
+        else:
+            sqrt_a_t = self._process.alpha(t)
         inv_sqrt_a_t = 1.0 / sqrt_a_t
         beta_t = 1.0 - sqrt_a_t**2
         inv_sigma_t = 1.0 / self._process.sigma(t)
@@ -527,14 +513,14 @@ class DiffusionModel(nn.Module):
         Samples from the learned reverse diffusion process without conditioning.
 
         Args:
-            x0 (torch.Tensor): Initial input (not used, only for device reference).
-            sample_size (int): Number of samples.
-
-        Returns:
+            x0 (torch.Tensor): Initial input (not used, only for device reference).ples.
             torch.Tensor: Generated samples.
         """
         with torch.no_grad():
             x = torch.randn((sample_size,) + self._data_shape, device=x0.device)
             for t in range(self._process.tmax, 0, -1):
-                x = self._reverse_process_step(x, t)
-        return x
+                if t > 1:
+                    x = self._reverse_process_step(x, t)ss.tmax, 0, -1):
+                else:
+                    x = self._reverse_process_step(x, t)x = self._reverse_process_step(x, t)
+        return x 

@@ -1,8 +1,11 @@
+#!/usr/bin/env python
+# coding: utf-8
+
 import numpy as np
 import pandas as pd
-import torch
-from torch.utils.data import random_split, Dataset, DataLoader
 import pytorch_lightning as pl
+import torch
+from torch.utils.data import DataLoader, Dataset, random_split
 
 
 # load dataset
