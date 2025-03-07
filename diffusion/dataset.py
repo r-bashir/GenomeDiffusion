@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+"""This script implements the SNPDataset and SNPDataModule classes."""
+
+import argparse
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
 
 
 # load dataset
@@ -23,62 +25,90 @@ def load_data(input_path=""):
 
 
 # SNP Dataset
-class SNPDataset(Dataset):
-    def __init__(self, input_path):
-        self.data = load_data(input_path)
+class SNPDataset(torch.utils.data.Dataset):
+    def __init__(self, input_path=None):
+        
+        self.input_path = input_path
+        self.data = self.load_data()
+        self.validate_data()
+
+    def load_data(self):
+        # read data
+        data = pd.read_parquet(self.input_path).to_numpy()
+
+        # normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
+        data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
+        data = np.where(data == 1, 0.5, data)  # Map 1 to 0.5
+        data = np.where(data == 2, 1.0, data)  # Map 2 to 1.0
+
+        return torch.FloatTensor(data)
+
+    def validate_data(self):
+        """Validates the loaded data for integrity."""
+        if self.data is None or len(self.data) == 0:
+            raise ValueError("Loaded data is empty or None.")
 
     def __len__(self):
-        return self.data.shape[0]  # Number of samples
+        return self.data.shape[0]
 
     def __getitem__(self, idx):
-        return self.data[idx]  # Return one sample (row)
+        return self.data[idx]
 
 
 # SNP Data Module
 class SNPDataModule(pl.LightningDataModule):
     def __init__(self, input_path, batch_size=256, num_workers=1):
         super().__init__()
-        self.path = input_path
+        self.input_path = input_path
         self.batch_size = batch_size
         self.workers = num_workers
-        self.data_split = [128686, 16086, 16086]  # 80%, 10% and 10%
+        self.fractions = [0.8, 0.1, 0.1]
 
     # Setup Data
-    def setup(self, stage=None):
+    def setup(self, stage=None, fractions=[0.8, 0.1, 0.1]):
         """Prepare the dataset"""
-        full_dataset = load_data(self.path)
-        self.trainset, self.valset, self.testset = random_split(
+        if sum(fractions) != 1.0:
+            raise ValueError("Fractions must sum to 1.")
+        
+        full_dataset = load_data(self.input_path)
+        n = len(full_dataset)
+        
+        # Calculate dataset sizes
+        n_train = int(fractions[0] * n)
+        n_val = int(fractions[1] * n)
+        n_test = n - n_train - n_val  # Ensure all data is used
+        
+        # Split dataset
+        self.trainset, self.valset, self.testset = torch.utils.data.random_split(
             full_dataset,
-            self.data_split,
-            generator=torch.Generator().manual_seed(
-                42
-            ),  # Fixed seed for reproducibility
+            [n_train, n_val, n_test],
+            generator=torch.Generator().manual_seed(42)
         )
 
     # Data Loaders
     def train_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.trainset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.workers,
-        )  # , pin_memory=True, persistent_workers=True)
+        )
 
     def val_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.valset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.workers,
-        )  # , pin_memory=True, persistent_workers=True)
+        )
 
     def test_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.testset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.workers,
-        )  # , pin_memory=True, persistent_workers=True)
+        )
 
 
 class SNPDataModule_v2(pl.LightningDataModule):
@@ -131,7 +161,7 @@ class SNPDataModule_v2(pl.LightningDataModule):
         full_dataset = load_data(self.path)  # Assuming this loads a TensorDataset
 
         # Split into train/val/test
-        self.trainset, self.valset, self.testset = random_split(
+        self.trainset, self.valset, self.testset = torch.utils.data.random_split(
             full_dataset,
             self.data_split,
             generator=torch.Generator().manual_seed(
@@ -145,7 +175,7 @@ class SNPDataModule_v2(pl.LightningDataModule):
         self.testset = self.preprocess(self.testset)
 
     def train_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.trainset,
             batch_size=self.batch_size,
             shuffle=True,
@@ -153,7 +183,7 @@ class SNPDataModule_v2(pl.LightningDataModule):
         )
 
     def val_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.valset,
             batch_size=self.batch_size,
             shuffle=False,
@@ -161,9 +191,41 @@ class SNPDataModule_v2(pl.LightningDataModule):
         )
 
     def test_dataloader(self):
-        return DataLoader(
+        return torch.utils.data.DataLoader(
             self.testset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.workers,
         )
+
+def main():
+    """Main function to test SNPDataset and SNPDataModule."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--input_path",
+        type=str,
+        default="../data/HO_data_filtered/HumanOrigins2067_filtered.parquet",
+        help="Path to the input SNP dataset file."
+    )
+    args = parser.parse_args()
+
+    # Test SNPDataset
+    print("\nTesting SNPDataset:")
+    snp_dataset = SNPDataset(args.input_path)
+    print(f"Dataset length: {len(snp_dataset)}")
+    print(f"First example: {snp_dataset[0]}")
+
+    # Test SNPDataModule
+    print("\nTesting SNPDataModule:")
+    data_module = SNPDataModule(args.input_path, batch_size=256, num_workers=1)
+    data_module.setup(fractions=[0.8, 0.1, 0.1])
+    print(f"Train batches: {len(data_module.train_dataloader())}")
+    batch = next(iter(data_module.train_dataloader()))
+    print(f"Batch length: {len(batch)}")
+    print(f"First example: {batch[0]}")
+
+if __name__ == "__main__":
+    main()
+   
+    
+    

@@ -2,13 +2,13 @@
 # coding: utf-8
 
 from functools import partial
-from typing import Dict, Optional, Sequence
-
+from typing import Dict, Sequence
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 
-from model_base import NetworkBase
+from .network_base import NetworkBase
 
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
     """Util function for broadcasting to the right."""
@@ -32,7 +32,7 @@ class UniformDiscreteTimeSampler:
         return torch.randint(low=self._tmin, high=self._tmax, size=shape)
 
 
-class ForwardDiffusion:
+class DDPM:
     """
     Implements the forward diffusion process that gradually adds noise to data.
     Following DDPM framework, at each timestep t, we add a controlled amount of
@@ -456,7 +456,7 @@ class DiffusionModel(NetworkBase):
         self._data_shape = (hparams['unet']['channels'], hparams['data']['seq_length'])
         
         # Initialize components from hyperparameters
-        self._forward_diffusion = ForwardDiffusion(
+        self._forward_diffusion = DDPM(
             num_diffusion_timesteps=hparams['diffusion']['num_diffusion_timesteps'],
             beta_start=hparams['diffusion']['beta_start'],
             beta_end=hparams['diffusion']['beta_end']

@@ -1,5 +1,5 @@
 # Input data path
-input_path: "HO_data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
+input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 
 # Diffusion process parameters
 diffusion:
