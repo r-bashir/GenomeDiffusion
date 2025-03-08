@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
     """Util function for broadcasting to the right."""
@@ -42,7 +44,7 @@ class DDPM:
 
     The forward process transitions from clean data x0 to noisy data xt via:
         xt = alpha(t) * x0 + sigma(t) * eps, where eps ~ N(0, I)
-    
+
     As t increases, more noise is added until the data becomes pure noise.
     This creates the training pairs (xt, t, eps) that teach the UNet to
     predict the added noise at each timestep.
@@ -195,7 +197,7 @@ class DownsampleConv(nn.Module):
             out_channels=dim,
             kernel_size=2,  # Even kernel size for exact halving
             stride=2,
-            padding=0  # No padding needed
+            padding=0,  # No padding needed
         )
 
     def forward(self, x):
@@ -214,7 +216,7 @@ class UpsampleConv(nn.Module):
             out_channels=dim,
             kernel_size=2,  # Even kernel size for exact doubling
             stride=2,
-            padding=0  # No padding needed
+            padding=0,  # No padding needed
         )
         self.original_len = None  # Store original length for exact recovery
 
@@ -228,7 +230,9 @@ class ConvBlock(nn.Module):
 
     def __init__(self, dim_in, dim_out, groups=8):
         super().__init__()
-        self.conv = nn.Conv1d(dim_in, dim_out, kernel_size=3, padding='same')  # 1D Convolutional Layer
+        self.conv = nn.Conv1d(
+            dim_in, dim_out, kernel_size=3, padding="same"
+        )  # 1D Convolutional Layer
         self.norm = nn.GroupNorm(groups, dim_out)  # Group Normalization
         self.act = nn.SiLU()  # SiLU Activation
 
@@ -255,23 +259,25 @@ class ResnetBlock(nn.Module):
         # Convolutional Blocks with proper GroupNorm
         # Use 1 group for small dimensions, more for larger ones
         groups2 = min(groups, out_dim)
-        
+
         # Convolutional Blocks with proper GroupNorm
         self.block1 = nn.Sequential(
-            nn.Conv1d(in_dim, out_dim, kernel_size=3, padding='same'),
+            nn.Conv1d(in_dim, out_dim, kernel_size=3, padding="same"),
             nn.GroupNorm(groups2, out_dim),
             nn.SiLU(),
         )
 
         self.block2 = nn.Sequential(
-            nn.Conv1d(out_dim, out_dim, kernel_size=3, padding='same'),
+            nn.Conv1d(out_dim, out_dim, kernel_size=3, padding="same"),
             nn.GroupNorm(groups2, out_dim),
             nn.SiLU(),
         )
 
         # Residual connection
         self.res_conv = (
-            nn.Conv1d(in_dim, out_dim, kernel_size=1, padding='same') if in_dim != out_dim else nn.Identity()
+            nn.Conv1d(in_dim, out_dim, kernel_size=1, padding="same")
+            if in_dim != out_dim
+            else nn.Identity()
         )
 
     def forward(self, x, time_emb=None):
@@ -319,7 +325,9 @@ class UNet1D(nn.Module):
         # Initial convolutional layer with same padding
         kernel_size = 7
         padding = (kernel_size - 1) // 2
-        self.init_conv = nn.Conv1d(channels, init_dim, kernel_size=kernel_size, padding=padding)
+        self.init_conv = nn.Conv1d(
+            channels, init_dim, kernel_size=kernel_size, padding=padding
+        )
 
         # Compute feature dimensions for each UNet level
         dims = [init_dim]  # Start with initial dimension
@@ -390,7 +398,9 @@ class UNet1D(nn.Module):
         # Final Convolution with same padding
         self.final_conv = nn.Sequential(
             resnet_block(dims[0], dims[0]),  # ResNet block with same padding
-            nn.Conv1d(dims[0], out_dim, kernel_size=1, padding='same')  # 1x1 conv to match channels
+            nn.Conv1d(
+                dims[0], out_dim, kernel_size=1, padding="same"
+            ),  # 1x1 conv to match channels
         )
 
     def forward(self, x, time):
@@ -433,7 +443,7 @@ class UNet1D(nn.Module):
             x = upsample(x)
             # Ensure x matches the length of the skip connection
             if x.size(-1) != prev_x.size(-1):
-                x = F.interpolate(x, size=prev_x.size(-1), mode='linear')
+                x = F.interpolate(x, size=prev_x.size(-1), mode="linear")
             x = torch.cat((x, prev_x), dim=1)
             x = block1(x, t)
             x = block2(x, t)
@@ -441,7 +451,7 @@ class UNet1D(nn.Module):
         # Final convolution and ensure output length matches input
         x = self.final_conv(x)
         if x.size(-1) != original_len:
-            x = F.interpolate(x, size=original_len, mode='linear')
+            x = F.interpolate(x, size=original_len, mode="linear")
 
         return x
 
@@ -449,7 +459,7 @@ class UNet1D(nn.Module):
 # Final Diffusion Model
 class DiffusionModel(nn.Module):
     """Diffusion model with 1D Convolutional network for SNP data.
-    
+
     Implements both forward diffusion (data corruption) and reverse diffusion (denoising)
     processes for SNP data. The forward process gradually adds noise to the data following
     a predefined schedule, while the reverse process learns to denoise the data using a
@@ -459,7 +469,7 @@ class DiffusionModel(nn.Module):
     def __init__(self, hparams: Dict):
         """
         Initialize the diffusion model with hyperparameters.
-        
+
         Args:
             hparams: Dictionary containing model hyperparameters with the following structure:
                     {
@@ -471,28 +481,27 @@ class DiffusionModel(nn.Module):
                     }
         """
         super().__init__(hparams=hparams)
-        
+
         # Set data shape
-        self._data_shape = (hparams['unet']['channels'], hparams['data']['seq_length'])
-        
+        self._data_shape = (hparams["unet"]["channels"], hparams["data"]["seq_length"])
+
         # Initialize components from hyperparameters
         self._forward_diffusion = DDPM(
-            num_diffusion_timesteps=hparams['diffusion']['num_diffusion_timesteps'],
-            beta_start=hparams['diffusion']['beta_start'],
-            beta_end=hparams['diffusion']['beta_end']
+            num_diffusion_timesteps=hparams["diffusion"]["num_diffusion_timesteps"],
+            beta_start=hparams["diffusion"]["beta_start"],
+            beta_end=hparams["diffusion"]["beta_end"],
         )
-        
+
         self._time_sampler = UniformDiscreteTimeSampler(
-            tmin=hparams['time_sampler']['tmin'],
-            tmax=hparams['time_sampler']['tmax']
+            tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
-        
+
         self.unet = UNet1D(
-            embedding_dim=hparams['unet']['embedding_dim'],
-            dim_mults=hparams['unet']['dim_mults'],
-            channels=hparams['unet']['channels'],
-            with_time_emb=hparams['unet']['with_time_emb'],
-            resnet_block_groups=hparams['unet']['resnet_block_groups']
+            embedding_dim=hparams["unet"]["embedding_dim"],
+            dim_mults=hparams["unet"]["dim_mults"],
+            channels=hparams["unet"]["channels"],
+            with_time_emb=hparams["unet"]["with_time_emb"],
+            resnet_block_groups=hparams["unet"]["resnet_block_groups"],
         )
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -511,23 +520,23 @@ class DiffusionModel(nn.Module):
 
     def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model.
-        
+
         Args:
             batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
-            
+
         Returns:
             torch.Tensor: Predicted noise
         """
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
         eps = torch.randn_like(batch)
-        
+
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
-        
+
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
-    
+
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
@@ -540,10 +549,10 @@ class DiffusionModel(nn.Module):
         """
         # Sample noise
         eps = torch.randn_like(batch)
-        
+
         # Get model predictions
         pred_eps = self.forward_step(batch)
-        
+
         # Compute MSE loss
         return torch.mean((pred_eps - eps) ** 2)
 
@@ -563,19 +572,17 @@ class DiffusionModel(nn.Module):
         """
         losses = []
         for t in timesteps:
-            t = int(t.item()) * torch.ones(
-                (x0.shape[0],), dtype=torch.int32
-            )
+            t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
             # Forward diffusion at timestep t
             xt = self._forward_diffusion.sample(x0, t, eps)
-            
+
             # Predict noise that was added
             predicted_noise = self.predict_added_noise(xt, t)
-            
+
             # Compute loss at this timestep
             loss = torch.mean((predicted_noise - eps) ** 2)
             losses.append(loss)
-            
+
         return torch.stack(losses)
 
     def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
@@ -590,28 +597,30 @@ class DiffusionModel(nn.Module):
             torch.Tensor: Estimated previous timestep data.
         """
         # Move input to device and create timestep tensor
-        xt = xt.to(DEVICE)
-        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=DEVICE)
-        
+        xt = xt.to(device)
+        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
+
         # Predict noise that was added during forward diffusion
         eps_pred = self.predict_added_noise(xt, t)
-        
+
         # Compute reverse process parameters
         if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1)
+            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
+                t - 1
+            )
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
-            
+
         inv_sqrt_a_t = 1.0 / sqrt_a_t
         beta_t = 1.0 - sqrt_a_t**2
         inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
-        
+
         # Compute mean and standard deviation
         mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
         std = torch.sqrt(beta_t)
-        
+
         # Add noise scaled by standard deviation
-        z = torch.randn_like(xt, device=DEVICE)
+        z = torch.randn_like(xt, device=device)
         return mean + std * z
 
     def sample(self, sample_size: int) -> torch.Tensor:
@@ -629,11 +638,11 @@ class DiffusionModel(nn.Module):
         with torch.no_grad():
             # Start from pure noise
             x = torch.randn((sample_size,) + self._data_shape)
-            
+
             # Gradually denoise
             for t in range(self._forward_diffusion.tmax, 0, -1):
                 x = self._reverse_process_step(x, t)
-            
+
             # Ensure output is in correct range (typically [0,1] for SNP data)
             x = torch.clamp(x, 0, 1)
         return x

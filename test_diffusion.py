@@ -5,7 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 import yaml
 from torch.utils.data import DataLoader
-from diffusion.dataset import SNPDataset
+from diffusion import SNPDataset
 from test_models import DDPM, UNet1D
 
 # Set global device

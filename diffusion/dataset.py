@@ -4,6 +4,7 @@
 """This script implements the SNPDataset and SNPDataModule classes."""
 
 import argparse
+import os
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
@@ -11,10 +12,13 @@ import torch
 
 
 # load dataset
-def load_data(input_path=""):
+def load_data(input_path=None):
 
     # read data
-    data = pd.read_parquet(input_path).to_numpy()
+    try:
+        data = pd.read_parquet(input_path).to_numpy()
+    except Exception as e:
+        raise ValueError(f"Error loading data: {e}")
 
     # normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
     data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
@@ -24,17 +28,20 @@ def load_data(input_path=""):
     return torch.FloatTensor(data)
 
 
-# SNP Dataset
+# SNPDataset
 class SNPDataset(torch.utils.data.Dataset):
     def __init__(self, input_path=None):
-        
+
         self.input_path = input_path
         self.data = self.load_data()
         self.validate_data()
 
     def load_data(self):
         # read data
-        data = pd.read_parquet(self.input_path).to_numpy()
+        try:
+            data = pd.read_parquet(self.input_path).to_numpy()
+        except Exception as e:
+            raise ValueError(f"Error loading data: {e}")
 
         # normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
         data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
@@ -48,6 +55,15 @@ class SNPDataset(torch.utils.data.Dataset):
         if self.data is None or len(self.data) == 0:
             raise ValueError("Loaded data is empty or None.")
 
+    def print_value_distribution(self):
+        """Prints the distribution of values in the dataset as percentages."""
+        values, counts = torch.unique(self.data, return_counts=True)
+        total = self.data.numel()
+        print("Value distribution (percentage):")
+        for value, count in zip(values, counts):
+            percentage = (count.item() / total) * 100
+            print(f"{value.item():.1f}: {percentage:.2f}%")
+
     def __len__(self):
         return self.data.shape[0]
 
@@ -55,7 +71,7 @@ class SNPDataset(torch.utils.data.Dataset):
         return self.data[idx]
 
 
-# SNP Data Module
+# SNPDataModule
 class SNPDataModule(pl.LightningDataModule):
     def __init__(self, input_path, batch_size=256, num_workers=1):
         super().__init__()
@@ -69,20 +85,20 @@ class SNPDataModule(pl.LightningDataModule):
         """Prepare the dataset"""
         if sum(fractions) != 1.0:
             raise ValueError("Fractions must sum to 1.")
-        
+
         full_dataset = load_data(self.input_path)
         n = len(full_dataset)
-        
+
         # Calculate dataset sizes
         n_train = int(fractions[0] * n)
         n_val = int(fractions[1] * n)
         n_test = n - n_train - n_val  # Ensure all data is used
-        
+
         # Split dataset
         self.trainset, self.valset, self.testset = torch.utils.data.random_split(
             full_dataset,
             [n_train, n_val, n_test],
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(42),
         )
 
     # Data Loaders
@@ -198,21 +214,20 @@ class SNPDataModule_v2(pl.LightningDataModule):
             num_workers=self.workers,
         )
 
-def main():
-    """Main function to test SNPDataset and SNPDataModule."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input_path",
-        type=str,
-        default="../data/HO_data_filtered/HumanOrigins2067_filtered.parquet",
-        help="Path to the input SNP dataset file."
-    )
-    args = parser.parse_args()
 
+def check_path_exists(path):
+    """Check if a path exists."""
+    return os.path.exists(path)
+
+def main(args):
+    """Main function to test SNPDataset and SNPDataModule."""
+    
     # Test SNPDataset
     print("\nTesting SNPDataset:")
     snp_dataset = SNPDataset(args.input_path)
     print(f"Dataset length: {len(snp_dataset)}")
+    print(f"Value distribution:")
+    snp_dataset.print_value_distribution()
     print(f"First example: {snp_dataset[0]}")
 
     # Test SNPDataModule
@@ -224,8 +239,25 @@ def main():
     print(f"Batch length: {len(batch)}")
     print(f"First example: {batch[0]}")
 
+
 if __name__ == "__main__":
-    main()
-   
-    
-    
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--input_path",
+        type=str,
+        default="../data/HO_data_filtered/HumanOrigins2067_filtered.parquet",
+        help="Path to the input SNP dataset file.",
+    )
+    args = parser.parse_args()
+
+    if check_path_exists(args.input_path):
+        print(f"The path {args.input_path} exists")
+    else:
+        print(f"The path {args.input_path} does not exist")
+
+    # Test Loading
+    print("\nTesting load_data:")
+    dataset = load_data(input_path=args.input_path)
+    print(f"Dataset length: {len(dataset)}")
+    print(f"First example: {dataset[0]}")
+    main(args)

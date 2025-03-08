@@ -1,14 +1,17 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import math
 from functools import partial
 from typing import Dict, Sequence
-import math
+
 import numpy as np
 import torch
 import torch.nn as nn
-
 from .network_base import NetworkBase
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
     """Util function for broadcasting to the right."""
@@ -41,7 +44,7 @@ class DDPM:
 
     The forward process transitions from clean data x0 to noisy data xt via:
         xt = alpha(t) * x0 + sigma(t) * eps, where eps ~ N(0, I)
-    
+
     As t increases, more noise is added until the data becomes pure noise.
     This creates the training pairs (xt, t, eps) that teach the UNet to
     predict the added noise at each timestep.
@@ -374,7 +377,7 @@ class UNet1D(nn.Module):
             )
 
         # Final Convolution
-        # Final convolution should match the last upsampled feature 
+        # Final convolution should match the last upsampled feature
         # dimension instead of blindly assuming embedding_dim
         self.final_conv = nn.Sequential(
             resnet_block(
@@ -429,7 +432,7 @@ class UNet1D(nn.Module):
 # Final Diffusion Model
 class DiffusionModel(NetworkBase):
     """Diffusion model with 1D Convolutional network for SNP data.
-    
+
     Implements both forward diffusion (data corruption) and reverse diffusion (denoising)
     processes for SNP data. The forward process gradually adds noise to the data following
     a predefined schedule, while the reverse process learns to denoise the data using a
@@ -439,7 +442,7 @@ class DiffusionModel(NetworkBase):
     def __init__(self, hparams: Dict):
         """
         Initialize the diffusion model with hyperparameters.
-        
+
         Args:
             hparams: Dictionary containing model hyperparameters with the following structure:
                     {
@@ -451,28 +454,27 @@ class DiffusionModel(NetworkBase):
                     }
         """
         super().__init__(hparams=hparams)
-        
+
         # Set data shape
-        self._data_shape = (hparams['unet']['channels'], hparams['data']['seq_length'])
-        
+        self._data_shape = (hparams["unet"]["channels"], hparams["data"]["seq_length"])
+
         # Initialize components from hyperparameters
         self._forward_diffusion = DDPM(
-            num_diffusion_timesteps=hparams['diffusion']['num_diffusion_timesteps'],
-            beta_start=hparams['diffusion']['beta_start'],
-            beta_end=hparams['diffusion']['beta_end']
+            num_diffusion_timesteps=hparams["diffusion"]["num_diffusion_timesteps"],
+            beta_start=hparams["diffusion"]["beta_start"],
+            beta_end=hparams["diffusion"]["beta_end"],
         )
-        
+
         self._time_sampler = UniformDiscreteTimeSampler(
-            tmin=hparams['time_sampler']['tmin'],
-            tmax=hparams['time_sampler']['tmax']
+            tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
-        
+
         self.unet = UNet1D(
-            embedding_dim=hparams['unet']['embedding_dim'],
-            dim_mults=hparams['unet']['dim_mults'],
-            channels=hparams['unet']['channels'],
-            with_time_emb=hparams['unet']['with_time_emb'],
-            resnet_block_groups=hparams['unet']['resnet_block_groups']
+            embedding_dim=hparams["unet"]["embedding_dim"],
+            dim_mults=hparams["unet"]["dim_mults"],
+            channels=hparams["unet"]["channels"],
+            with_time_emb=hparams["unet"]["with_time_emb"],
+            resnet_block_groups=hparams["unet"]["resnet_block_groups"],
         )
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -491,23 +493,23 @@ class DiffusionModel(NetworkBase):
 
     def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model.
-        
+
         Args:
             batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
-            
+
         Returns:
             torch.Tensor: Predicted noise
         """
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
         eps = torch.randn_like(batch)
-        
+
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
-        
+
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
-    
+
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
@@ -520,10 +522,10 @@ class DiffusionModel(NetworkBase):
         """
         # Sample noise
         eps = torch.randn_like(batch)
-        
+
         # Get model predictions
         pred_eps = self.forward_step(batch)
-        
+
         # Compute MSE loss
         return torch.mean((pred_eps - eps) ** 2)
 
@@ -543,19 +545,17 @@ class DiffusionModel(NetworkBase):
         """
         losses = []
         for t in timesteps:
-            t = int(t.item()) * torch.ones(
-                (x0.shape[0],), dtype=torch.int32
-            )
+            t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
             # Forward diffusion at timestep t
             xt = self._forward_diffusion.sample(x0, t, eps)
-            
+
             # Predict noise that was added
             predicted_noise = self.predict_added_noise(xt, t)
-            
+
             # Compute loss at this timestep
             loss = torch.mean((predicted_noise - eps) ** 2)
             losses.append(loss)
-            
+
         return torch.stack(losses)
 
     def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
@@ -570,28 +570,30 @@ class DiffusionModel(NetworkBase):
             torch.Tensor: Estimated previous timestep data.
         """
         # Move input to device and create timestep tensor
-        xt = xt.to(DEVICE)
-        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=DEVICE)
-        
+        xt = xt.to(device)
+        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
+
         # Predict noise that was added during forward diffusion
         eps_pred = self.predict_added_noise(xt, t)
-        
+
         # Compute reverse process parameters
         if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1)
+            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
+                t - 1
+            )
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
-            
+
         inv_sqrt_a_t = 1.0 / sqrt_a_t
         beta_t = 1.0 - sqrt_a_t**2
         inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
-        
+
         # Compute mean and standard deviation
         mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
         std = torch.sqrt(beta_t)
-        
+
         # Add noise scaled by standard deviation
-        z = torch.randn_like(xt, device=DEVICE)
+        z = torch.randn_like(xt, device=device)
         return mean + std * z
 
     def sample(self, sample_size: int) -> torch.Tensor:
@@ -609,11 +611,11 @@ class DiffusionModel(NetworkBase):
         with torch.no_grad():
             # Start from pure noise
             x = torch.randn((sample_size,) + self._data_shape)
-            
+
             # Gradually denoise
             for t in range(self._forward_diffusion.tmax, 0, -1):
                 x = self._reverse_process_step(x, t)
-            
+
             # Ensure output is in correct range (typically [0,1] for SNP data)
             x = torch.clamp(x, 0, 1)
         return x
