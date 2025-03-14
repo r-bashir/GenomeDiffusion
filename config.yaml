@@ -53,6 +53,7 @@ training:
   # Generation settings
   num_samples: 10  # Number of samples to generate
   logger: 'tb'
+  tb_log_dir: "./logs"  # Add this line
 
 # Optimizer
 optimizer:
