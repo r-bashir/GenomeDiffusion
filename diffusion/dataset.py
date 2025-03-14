@@ -48,7 +48,6 @@ class SNPDataset(torch.utils.data.Dataset):
         """Prints the distribution of values in the dataset as percentages."""
         values, counts = torch.unique(self.data, return_counts=True)
         total = self.data.numel()
-        print("Value distribution (percentage):")
         for value, count in zip(values, counts):
             percentage = (count.item() / total) * 100
             print(f"{value.item():.1f}: {percentage:.2f}%")
@@ -211,16 +210,38 @@ def check_path_exists(path):
 def main(args):
     """Main function to test SNPDataset and SNPDataModule."""
     
+    # Test Loading
+    print("\nExamining data:")
+    dataset = load_data(input_path=args.input_path)
+       
+    # Analyze unique values in the data
+    unique_values = torch.unique(dataset)
+    print(f"\nUnique values in data: {unique_values.tolist()}")
+    
+    # Count occurrences of each value
+    value_counts = {}
+    for value in [0.0, 0.5, 1.0, 9.0]:
+        count = (dataset == value).sum().item()
+        percentage = (count / dataset.numel()) * 100
+        value_counts[value] = (count, percentage)
+    
+    print("\nValue distribution (percentage):")
+    for value, (count, percentage) in value_counts.items():
+        print(f"{value:.1f}: {count} occurrences ({percentage:.2f}%)")
+
+    print(f"Dataset length: {len(dataset)}")
+    print(f"First example: {dataset[0]}")
+        
     # Test SNPDataset
-    print("\nTesting SNPDataset:")
+    print("\nTesting SNPDataset Class:")
     snp_dataset = SNPDataset(args.input_path)
-    print(f"Dataset length: {len(snp_dataset)}")
-    print(f"Value distribution:")
+    print(f"Value distribution (percentage):")
     snp_dataset.print_value_distribution()
+    print(f"Dataset length: {len(snp_dataset)}")
     print(f"First example: {snp_dataset[0]}")
 
     # Test SNPDataModule
-    print("\nTesting SNPDataModule:")
+    print("\nTesting SNPDataModule Class:")
     data_module = SNPDataModule(args.input_path, batch_size=256, num_workers=1)
     data_module.setup(fractions=[0.8, 0.1, 0.1])
     print(f"Train batches: {len(data_module.train_dataloader())}")
@@ -244,10 +265,4 @@ if __name__ == "__main__":
     else:
         print(f"The path {args.input_path} does not exist")
 
-    # Test Loading
-    print("\nTesting load_data:")
-    dataset = load_data(input_path=args.input_path)
- 
-    print(f"Dataset length: {len(dataset)}")
-    print(f"First example: {dataset[0]}")
     main(args)
