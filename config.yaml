@@ -31,7 +31,7 @@ data:
 # Training
 training:
   # Basic training settings
-  num_epochs: 30
+  num_epochs: 3
   gradient_clip_val: 1.0
   save_top_k: 3
   
