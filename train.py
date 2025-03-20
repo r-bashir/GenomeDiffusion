@@ -31,8 +31,10 @@ def parse_args():
         "--config", type=str, default="config.yaml", help="Path to configuration file"
     )
     parser.add_argument(
-        "--output_dir", type=str, default=None, 
-        help="Directory to save outputs (overrides config.yaml output_path)"
+        "--output_dir",
+        type=str,
+        default=None,
+        help="Directory to save outputs (overrides config.yaml output_path)",
     )
     parser.add_argument(
         "--generate_samples",
@@ -57,16 +59,16 @@ def load_config(config_path: str) -> Dict:
 
 def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]:
     """Extract version number from checkpoint path if resuming.
-    
+
     Args:
         checkpoint_path: Path to checkpoint for resuming training
-        
+
     Returns:
         Version number if found, None otherwise
     """
     if not checkpoint_path:
         return None
-        
+
     # Try to extract version from checkpoint path (e.g., output/lightning_logs/version_0/checkpoints/...)
     path = pathlib.Path(checkpoint_path)
     for parent in path.parents:
@@ -77,46 +79,46 @@ def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]
     return None
 
 
-def setup_logger(config: Dict, output_dir: Optional[str], resume_from_checkpoint: Optional[str]) -> Union[TensorBoardLogger, object]:
+def setup_logger(
+    config: Dict, output_dir: Optional[str], resume_from_checkpoint: Optional[str]
+) -> Union[TensorBoardLogger, object]:
     """Setup logger based on configuration.
-    
+
     Args:
         config: Configuration dictionary
         output_dir: Output directory path (overrides config output_path)
         resume_from_checkpoint: Path to checkpoint for resuming training
-        
+
     Returns:
         Logger instance
     """
     # Use output_dir if provided, otherwise use config output_path
-    base_dir = output_dir if output_dir is not None else config.get("output_path", "output")
-    
+    base_dir = (
+        output_dir if output_dir is not None else config.get("output_path", "output")
+    )
+
     # Create the lightning_logs directory in the output path
     logs_dir = os.path.join(base_dir, "lightning_logs")
     os.makedirs(logs_dir, exist_ok=True)
-    
+
     # Extract version number from checkpoint path if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
-    
+
     logger_type = config["training"]["logger"]
     if logger_type == "wandb":
         import wandb
-        
+
         # Initialize wandb with the directory
         wandb.init(
-            project=config.get("project_name", "GenomeDiffusion"), 
+            project=config.get("project_name", "GenomeDiffusion"),
             config=config,
             dir=logs_dir,
-            resume="allow" if resume_from_checkpoint else None
+            resume="allow" if resume_from_checkpoint else None,
         )
         return wandb
     elif logger_type == "tb":
         # Use the lightning_logs directory for TensorBoard
-        tb_logger = TensorBoardLogger(
-            save_dir=logs_dir, 
-            name="",
-            version=version
-        )
+        tb_logger = TensorBoardLogger(save_dir=logs_dir, name="", version=version)
         return tb_logger
     else:
         raise ValueError(f"Logger '{logger_type}' not recognized. Use 'wandb' or 'tb'.")
@@ -150,11 +152,15 @@ def main(args):
     """Main training function."""
     # Load configuration
     config = load_config(args.config)
-    
+
     # Determine output directory (command line arg overrides config)
-    output_dir = args.output_dir if args.output_dir is not None else config.get("output_path", "output")
+    output_dir = (
+        args.output_dir
+        if args.output_dir is not None
+        else config.get("output_path", "output")
+    )
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Initialize model
     model = DiffusionModel(config)
 
@@ -194,7 +200,7 @@ def main(args):
         samples = model.generate_samples(
             num_samples=config["training"].get("num_samples", 10)
         )
-        
+
         # Save samples in the same version directory as the logs
         if hasattr(logger, "log_dir"):
             # For TensorBoard logger
@@ -202,7 +208,7 @@ def main(args):
         else:
             # Fallback to output directory
             samples_path = os.path.join(output_dir, "generated_samples.pt")
-            
+
         torch.save(samples, samples_path)
         print(f"Generated samples shape: {samples.shape}")
         print(f"Samples saved to {samples_path}")
