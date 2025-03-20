@@ -8,6 +8,7 @@ from typing import Dict, Sequence
 import numpy as np
 import torch
 import torch.nn as nn
+
 from .network_base import NetworkBase
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

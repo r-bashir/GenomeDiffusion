@@ -115,15 +115,17 @@ class DDPM:
         """
         return self._sigmas[t.long()]
 
-    def sample(self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+    def sample(
+        self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
+    ) -> torch.Tensor:
         """
         Samples from the forward diffusion process q(xt | x0).
-    
+
         Args:
             x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).
             t (torch.Tensor): Diffusion timesteps (batch_size,).
             eps (torch.Tensor): Gaussian noise with same shape as x0.
-    
+
         Returns:
             torch.Tensor: Noisy sample xt.
         """
@@ -132,9 +134,9 @@ class DDPM:
             alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor
             sigma_t = self.sigma(t).view(-1, 1, 1)
         else:  # [batch_size, seq_len]
-            alpha_t = self.alpha(t).view(-1, 1)     # Reshape for 2D tensor
+            alpha_t = self.alpha(t).view(-1, 1)  # Reshape for 2D tensor
             sigma_t = self.sigma(t).view(-1, 1)
-        
+
         xt = alpha_t * x0 + sigma_t * eps
         return xt
 
@@ -200,17 +202,19 @@ class DownsampleConv(nn.Module):
     def forward(self, x):
         # Store original length for debugging
         original_length = x.size(-1)
-        
+
         # For odd sequence lengths, use symmetric padding to better preserve edge information
         if x.size(-1) % 2 != 0:
-            x = F.pad(x, (1, 0), mode='reflect')  # Reflect padding preserves edge patterns better
-        
+            x = F.pad(
+                x, (1, 0), mode="reflect"
+            )  # Reflect padding preserves edge patterns better
+
         # Apply convolution
         x = self.conv(x)
-        
+
         # Debug print
         # print(f"Downsample: {original_length} -> {x.size(-1)}")
-        
+
         return x
 
 
@@ -230,26 +234,26 @@ class UpsampleConv(nn.Module):
     def forward(self, x, target_size=None):
         # Store original length for debugging
         original_length = x.size(-1)
-        
+
         # Apply transposed convolution
         x = self.conv(x)
-        
+
         # If target size is provided, ensure output matches it
         if target_size is not None and x.size(-1) != target_size:
             if x.size(-1) > target_size:
                 # If output is too long, center-crop
                 start = (x.size(-1) - target_size) // 2
-                x = x[:, :, start:start+target_size]
+                x = x[:, :, start : start + target_size]
             else:
                 # If output is too short, use reflect padding to better preserve edge information
                 diff = target_size - x.size(-1)
                 left_pad = diff // 2
                 right_pad = diff - left_pad
-                x = F.pad(x, (left_pad, right_pad), mode='reflect')
-            
+                x = F.pad(x, (left_pad, right_pad), mode="reflect")
+
         # Debug print
         # print(f"Upsample: {original_length} -> {x.size(-1)}")
-        
+
         return x
 
 
@@ -294,30 +298,26 @@ class ResnetBlock(nn.Module):
         self.block1 = nn.Sequential(
             nn.GroupNorm(groups, dim),
             nn.SiLU(),
-            nn.Conv1d(dim, dim_out, 3, padding='same'),
+            nn.Conv1d(dim, dim_out, 3, padding="same"),
         )
 
         # Second convolution with normalization and activation - use 'same' padding
         self.block2 = nn.Sequential(
             nn.GroupNorm(groups, dim_out),
             nn.SiLU(),
-            nn.Conv1d(dim_out, dim_out, 3, padding='same'),
+            nn.Conv1d(dim_out, dim_out, 3, padding="same"),
         )
 
         # Residual connection with projection if dimensions change
-        self.res_conv = (
-            nn.Conv1d(dim, dim_out, 1)
-            if dim != dim_out
-            else nn.Identity()
-        )
+        self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
         # Save input for residual connection
         identity = x
-        
+
         # First convolution
         h = self.block1(x)
-        
+
         # Add time embedding if available
         if self.mlp is not None and time_emb is not None:
             time_emb = self.mlp(time_emb)
@@ -327,10 +327,10 @@ class ResnetBlock(nn.Module):
             if h.size(-1) > 1:
                 time_emb = time_emb.expand(-1, -1, h.size(-1))
             h = h + time_emb
-        
+
         # Second convolution
         h = self.block2(h)
-        
+
         # No need for interpolation with 'same' padding
         # Residual connection
         return h + self.res_conv(identity)
@@ -346,12 +346,12 @@ class UNet1D(nn.Module):
 
     def __init__(
         self,
-        embedding_dim=64,        # Embedding dimension for time embeddings
+        embedding_dim=64,  # Embedding dimension for time embeddings
         dim_mults=(1, 2, 4, 8),  # Multipliers for feature dimensions at each UNet level
-        channels=1,              # Input channels (SNP data has a single channel)
-        with_time_emb=True,      # Whether to include time embeddings
-        resnet_block_groups=8,   # Number of groups in ResNet blocks for GroupNorm
-        seq_length=2067,         # Expected sequence length
+        channels=1,  # Input channels (SNP data has a single channel)
+        with_time_emb=True,  # Whether to include time embeddings
+        resnet_block_groups=8,  # Number of groups in ResNet blocks for GroupNorm
+        seq_length=2067,  # Expected sequence length
     ):
         super().__init__()
 
@@ -464,34 +464,34 @@ class UNet1D(nn.Module):
         # Ensure input has shape [batch, 1, seq_len]
         if x.dim() == 2:
             x = x.unsqueeze(1)
-        
+
         # Apply edge padding to better preserve boundary information
         # This extra padding helps the model learn edge patterns better
         edge_pad = 4  # Small padding to help with edge preservation
-        x_padded = F.pad(x, (edge_pad, edge_pad), mode='reflect')
-        
+        x_padded = F.pad(x, (edge_pad, edge_pad), mode="reflect")
+
         # Initial convolution
         x = self.init_conv(x_padded)
         t = self.time_mlp(time) if self.time_mlp else None
-        
+
         # Store intermediate activations and their lengths for skip connections
         h = []
-        
+
         # Track sequence lengths at each level for debugging
-        seq_lengths = [original_len + 2*edge_pad]
-        
+        seq_lengths = [original_len + 2 * edge_pad]
+
         # Downsampling
         for i, (block1, block2, _, downsample) in enumerate(self.downs):
             x = block1(x, t)
             x = block2(x, t)
             h.append(x)  # Save features for skip connection
-            
+
             # Track length before downsampling
             seq_lengths.append(x.size(-1))
-            
+
             # Apply downsampling
             x = downsample(x)
-            
+
             # Track length after downsampling
             seq_lengths.append(x.size(-1))
 
@@ -503,60 +503,60 @@ class UNet1D(nn.Module):
         for i, (block1, block2, _, upsample) in enumerate(self.ups):
             # Get skip connection
             skip_x = h.pop()
-            
+
             # Apply upsampling
             x = upsample(x)
-            
+
             # Ensure dimensions match for concatenation
             if x.size(-1) != skip_x.size(-1):
                 # If upsampled feature is longer, truncate
                 if x.size(-1) > skip_x.size(-1):
                     # Center-aligned crop to preserve spatial information
                     start = (x.size(-1) - skip_x.size(-1)) // 2
-                    x = x[:, :, start:start+skip_x.size(-1)]
+                    x = x[:, :, start : start + skip_x.size(-1)]
                 # If upsampled feature is shorter, pad symmetrically with reflection padding
                 else:
                     diff = skip_x.size(-1) - x.size(-1)
                     left_pad = diff // 2
                     right_pad = diff - left_pad
-                    x = F.pad(x, (left_pad, right_pad), mode='reflect')
-        
+                    x = F.pad(x, (left_pad, right_pad), mode="reflect")
+
             # Concatenate along channel dimension
             x = torch.cat((x, skip_x), dim=1)
-            
+
             # Apply blocks
             x = block1(x, t)
             x = block2(x, t)
 
         # Final convolution
         x = self.final_conv(x)
-        
+
         # Remove the extra padding we added at the beginning
-        if x.size(-1) > original_len + 2*edge_pad:
+        if x.size(-1) > original_len + 2 * edge_pad:
             # If output is longer, center-crop
-            start = (x.size(-1) - (original_len + 2*edge_pad)) // 2
-            x = x[:, :, start:start+(original_len + 2*edge_pad)]
-        
+            start = (x.size(-1) - (original_len + 2 * edge_pad)) // 2
+            x = x[:, :, start : start + (original_len + 2 * edge_pad)]
+
         # Remove the edge padding to get back to original size
         if edge_pad > 0:
             x = x[:, :, edge_pad:-edge_pad]
-        
+
         # Final check to ensure output has exactly the same length as input
         if x.size(-1) != original_len:
             if x.size(-1) > original_len:
                 # If still too long, center-crop
                 start = (x.size(-1) - original_len) // 2
-                x = x[:, :, start:start+original_len]
+                x = x[:, :, start : start + original_len]
             else:
                 # If too short, pad symmetrically with reflection
                 diff = original_len - x.size(-1)
                 left_pad = diff // 2
                 right_pad = diff - left_pad
-                x = F.pad(x, (left_pad, right_pad), mode='reflect')
-        
+                x = F.pad(x, (left_pad, right_pad), mode="reflect")
+
         # Print final dimensions for verification
         # print(f"Input length: {original_len}, Output length: {x.size(-1)}")
-        
+
         return x
 
 
@@ -607,32 +607,31 @@ class DiffusionModel(nn.Module):
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict the noise that was added during forward diffusion."""
         # Ensure x has the correct shape for UNet input
-        if len(x.shape) == 2:    # If shape is (batch_size, seq_len)
+        if len(x.shape) == 2:  # If shape is (batch_size, seq_len)
             x = x.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-    
+
         # Print input shape for debugging
         print(f"Noise prediction input shape: {x.shape}")
-    
+
         # Run through UNet
         pred_noise = self.unet(x, t)
-    
+
         # Print output shape for debugging
         print(f"Noise prediction output shape: {pred_noise.shape}")
-    
+
         return pred_noise
 
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the diffusion model.
-        
+
         Args:
             batch (torch.Tensor): Input batch of shape (batch_size, channels, seq_len).
-        
+
         Returns:
             torch.Tensor: Predicted noise
         """
         return self.forward_step(batch)
-
 
     def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model."""
@@ -644,25 +643,26 @@ class DiffusionModel(nn.Module):
         xt = self._forward_diffusion.sample(batch, t, eps)
 
         # Debugging print statements
-        print(f"Mean abs diff between x0 and xt: {(batch - xt).abs().mean().item()}")  # Check noise level
+        print(
+            f"Mean abs diff between x0 and xt: {(batch - xt).abs().mean().item()}"
+        )  # Check noise level
 
         # Ensure input has correct shape (batch_size, 1, seq_len)
-        if len(xt.shape) == 2:    # If shape is (batch_size, seq_len)
+        if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
             xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-        elif xt.shape[1] != 1:    # If incorrect number of channels
+        elif xt.shape[1] != 1:  # If incorrect number of channels
             print(f"Unexpected number of channels: {xt.shape[1]}, reshaping...")
-            xt = xt[:, :1, :]     # Force to 1 channel
+            xt = xt[:, :1, :]  # Force to 1 channel
         print(f"Final shape before UNet: {xt.shape}")
-              
+
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
-
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
         xt = alpha(t) * x0 + sigma(t)**2 * eps
-        
+
         Args:
             batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
 
@@ -678,7 +678,9 @@ class DiffusionModel(nn.Module):
         # Compute MSE loss
         return torch.mean((pred_eps - eps) ** 2)
 
-    def loss_per_timesteps(self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
+    def loss_per_timesteps(
+        self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
+    ) -> torch.Tensor:
         """Computes loss at specific timesteps."""
         losses = []
         for t in timesteps:
@@ -693,17 +695,20 @@ class DiffusionModel(nn.Module):
         return torch.stack(losses)
 
     def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
-        """Reverse diffusion step to estimate x_{t-1} given x_t. 
-        Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred), 
-        DDPM sampling method - algorithm 1: It formalizes the whole generative procedure."""
-        
+        """Reverse diffusion step to estimate x_{t-1} given x_t.
+        Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred),
+        DDPM sampling method - algorithm 1: It formalizes the whole generative procedure.
+        """
+
         xt = xt.to(device)
         t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
 
         eps_pred = self.predict_added_noise(xt, t)
 
         if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1)
+            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
+                t - 1
+            )
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
 
@@ -712,13 +717,13 @@ class DiffusionModel(nn.Module):
         inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
 
         mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
-        
+
         # DDPM instructs to use either the variance of the forward process
         # or the variance of posterior q(x_{t-1}|x_t, x_0). Former is easier.
 
         std = torch.sqrt(beta_t)
         z = torch.randn_like(xt, device=device)
-        
+
         # The reparameterization trick: N(mean, variance^2) = mean + std(sigma) * epsilon
         return mean + std * z
 
@@ -731,9 +736,11 @@ class DiffusionModel(nn.Module):
                 x = self._reverse_process_step(x, t)
 
                 if t % 100 == 0:
-                    print(f"Sampling at timestep {t}, mean: {x.mean().item()}, std: {x.std().item()}")
+                    print(
+                        f"Sampling at timestep {t}, mean: {x.mean().item()}, std: {x.std().item()}"
+                    )
 
             x = torch.clamp(x, 0, 1)
-        
+
         print(f"Final sample mean: {x.mean().item()}, std: {x.std().item()}")
         return x

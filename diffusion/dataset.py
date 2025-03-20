@@ -5,11 +5,12 @@
 
 import argparse
 import os
+
 import numpy as np
-from scipy import stats
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+from scipy import stats
 
 
 # load dataset
@@ -24,7 +25,7 @@ def load_data(input_path=None):
     data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
     data = np.where(data == 1, 0.5, data)  # Map 1 to 0.5
     data = np.where(data == 2, 1.0, data)  # Map 2 to 1.0
-    
+
     # replace missing values with most frequent value
     data = np.where(data == 9, 0.0, data)  # Map 9 to 0.0
 
@@ -199,31 +200,32 @@ def check_path_exists(path):
     """Check if a path exists."""
     return os.path.exists(path)
 
+
 def main(args):
     """Main function to test SNPDataset and SNPDataModule."""
-    
+
     # Test Loading
     print("\nExamining data:")
     dataset = load_data(input_path=args.input_path)
-       
+
     # Analyze unique values in the data
     unique_values = torch.unique(dataset)
     print(f"\nUnique values in data: {unique_values.tolist()}")
-    
+
     # Count occurrences of each value
     value_counts = {}
     for value in [0.0, 0.5, 1.0, 9.0]:
         count = (dataset == value).sum().item()
         percentage = (count / dataset.numel()) * 100
         value_counts[value] = (count, percentage)
-    
+
     print("\nValue distribution (percentage):")
     for value, (count, percentage) in value_counts.items():
         print(f"{value:.1f}: {count} occurrences ({percentage:.2f}%)")
 
     print(f"Dataset length: {len(dataset)}")
     print(f"First example: {dataset[0].shape}")
-        
+
     # Test SNPDataset
     print("\nTesting SNPDataset Class:")
     snp_dataset = SNPDataset(args.input_path)

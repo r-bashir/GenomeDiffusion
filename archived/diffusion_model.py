@@ -58,8 +58,7 @@ class DiffusionModel(nn.Module):
             torch.Tensor: Predicted noise that was added during forward diffusion
         """
         return self.unet(x, t)
-        
-        
+
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model.
 
@@ -86,7 +85,7 @@ class DiffusionModel(nn.Module):
 
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
-        
+
         # Debugging print statements
         print(f"Shape before, ensuring 1 channel: {xt.shape}")
 
@@ -96,19 +95,17 @@ class DiffusionModel(nn.Module):
         elif xt.shape[1] != 1:  # If incorrect number of channels
             print(f"Unexpected number of channels: {xt.shape[1]}, reshaping...")
             xt = xt[:, :1, :]  # Force to 1 channel
-        
+
         print(f"Final shape before UNet: {xt.shape}")
-              
+
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
-        
-        
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
         xt = alpha(t) * x0 + sigma(t)**2 * eps
-        
+
         Args:
             batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
 
