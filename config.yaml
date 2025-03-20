@@ -52,8 +52,7 @@ training:
   
   # Generation settings
   num_samples: 10  # Number of samples to generate
-  logger: 'tb'
-  tb_log_dir: "output/logs"  # Add this line
+  logger: 'wandb'
 
 # Optimizer
 optimizer:

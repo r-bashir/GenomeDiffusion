@@ -19,7 +19,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
 )
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 
 from diffusion_model import DiffusionModel
 
@@ -81,7 +81,7 @@ def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]
 
 def setup_logger(
     config: Dict, output_dir: Optional[str], resume_from_checkpoint: Optional[str]
-) -> Union[TensorBoardLogger, object]:
+) -> Union[TensorBoardLogger, WandbLogger]:
     """Setup logger based on configuration.
 
     Args:
@@ -107,15 +107,16 @@ def setup_logger(
     logger_type = config["training"]["logger"]
     if logger_type == "wandb":
         import wandb
-
-        # Initialize wandb with the directory
-        wandb.init(
+        
+        # Create a proper WandbLogger instance
+        wandb_logger = WandbLogger(
             project=config.get("project_name", "GenomeDiffusion"),
+            save_dir=logs_dir,
             config=config,
-            dir=logs_dir,
+            version=version,
             resume="allow" if resume_from_checkpoint else None,
         )
-        return wandb
+        return wandb_logger
     elif logger_type == "tb":
         # Use the lightning_logs directory for TensorBoard
         tb_logger = TensorBoardLogger(save_dir=logs_dir, name="", version=version)
@@ -203,7 +204,7 @@ def main(args):
 
         # Save samples in the same version directory as the logs
         if hasattr(logger, "log_dir"):
-            # For TensorBoard logger
+            # For TensorBoard or WandbLogger
             samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
         else:
             # Fallback to output directory
