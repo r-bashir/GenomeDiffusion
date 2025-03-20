@@ -31,7 +31,7 @@ data:
 # Training
 training:
   # Basic training settings
-  num_epochs: 100
+  num_epochs: 30
   gradient_clip_val: 1.0
   save_top_k: 3
   
@@ -53,7 +53,7 @@ training:
   # Generation settings
   num_samples: 10  # Number of samples to generate
   logger: 'tb'
-  tb_log_dir: "./logs"  # Add this line
+  tb_log_dir: "output/logs"  # Add this line
 
 # Optimizer
 optimizer:

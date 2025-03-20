@@ -115,35 +115,31 @@ class DDPM:
         """
         return self._sigmas[t.long()]
 
-    def sample(
-        self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
-    ) -> torch.Tensor:
+    def sample(self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
         """
         Samples from the forward diffusion process q(xt | x0).
-
+    
         Args:
-            x0 (torch.Tensor): Original clean input (batch_size, seq_len).
+            x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).
             t (torch.Tensor): Diffusion timesteps (batch_size,).
-            eps (torch.Tensor): Gaussian noise (batch_size, seq_len).
-
+            eps (torch.Tensor): Gaussian noise with same shape as x0.
+    
         Returns:
             torch.Tensor: Noisy sample xt.
         """
-        alpha_t = self.alpha(t).view(-1, 1)  # Ensure proper broadcasting
-        sigma_t = self.sigma(t).view(-1, 1)
-        return alpha_t * x0 + sigma_t * eps
+        # Reshape alpha_t and sigma_t according to the input shape
+        if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
+            alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor
+            sigma_t = self.sigma(t).view(-1, 1, 1)
+        else:  # [batch_size, seq_len]
+            alpha_t = self.alpha(t).view(-1, 1)     # Reshape for 2D tensor
+            sigma_t = self.sigma(t).view(-1, 1)
+        
+        xt = alpha_t * x0 + sigma_t * eps
+        return xt
 
 
-# --------------------------------------- Denoising Process
-# Positional Embedding
-
-# - Takes in a batch of scalar time steps and ensures they are 1D.
-# - Computes frequency scales using an exponential decay function.
-# - Generates sinusoidal embeddings by applying sin and cos transformations.
-# - Ensures correct feature dimension by adding padding if necessary.
-# - Returns structured time embeddings that can be used in U-Net-based diffusion models.
-
-
+# Denoising Process
 class SinusoidalPositionalEmbeddings(nn.Module):
     """Sinusoidal positional embedding (used for time steps in diffusion models)."""
 
@@ -192,19 +188,30 @@ class Residual(nn.Module):
 class DownsampleConv(nn.Module):
     def __init__(self, dim):
         super().__init__()
+        # For downsampling we need stride=2, but we'll handle padding carefully
         self.conv = nn.Conv1d(
             in_channels=dim,
             out_channels=dim,
-            kernel_size=2,  # Even kernel size for exact halving
+            kernel_size=3,
             stride=2,
-            padding=0,  # No padding needed
+            padding=1,  # This ensures proper dimension handling for even lengths
         )
 
     def forward(self, x):
-        # Ensure even length for downsampling
+        # Store original length for debugging
+        original_length = x.size(-1)
+        
+        # For odd sequence lengths, use symmetric padding to better preserve edge information
         if x.size(-1) % 2 != 0:
-            x = F.pad(x, (0, 1))
-        return self.conv(x)
+            x = F.pad(x, (1, 0), mode='reflect')  # Reflect padding preserves edge patterns better
+        
+        # Apply convolution
+        x = self.conv(x)
+        
+        # Debug print
+        # print(f"Downsample: {original_length} -> {x.size(-1)}")
+        
+        return x
 
 
 # Convolutional Layer for Upsampling
@@ -214,14 +221,36 @@ class UpsampleConv(nn.Module):
         self.conv = nn.ConvTranspose1d(
             in_channels=dim,
             out_channels=dim,
-            kernel_size=2,  # Even kernel size for exact doubling
+            kernel_size=4,
             stride=2,
-            padding=0,  # No padding needed
+            padding=1,
+            output_padding=0,  # This helps control the output size
         )
-        self.original_len = None  # Store original length for exact recovery
 
-    def forward(self, x):
-        return self.conv(x)
+    def forward(self, x, target_size=None):
+        # Store original length for debugging
+        original_length = x.size(-1)
+        
+        # Apply transposed convolution
+        x = self.conv(x)
+        
+        # If target size is provided, ensure output matches it
+        if target_size is not None and x.size(-1) != target_size:
+            if x.size(-1) > target_size:
+                # If output is too long, center-crop
+                start = (x.size(-1) - target_size) // 2
+                x = x[:, :, start:start+target_size]
+            else:
+                # If output is too short, use reflect padding to better preserve edge information
+                diff = target_size - x.size(-1)
+                left_pad = diff // 2
+                right_pad = diff - left_pad
+                x = F.pad(x, (left_pad, right_pad), mode='reflect')
+            
+        # Debug print
+        # print(f"Upsample: {original_length} -> {x.size(-1)}")
+        
+        return x
 
 
 # Convolutional Block with Normalization and Activations
@@ -231,7 +260,11 @@ class ConvBlock(nn.Module):
     def __init__(self, dim_in, dim_out, groups=8):
         super().__init__()
         self.conv = nn.Conv1d(
-            dim_in, dim_out, kernel_size=3, padding="same"
+            in_channels=dim_in,
+            out_channels=dim_out,
+            kernel_size=3,
+            stride=1,
+            padding="same",
         )  # 1D Convolutional Layer
         self.norm = nn.GroupNorm(groups, dim_out)  # Group Normalization
         self.act = nn.SiLU()  # SiLU Activation
@@ -245,85 +278,92 @@ class ConvBlock(nn.Module):
 
 # ResnetBlock
 class ResnetBlock(nn.Module):
-    """1D CNN with residual connections and optional time embedding."""
+    """
+    A residual block with two convolutions and optional time embedding.
+    """
 
-    def __init__(self, in_dim, out_dim, time_emb_dim=None, groups=8):
+    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
         super().__init__()
+        self.mlp = (
+            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
+            if time_emb_dim is not None
+            else None
+        )
 
-        # Time embedding layer (optional)
-        if time_emb_dim is not None:
-            self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_dim))
-        else:
-            self.mlp = None
-
-        # Convolutional Blocks with proper GroupNorm
-        # Use 1 group for small dimensions, more for larger ones
-        groups2 = min(groups, out_dim)
-
-        # Convolutional Blocks with proper GroupNorm
+        # First convolution with normalization and activation - use 'same' padding
         self.block1 = nn.Sequential(
-            nn.Conv1d(in_dim, out_dim, kernel_size=3, padding="same"),
-            nn.GroupNorm(groups2, out_dim),
+            nn.GroupNorm(groups, dim),
             nn.SiLU(),
+            nn.Conv1d(dim, dim_out, 3, padding='same'),
         )
 
+        # Second convolution with normalization and activation - use 'same' padding
         self.block2 = nn.Sequential(
-            nn.Conv1d(out_dim, out_dim, kernel_size=3, padding="same"),
-            nn.GroupNorm(groups2, out_dim),
+            nn.GroupNorm(groups, dim_out),
             nn.SiLU(),
+            nn.Conv1d(dim_out, dim_out, 3, padding='same'),
         )
 
-        # Residual connection
+        # Residual connection with projection if dimensions change
         self.res_conv = (
-            nn.Conv1d(in_dim, out_dim, kernel_size=1, padding="same")
-            if in_dim != out_dim
+            nn.Conv1d(dim, dim_out, 1)
+            if dim != dim_out
             else nn.Identity()
         )
 
     def forward(self, x, time_emb=None):
+        # Save input for residual connection
+        identity = x
+        
         # First convolution
         h = self.block1(x)
-
+        
         # Add time embedding if available
         if self.mlp is not None and time_emb is not None:
             time_emb = self.mlp(time_emb)
-            time_emb = time_emb.view(
-                time_emb.shape[0], time_emb.shape[1], 1
-            )  # Ensure correct shape
+            # Reshape time embedding to match feature map dimensions
+            time_emb = time_emb.view(time_emb.shape[0], time_emb.shape[1], 1)
+            # Ensure time embedding is broadcast correctly
+            if h.size(-1) > 1:
+                time_emb = time_emb.expand(-1, -1, h.size(-1))
             h = h + time_emb
-
+        
         # Second convolution
         h = self.block2(h)
-
+        
+        # No need for interpolation with 'same' padding
         # Residual connection
-        return h + self.res_conv(x)
+        return h + self.res_conv(identity)
 
 
 # Denoising Process: UNet
 class UNet1D(nn.Module):
     """
-    A 1D U-Net model with residual connections and optional sinusoidal time embeddings.
+    A 1D U-Net model with residual connections and sinusoidal time embeddings.
 
     Designed for processing SNP data, which is represented as a 1D sequence.
     """
 
     def __init__(
         self,
-        embedding_dim=64,  # Embedding dimension for time embeddings
+        embedding_dim=64,        # Embedding dimension for time embeddings
         dim_mults=(1, 2, 4, 8),  # Multipliers for feature dimensions at each UNet level
-        channels=1,  # Input channels (SNP data has a single channel)
-        with_time_emb=True,  # Whether to include time embeddings
-        resnet_block_groups=8,  # Number of groups in ResNet blocks for GroupNorm
+        channels=1,              # Input channels (SNP data has a single channel)
+        with_time_emb=True,      # Whether to include time embeddings
+        resnet_block_groups=8,   # Number of groups in ResNet blocks for GroupNorm
+        seq_length=2067,         # Expected sequence length
     ):
         super().__init__()
 
         self.channels = channels
+        self.seq_length = seq_length  # Make sequence length configurable
+
         # Start with a small initial dimension
         init_dim = 16  # Fixed small initial dimension
         out_dim = channels  # Default output channels to match input
 
         # Initial convolutional layer with same padding
-        kernel_size = 7
+        kernel_size = 3
         padding = (kernel_size - 1) // 2
         self.init_conv = nn.Conv1d(
             channels, init_dim, kernel_size=kernel_size, padding=padding
@@ -414,49 +454,115 @@ class UNet1D(nn.Module):
         Returns:
             torch.Tensor: Denoised output.
         """
+        # Check input dimensions
+        batch, c, seq_len = x.shape
+        assert c == self.channels, f"Expected {self.channels} channels, got {c}"
+
         # Store original sequence length
         original_len = x.size(-1)
 
         # Ensure input has shape [batch, 1, seq_len]
         if x.dim() == 2:
             x = x.unsqueeze(1)
-
+        
+        # Apply edge padding to better preserve boundary information
+        # This extra padding helps the model learn edge patterns better
+        edge_pad = 4  # Small padding to help with edge preservation
+        x_padded = F.pad(x, (edge_pad, edge_pad), mode='reflect')
+        
         # Initial convolution
-        x = self.init_conv(x)
+        x = self.init_conv(x_padded)
         t = self.time_mlp(time) if self.time_mlp else None
-        h = []  # Store intermediate activations and their lengths
-
+        
+        # Store intermediate activations and their lengths for skip connections
+        h = []
+        
+        # Track sequence lengths at each level for debugging
+        seq_lengths = [original_len + 2*edge_pad]
+        
         # Downsampling
-        for block1, block2, _, downsample in self.downs:
+        for i, (block1, block2, _, downsample) in enumerate(self.downs):
             x = block1(x, t)
             x = block2(x, t)
-            h.append((x, x.size(-1)))  # Save both features and length
+            h.append(x)  # Save features for skip connection
+            
+            # Track length before downsampling
+            seq_lengths.append(x.size(-1))
+            
+            # Apply downsampling
             x = downsample(x)
+            
+            # Track length after downsampling
+            seq_lengths.append(x.size(-1))
 
         # Bottleneck
         x = self.mid_block1(x, t)
         x = self.mid_block2(x, t)
 
         # Upsampling
-        for block1, block2, _, upsample in self.ups:
-            prev_x, prev_len = h.pop()
+        for i, (block1, block2, _, upsample) in enumerate(self.ups):
+            # Get skip connection
+            skip_x = h.pop()
+            
+            # Apply upsampling
             x = upsample(x)
-            # Ensure x matches the length of the skip connection
-            if x.size(-1) != prev_x.size(-1):
-                x = F.interpolate(x, size=prev_x.size(-1), mode="linear")
-            x = torch.cat((x, prev_x), dim=1)
+            
+            # Ensure dimensions match for concatenation
+            if x.size(-1) != skip_x.size(-1):
+                # If upsampled feature is longer, truncate
+                if x.size(-1) > skip_x.size(-1):
+                    # Center-aligned crop to preserve spatial information
+                    start = (x.size(-1) - skip_x.size(-1)) // 2
+                    x = x[:, :, start:start+skip_x.size(-1)]
+                # If upsampled feature is shorter, pad symmetrically with reflection padding
+                else:
+                    diff = skip_x.size(-1) - x.size(-1)
+                    left_pad = diff // 2
+                    right_pad = diff - left_pad
+                    x = F.pad(x, (left_pad, right_pad), mode='reflect')
+        
+            # Concatenate along channel dimension
+            x = torch.cat((x, skip_x), dim=1)
+            
+            # Apply blocks
             x = block1(x, t)
             x = block2(x, t)
 
-        # Final convolution and ensure output length matches input
+        # Final convolution
         x = self.final_conv(x)
+        
+        # Remove the extra padding we added at the beginning
+        if x.size(-1) > original_len + 2*edge_pad:
+            # If output is longer, center-crop
+            start = (x.size(-1) - (original_len + 2*edge_pad)) // 2
+            x = x[:, :, start:start+(original_len + 2*edge_pad)]
+        
+        # Remove the edge padding to get back to original size
+        if edge_pad > 0:
+            x = x[:, :, edge_pad:-edge_pad]
+        
+        # Final check to ensure output has exactly the same length as input
         if x.size(-1) != original_len:
-            x = F.interpolate(x, size=original_len, mode="linear")
-
+            if x.size(-1) > original_len:
+                # If still too long, center-crop
+                start = (x.size(-1) - original_len) // 2
+                x = x[:, :, start:start+original_len]
+            else:
+                # If too short, pad symmetrically with reflection
+                diff = original_len - x.size(-1)
+                left_pad = diff // 2
+                right_pad = diff - left_pad
+                x = F.pad(x, (left_pad, right_pad), mode='reflect')
+        
+        # Print final dimensions for verification
+        # print(f"Input length: {original_len}, Output length: {x.size(-1)}")
+        
         return x
 
 
-# Final Diffusion Model
+# Diffusion Model: We wont use this model, since it is an nn.Module for PyTorch.
+# To use it with PyTorch Lighting, we have transfered it to 'diffusion_model.py'
+# as a LightingModule with additional hooks for training. Kept it for PyTorch.
 class DiffusionModel(nn.Module):
     """Diffusion model with 1D Convolutional network for SNP data.
 
@@ -471,16 +577,9 @@ class DiffusionModel(nn.Module):
         Initialize the diffusion model with hyperparameters.
 
         Args:
-            hparams: Dictionary containing model hyperparameters with the following structure:
-                    {
-                        'input_path': str,  # Path to input data
-                        'diffusion': {'num_diffusion_timesteps': int, 'beta_start': float, 'beta_end': float},
-                        'time_sampler': {'tmin': int, 'tmax': int},
-                        'unet': {'embedding_dim': int, 'dim_mults': List[int], ...},
-                        'data': {'seq_length': int, 'batch_size': int, 'num_workers': int}
-                    }
+            hparams: Dictionary containing model hyperparameters.
         """
-        super().__init__(hparams=hparams)
+        super().__init__()
 
         # Set data shape
         self._data_shape = (hparams["unet"]["channels"], hparams["data"]["seq_length"])
@@ -502,31 +601,41 @@ class DiffusionModel(nn.Module):
             channels=hparams["unet"]["channels"],
             with_time_emb=hparams["unet"]["with_time_emb"],
             resnet_block_groups=hparams["unet"]["resnet_block_groups"],
+            seq_length=hparams["data"]["seq_length"],
         )
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Predict the noise that was added during forward diffusion.
-        This is a key part of the DDPM's reverse process - the UNet learns to
-        predict what noise was added, which helps us denoise the data.
+        """Predict the noise that was added during forward diffusion."""
+        # Ensure x has the correct shape for UNet input
+        if len(x.shape) == 2:    # If shape is (batch_size, seq_len)
+            x = x.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
+    
+        # Print input shape for debugging
+        print(f"Noise prediction input shape: {x.shape}")
+    
+        # Run through UNet
+        pred_noise = self.unet(x, t)
+    
+        # Print output shape for debugging
+        print(f"Noise prediction output shape: {pred_noise.shape}")
+    
+        return pred_noise
 
-        Args:
-            x (torch.Tensor): Noisy input tensor at timestep t
-            t (torch.Tensor): Current timestep tensor
-
-        Returns:
-            torch.Tensor: Predicted noise that was added during forward diffusion
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """
-        return self.unet(x, t)
-
-    def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
-        """Perform a forward pass through the model.
-
+        Forward pass of the diffusion model.
+        
         Args:
-            batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
-
+            batch (torch.Tensor): Input batch of shape (batch_size, channels, seq_len).
+        
         Returns:
             torch.Tensor: Predicted noise
         """
+        return self.forward_step(batch)
+
+
+    def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
+        """Perform a forward pass through the model."""
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
         eps = torch.randn_like(batch)
@@ -534,20 +643,33 @@ class DiffusionModel(nn.Module):
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
 
+        # Debugging print statements
+        print(f"Mean abs diff between x0 and xt: {(batch - xt).abs().mean().item()}")  # Check noise level
+
+        # Ensure input has correct shape (batch_size, 1, seq_len)
+        if len(xt.shape) == 2:    # If shape is (batch_size, seq_len)
+            xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
+        elif xt.shape[1] != 1:    # If incorrect number of channels
+            print(f"Unexpected number of channels: {xt.shape[1]}, reshaping...")
+            xt = xt[:, :1, :]     # Force to 1 channel
+        print(f"Final shape before UNet: {xt.shape}")
+              
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
+
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
-
+        xt = alpha(t) * x0 + sigma(t)**2 * eps
+        
         Args:
             batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
 
         Returns:
             torch.Tensor: MSE loss
         """
-        # Sample noise
+        # Sample true noise
         eps = torch.randn_like(batch)
 
         # Get model predictions
@@ -556,58 +678,32 @@ class DiffusionModel(nn.Module):
         # Compute MSE loss
         return torch.mean((pred_eps - eps) ** 2)
 
-    def loss_per_timesteps(
-        self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Computes loss at specific timesteps.
-
-        Args:
-            x0 (torch.Tensor): Original clean input data (batch_size, channels, seq_len).
-            eps (torch.Tensor): Sampled noise of same shape as x0.
-            timesteps (torch.Tensor): Timesteps to evaluate.
-
-        Returns:
-            torch.Tensor: Loss values for each timestep.
-        """
+    def loss_per_timesteps(self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor) -> torch.Tensor:
+        """Computes loss at specific timesteps."""
         losses = []
         for t in timesteps:
             t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
-            # Forward diffusion at timestep t
             xt = self._forward_diffusion.sample(x0, t, eps)
 
-            # Predict noise that was added
             predicted_noise = self.predict_added_noise(xt, t)
-
-            # Compute loss at this timestep
             loss = torch.mean((predicted_noise - eps) ** 2)
             losses.append(loss)
 
+        print(f"Loss across timesteps: {torch.stack(losses).detach().cpu().numpy()}")
         return torch.stack(losses)
 
     def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
-        """
-        Reverse diffusion step to estimate x_{t-1} given x_t.
-
-        Args:
-            xt (torch.Tensor): Noisy input at time t of shape (batch_size, channels, seq_len).
-            t (int): Current timestep.
-
-        Returns:
-            torch.Tensor: Estimated previous timestep data.
-        """
-        # Move input to device and create timestep tensor
+        """Reverse diffusion step to estimate x_{t-1} given x_t. 
+        Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred), 
+        DDPM sampling method - algorithm 1: It formalizes the whole generative procedure."""
+        
         xt = xt.to(device)
         t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
 
-        # Predict noise that was added during forward diffusion
         eps_pred = self.predict_added_noise(xt, t)
 
-        # Compute reverse process parameters
         if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
-                t - 1
-            )
+            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1)
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
 
@@ -615,34 +711,29 @@ class DiffusionModel(nn.Module):
         beta_t = 1.0 - sqrt_a_t**2
         inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
 
-        # Compute mean and standard deviation
         mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
-        std = torch.sqrt(beta_t)
+        
+        # DDPM instructs to use either the variance of the forward process
+        # or the variance of posterior q(x_{t-1}|x_t, x_0). Former is easier.
 
-        # Add noise scaled by standard deviation
+        std = torch.sqrt(beta_t)
         z = torch.randn_like(xt, device=device)
+        
+        # The reparameterization trick: N(mean, variance^2) = mean + std(sigma) * epsilon
         return mean + std * z
 
     def sample(self, sample_size: int) -> torch.Tensor:
-        """
-        Samples from the learned reverse diffusion process without conditioning.
-        Implements the full reverse diffusion chain, starting from pure noise and
-        gradually denoising to generate SNP data.
-
-        Args:
-            sample_size (int): Number of samples to generate.
-
-        Returns:
-            torch.Tensor: Generated samples of shape (sample_size, channels, seq_len).
-        """
+        """Samples from the learned reverse diffusion process without conditioning."""
         with torch.no_grad():
-            # Start from pure noise
             x = torch.randn((sample_size,) + self._data_shape)
 
-            # Gradually denoise
             for t in range(self._forward_diffusion.tmax, 0, -1):
                 x = self._reverse_process_step(x, t)
 
-            # Ensure output is in correct range (typically [0,1] for SNP data)
+                if t % 100 == 0:
+                    print(f"Sampling at timestep {t}, mean: {x.mean().item()}, std: {x.std().item()}")
+
             x = torch.clamp(x, 0, 1)
+        
+        print(f"Final sample mean: {x.mean().item()}, std: {x.std().item()}")
         return x
