@@ -44,14 +44,6 @@ class SNPDataset(torch.utils.data.Dataset):
         if self.data is None or len(self.data) == 0:
             raise ValueError("Loaded data is empty or None.")
 
-    def print_value_distribution(self):
-        """Prints the distribution of values in the dataset as percentages."""
-        values, counts = torch.unique(self.data, return_counts=True)
-        total = self.data.numel()
-        for value, count in zip(values, counts):
-            percentage = (count.item() / total) * 100
-            print(f"{value.item():.1f}: {percentage:.2f}%")
-
     def __len__(self):
         return self.data.shape[0]
 
@@ -230,15 +222,13 @@ def main(args):
         print(f"{value:.1f}: {count} occurrences ({percentage:.2f}%)")
 
     print(f"Dataset length: {len(dataset)}")
-    print(f"First example: {dataset[0]}")
+    print(f"First example: {dataset[0].shape}")
         
     # Test SNPDataset
     print("\nTesting SNPDataset Class:")
     snp_dataset = SNPDataset(args.input_path)
-    print(f"Value distribution (percentage):")
-    snp_dataset.print_value_distribution()
     print(f"Dataset length: {len(snp_dataset)}")
-    print(f"First example: {snp_dataset[0]}")
+    print(f"First example: {snp_dataset[0].shape}")
 
     # Test SNPDataModule
     print("\nTesting SNPDataModule Class:")
@@ -247,7 +237,7 @@ def main(args):
     print(f"Train batches: {len(data_module.train_dataloader())}")
     batch = next(iter(data_module.train_dataloader()))
     print(f"Batch length: {len(batch)}")
-    print(f"First example: {batch[0]}")
+    print(f"First example: {batch[0].shape}")
 
 
 if __name__ == "__main__":
