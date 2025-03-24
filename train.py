@@ -107,6 +107,15 @@ def setup_logger(
     logger_type = config["training"]["logger"]
     if logger_type == "wandb":
         import wandb
+        import os
+
+        # Get WANDB API key from environment
+        wandb_key = os.environ.get("WANDB_API_KEY")
+        if not wandb_key:
+            raise ValueError("WANDB_API_KEY environment variable not set")
+        
+        # Initialize wandb with API key
+        wandb.login(key=wandb_key)
         
         # Create a proper WandbLogger instance
         wandb_logger = WandbLogger(

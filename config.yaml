@@ -1,6 +1,7 @@
 # Input data path
 input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 output_path: "output"
+project_name: "GenomeDiffusion"  # Project name for wandb
 
 # DDPM
 diffusion:
@@ -31,14 +32,14 @@ data:
 # Training
 training:
   # Basic training settings
-  num_epochs: 3
+  num_epochs: 10
   gradient_clip_val: 1.0
   save_top_k: 3
+  logger: "wandb"  # Use wandb for logging
   
   # Memory optimization
-  gradient_checkpointing: true  # Enable gradient checkpointing
-  precision: 16  # Use mixed precision training
-  
+  gradient_checkpointing: true  # Enable gradient checkpointing  
+
   # Training optimization
   grad_accum: 2  # Gradient accumulation steps
   val_check_interval: 0.5  # Validate twice per epoch
@@ -52,7 +53,6 @@ training:
   
   # Generation settings
   num_samples: 10  # Number of samples to generate
-  logger: 'wandb'
 
 # Optimizer
 optimizer:

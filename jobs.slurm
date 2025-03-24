@@ -20,6 +20,9 @@ CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
 PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
+# Set Weights & Biases API key
+export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
+
 # Validate paths before execution
 if [[ ! -f "$CONTAINER" ]]; then
     echo "Error: Container file $CONTAINER not found!" >&2
@@ -45,9 +48,15 @@ echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 echo "Running with ${SLURM_MEM_PER_NODE} MB of memory and ${SLURM_CPUS_PER_TASK} CPUs"
 echo ""
 
-# Run inside Apptainer, ensuring data is mapped correctly
-apptainer exec --nv -B $PROJECT_DIR:/workspace -B $DATA_DIR:/workspace/data \
-$CONTAINER bash -c "cd /workspace && python train.py --config config.yaml" || {
+# Run the container
+apptainer exec \
+    --nv \
+    --bind $PROJECT_DIR:/workspace \
+    --bind $DATA_DIR:/data \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER \
+    python /workspace/train.py \
+    --config /workspace/config.yaml || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
@@ -59,4 +68,3 @@ ELAPSED_TIME=$SECONDS  # Get elapsed seconds
 echo ""
 echo "Job $SLURM_JOB_ID finished at $END_TIME"
 echo "Total execution time: $(($ELAPSED_TIME / 60)) min $(($ELAPSED_TIME % 60)) sec"
-
