@@ -135,7 +135,11 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Return values (they should already be on the correct device)
+        # Ensure idx is on the same device as _alphas
+        if idx.device != self._alphas.device:
+            idx = idx.to(self._alphas.device)
+        
+        # Return values on the correct device
         return self._alphas[idx]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
@@ -153,7 +157,11 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Return values (they should already be on the correct device)
+        # Ensure idx is on the same device as _sigmas
+        if idx.device != self._sigmas.device:
+            idx = idx.to(self._sigmas.device)
+        
+        # Return values on the correct device
         return self._sigmas[idx]
 
     def sample(
@@ -260,7 +268,11 @@ class DDPMModule(nn.Module):
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Return values (they should already be on the correct device)
+        # Ensure idx is on the same device as _alphas
+        if idx.device != self._alphas.device:
+            idx = idx.to(self._alphas.device)
+        
+        # Return values on the correct device
         return self._alphas[idx]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
@@ -278,7 +290,11 @@ class DDPMModule(nn.Module):
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Return values (they should already be on the correct device)
+        # Ensure idx is on the same device as _sigmas
+        if idx.device != self._sigmas.device:
+            idx = idx.to(self._sigmas.device)
+        
+        # Return values on the correct device
         return self._sigmas[idx]
 
     def sample(
