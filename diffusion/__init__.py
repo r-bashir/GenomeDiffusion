@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-from .dataset import SNPDataModule, SNPDataset
-from .models import DDPM, DDPMModule, DiffusionModel, UNet1D, UniformDiscreteTimeSampler
-
+from .dataset import SNPDataset, SNPDataModule
+from .models import DDPM, DDPMModule, DiffusionModel, UNet1D, 
+from .models import UniformDiscreteTimeSampler, UniformContinuousTimeSampler
 __all__ = [
     "SNPDataset",
     "SNPDataModule",
@@ -12,4 +12,5 @@ __all__ = [
     "UNet1D",
     "DiffusionModel",
     "UniformDiscreteTimeSampler",
+    "UniformContinuousTimeSampler",
 ]

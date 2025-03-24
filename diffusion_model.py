@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from diffusion import DDPMModule, SNPDataset, UNet1D, UniformDiscreteTimeSampler
+from diffusion import (DDPM, SNPDataset, UNet1D, UniformContinuousTimeSampler) # noqa
 from network_base import NetworkBase
 
 
