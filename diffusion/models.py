@@ -357,7 +357,8 @@ class SinusoidalPositionalEmbeddings(nn.Module):
         Returns:
             torch.Tensor: Embeddings of shape (batch_size, dim).
         """
-        device = time.device
+        device = time.device if torch.is_tensor(time) else torch.device('cpu')
+        time = torch.as_tensor(time, device=device)
         half_dim = self.dim // 2
         e = math.log(10000.0) / (half_dim - 1)
         inv_freq = torch.exp(-e * torch.arange(half_dim, device=device).float())
