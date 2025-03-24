@@ -69,30 +69,25 @@ class DDPM:
         num_diffusion_timesteps: int = 1000,
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
-        device=None,
     ):
-        """
-        Initializes the diffusion process.
+        """Initialize the DDPM.
 
         Args:
             num_diffusion_timesteps (int): Number of diffusion steps.
             beta_start (float): Initial beta value.
             beta_end (float): Final beta value.
-            device: Device to place tensors on (default: None, will use CUDA if available).
         """
         self._num_diffusion_timesteps = num_diffusion_timesteps
         self._beta_start = beta_start
         self._beta_end = beta_end
         
-        # Set device (use CUDA if available)
-        self.device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
         self._betas = np.linspace(
             self._beta_start, self._beta_end, self._num_diffusion_timesteps
         )
         alphas_bar = self._get_alphas_bar()
-        self._alphas = torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32).to(self.device)
-        self._sigmas = torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32).to(self.device)
+        self._alphas = torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
+        self._sigmas = torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
+
 
     @property
     def tmin(self) -> int:
@@ -121,14 +116,11 @@ class DDPM:
         Returns:
             torch.Tensor: Alpha values corresponding to timesteps.
         """
-        # Ensure t is on the correct device
-        t = t.to(self.device)
-        
         # Ensure t is in the valid range
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        return self._alphas[idx]
+        return self._alphas[idx].to(t.device)
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -140,14 +132,11 @@ class DDPM:
         Returns:
             torch.Tensor: Sigma values corresponding to timesteps.
         """
-        # Ensure t is on the correct device
-        t = t.to(self.device)
-        
         # Ensure t is in the valid range
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        return self._sigmas[idx]
+        return self._sigmas[idx].to(t.device)
 
     def sample(
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
@@ -163,11 +152,6 @@ class DDPM:
         Returns:
             torch.Tensor: Noisy sample xt.
         """
-        # Ensure all inputs are on the same device
-        x0 = x0.to(self.device)
-        t = t.to(self.device)
-        eps = eps.to(self.device)
-        
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
             alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor

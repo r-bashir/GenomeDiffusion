@@ -35,9 +35,6 @@ class DiffusionModel(NetworkBase):
         """
         super().__init__(config)
 
-        # Set device
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        
         # Set data shape
         self._data_shape = (config["unet"]["channels"], config["data"]["seq_length"])
 
@@ -45,8 +42,7 @@ class DiffusionModel(NetworkBase):
         self._forward_diffusion = DDPM(
             num_diffusion_timesteps=config["diffusion"]["num_diffusion_timesteps"],
             beta_start=config["diffusion"]["beta_start"],
-            beta_end=config["diffusion"]["beta_end"],
-            device=self.device
+            beta_end=config["diffusion"]["beta_end"]
         )
 
         self._time_sampler = UniformDiscreteTimeSampler(
@@ -60,7 +56,7 @@ class DiffusionModel(NetworkBase):
             with_time_emb=config["unet"]["with_time_emb"],
             resnet_block_groups=config["unet"]["resnet_block_groups"],
             seq_length=config["data"]["seq_length"],
-        ).to(self.device)
+        )
 
         # Enable gradient checkpointing if specified
         if config["training"].get("gradient_checkpointing", True):
@@ -94,7 +90,7 @@ class DiffusionModel(NetworkBase):
         # Ensure input has correct shape (batch_size, 1, seq_len)
         if len(batch.shape) == 2:         
             batch = batch.unsqueeze(1)    # Convert to (batch_size, 1, seq_len)
-        return batch.to(self.device)
+        return batch
 
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -112,7 +108,7 @@ class DiffusionModel(NetworkBase):
             x = x.unsqueeze(1)    # Convert to (batch_size, 1, seq_len)
         # print(f"Noise prediction input shape: {x.shape}")
         # Run through UNet
-        pred_noise = self.unet(x.to(self.device), t.to(self.device))
+        pred_noise = self.unet(x, t)
         # print(f"Noise prediction output shape: {pred_noise.shape}")
         return pred_noise
 
@@ -138,12 +134,9 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: Predicted noise of shape [B, C, seq_len].
         """
-        # Ensure batch is on the correct device
-        batch = batch.to(self.device)
-        
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
-        eps = torch.randn_like(batch, device=self.device)
+        eps = torch.randn_like(batch)
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
         # print(f"Mean abs diff between x0 and xt: {(batch - xt).abs().mean().item()}")  # Check noise level
@@ -169,11 +162,8 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: MSE loss.
         """
-        # Ensure batch is on the correct device
-        batch = batch.to(self.device)
-        
         # Sample true noise
-        eps = torch.randn_like(batch, device=self.device)
+        eps = torch.randn_like(batch)
         # Get model predicted noise
         pred_eps = self.forward_step(batch)
         # Compute MSE loss
@@ -196,9 +186,9 @@ class DiffusionModel(NetworkBase):
         losses = []
         for t in timesteps:
             t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
-            xt = self._forward_diffusion.sample(x0.to(self.device), t.to(self.device), eps.to(self.device))
-            predicted_noise = self.predict_added_noise(xt, t.to(self.device))
-            loss = torch.mean((predicted_noise - eps.to(self.device)) ** 2)
+            xt = self._forward_diffusion.sample(x0, t, eps)
+            predicted_noise = self.predict_added_noise(xt, t)
+            loss = torch.mean((predicted_noise - eps) ** 2)
             losses.append(loss)
         # print(f"Loss across timesteps: {torch.stack(losses).detach().cpu().numpy()}")
         return torch.stack(losses)
@@ -217,9 +207,7 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: Denoised data at timestep t-1.
         """
-        device = self.device
-        xt = xt.to(device)
-        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
+        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=xt.device)
         # Get predicted noise from the U-Net 
         eps_pred = self.predict_added_noise(xt, t)
         if t > 1:
