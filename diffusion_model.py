@@ -136,6 +136,8 @@ class DiffusionModel(NetworkBase):
         """
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
+        # Move time tensor to correct device
+        t = t.to(batch.device)
         eps = torch.randn_like(batch)
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)

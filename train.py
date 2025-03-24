@@ -177,7 +177,7 @@ def main(args):
         gradient_clip_val=config["training"]["gradient_clip_val"],
         logger=logger,
         callbacks=callbacks,
-        precision=config["training"].get("precision", 16),  # Default to mixed precision
+        precision="16-mixed", 
         accumulate_grad_batches=config["training"].get("grad_accum", 2),
         val_check_interval=config["training"].get("val_check_interval", 0.5),
         strategy="auto",
