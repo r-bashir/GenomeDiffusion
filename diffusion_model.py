@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
-from diffusion import DDPM, SNPDataset, UNet1D, UniformDiscreteTimeSampler
+from diffusion import DDPMModule, SNPDataset, UNet1D, UniformDiscreteTimeSampler
 from network_base import NetworkBase
 
 
@@ -39,7 +39,7 @@ class DiffusionModel(NetworkBase):
         self._data_shape = (config["unet"]["channels"], config["data"]["seq_length"])
 
         # Initialize components from configuration
-        self._forward_diffusion = DDPM(
+        self._forward_diffusion = DDPMModule(
             num_diffusion_timesteps=config["diffusion"]["num_diffusion_timesteps"],
             beta_start=config["diffusion"]["beta_start"],
             beta_end=config["diffusion"]["beta_end"]

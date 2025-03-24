@@ -36,10 +36,6 @@ class UniformDiscreteTimeSampler:
 
 
 #  Continuous Time Sampling
-# - rand : generates random values uniformly in [0, 1].
-# - Multiplying by (tmax - tmin) scales these values to [0, tmax - tmin].
-# - Adding tmin shifts the range to [tmin, tmax].
-# - This ensures that the output is sampled continuously from a uniform distribution between tmin and tmax.
 class UniformContinuousTimeSampler:
     def __init__(self, tmin: float, tmax: float):
         self._tmin = tmin
@@ -86,9 +82,151 @@ class DDPM:
             self._beta_start, self._beta_end, self._num_diffusion_timesteps
         )
         alphas_bar = self._get_alphas_bar()
-        self._alphas = torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
-        self._sigmas = torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
+        
+        # Register these as nn.Parameters so they move with the model
+        self.register_buffer('_alphas', torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32))
+        self.register_buffer('_sigmas', torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32))
 
+    def register_buffer(self, name, tensor):
+        """
+        Registers a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
+        This is a simple implementation for a non-nn.Module class.
+        """
+        setattr(self, name, tensor)
+
+    @property
+    def tmin(self) -> int:
+        """Minimum timestep value."""
+        return 1
+
+    @property
+    def tmax(self) -> int:
+        """Maximum timestep value."""
+        return self._num_diffusion_timesteps
+
+    def _get_alphas_bar(self) -> np.ndarray:
+        """Computes cumulative alpha values following the DDPM formula."""
+        alphas_bar = np.cumprod(1.0 - self._betas)
+        # Append 1 at the beginning for convenient indexing
+        alphas_bar = np.concatenate(([1.0], alphas_bar))
+        return alphas_bar
+
+    def to(self, device):
+        """
+        Moves all tensors to the specified device.
+        This mimics the behavior of nn.Module.to() for compatibility with PyTorch Lightning.
+        """
+        self._alphas = self._alphas.to(device)
+        self._sigmas = self._sigmas.to(device)
+        return self
+
+    def alpha(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Retrieves alpha(t) for the given time indices.
+
+        Args:
+            t (torch.Tensor): Timesteps (batch_size,).
+
+        Returns:
+            torch.Tensor: Alpha values corresponding to timesteps.
+        """
+        # Ensure t is in the valid range
+        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
+        # Convert to indices (0-indexed)
+        idx = (t - 1).long()
+        
+        # Return values (they should already be on the correct device)
+        return self._alphas[idx]
+
+    def sigma(self, t: torch.Tensor) -> torch.Tensor:
+        """
+        Retrieves sigma(t) for the given time indices.
+
+        Args:
+            t (torch.Tensor): Timesteps (batch_size,).
+
+        Returns:
+            torch.Tensor: Sigma values corresponding to timesteps.
+        """
+        # Ensure t is in the valid range
+        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
+        # Convert to indices (0-indexed)
+        idx = (t - 1).long()
+        
+        # Return values (they should already be on the correct device)
+        return self._sigmas[idx]
+
+    def sample(
+        self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Samples from the forward diffusion process q(xt | x0).
+
+        Args:
+            x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).
+            t (torch.Tensor): Diffusion timesteps (batch_size,).
+            eps (torch.Tensor): Gaussian noise with same shape as x0.
+
+        Returns:
+            torch.Tensor: Noisy sample xt.
+        """
+        # Reshape alpha_t and sigma_t according to the input shape
+        if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
+            alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor
+            sigma_t = self.sigma(t).view(-1, 1, 1)
+        else:  # [batch_size, seq_len]
+            alpha_t = self.alpha(t).view(-1, 1)  # Reshape for 2D tensor
+            sigma_t = self.sigma(t).view(-1, 1)
+
+        xt = alpha_t * x0 + sigma_t * eps
+        return xt
+
+
+# DDPM as nn.Module - device-aware implementation
+class DDPMModule(nn.Module):
+    """
+    Implements the forward diffusion process that gradually adds noise to data.
+    Following DDPM framework, at each timestep t, we add a controlled amount of
+    Gaussian noise according to:
+        q(xt|x0) = N(alpha(t) * x0, sigma(t)^2 * I)
+
+    The forward process transitions from clean data x0 to noisy data xt via:
+        xt = alpha(t) * x0 + sigma(t) * eps, where eps ~ N(0, I)
+
+    As t increases, more noise is added until the data becomes pure noise.
+    This creates the training pairs (xt, t, eps) that teach the UNet to
+    predict the added noise at each timestep.
+    
+    This version inherits from nn.Module for proper device handling.
+    """
+
+    def __init__(
+        self,
+        num_diffusion_timesteps: int = 1000,
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+    ):
+        """
+        Initializes the diffusion process.
+
+        Args:
+            num_diffusion_timesteps (int): Number of diffusion steps.
+            beta_start (float): Initial beta value.
+            beta_end (float): Final beta value.
+        """
+        super().__init__()
+        self._num_diffusion_timesteps = num_diffusion_timesteps
+        self._beta_start = beta_start
+        self._beta_end = beta_end
+        
+        self._betas = np.linspace(
+            self._beta_start, self._beta_end, self._num_diffusion_timesteps
+        )
+        alphas_bar = self._get_alphas_bar()
+        
+        # Register tensors as buffers so they move with the model
+        self.register_buffer('_alphas', torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32))
+        self.register_buffer('_sigmas', torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32))
 
     @property
     def tmin(self) -> int:
@@ -122,12 +260,8 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Handle device mismatch - move indices to CPU if needed
-        if idx.device.type == 'cuda' and self._alphas.device.type == 'cpu':
-            idx = idx.cpu()
-            
-        # Get values and move to the same device as input
-        return self._alphas[idx].to(t.device)
+        # Return values (they should already be on the correct device)
+        return self._alphas[idx]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -144,12 +278,8 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
         
-        # Handle device mismatch - move indices to CPU if needed
-        if idx.device.type == 'cuda' and self._sigmas.device.type == 'cpu':
-            idx = idx.cpu()
-            
-        # Get values and move to the same device as input
-        return self._sigmas[idx].to(t.device)
+        # Return values (they should already be on the correct device)
+        return self._sigmas[idx]
 
     def sample(
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
@@ -187,15 +317,14 @@ class SinusoidalPositionalEmbeddings(nn.Module):
 
     def forward(self, time: torch.Tensor) -> torch.Tensor:
         """
+        Compute sinusoidal positional embeddings for the given time steps.
+
         Args:
-            time: Tensor of shape [batch_size] containing scalar time steps.
+            time: Time steps tensor of shape (batch_size,).
 
         Returns:
-            Tensor of shape [batch_size, dim], sinusoidal embeddings.
+            torch.Tensor: Embeddings of shape (batch_size, dim).
         """
-        if time.dim() == 2 and time.shape[1] == 1:
-            time = time.view(-1)  # Flatten if shape is [batch_size, 1]
-
         device = time.device
         half_dim = self.dim // 2
         e = math.log(10000.0) / (half_dim - 1)
@@ -504,7 +633,9 @@ class UNet1D(nn.Module):
         # Apply edge padding to better preserve boundary information
         # This extra padding helps the model learn edge patterns better
         edge_pad = 4  # Small padding to help with edge preservation
-        x_padded = F.pad(x, (edge_pad, edge_pad), mode="reflect")
+        x_padded = F.pad(
+            x, (edge_pad, edge_pad), mode="reflect"
+        )  # Reflect padding preserves edge patterns better
 
         # Initial convolution
         x = self.init_conv(x_padded)
