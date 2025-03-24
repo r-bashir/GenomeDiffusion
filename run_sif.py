@@ -9,11 +9,27 @@ import yaml
 from typing import Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 from scipy import stats
 from diffusion.dataset import load_data
 
+def load_data(input_path=None):
+    # read data
+    try:
+        data = pd.read_parquet(input_path).to_numpy()
+    except Exception as e:
+        raise ValueError(f"Error loading data: {e}")
+
+    # normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
+    data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
+    data = np.where(data == 1, 0.5, data)  # Map 1 to 0.5
+    data = np.where(data == 2, 1.0, data)  # Map 2 to 1.0
+
+    # replace missing values with most frequent value
+    data = np.where(data == 9, 0.0, data)  # Map 9 to 0.0
+
+    return torch.FloatTensor(data)
+    
 def check_path_exists(path):
     """Check if a path exists."""
     return os.path.exists(path)
