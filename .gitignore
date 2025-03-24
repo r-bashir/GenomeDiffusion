@@ -1,7 +1,8 @@
+*.sif
+*.png
+*.pdf
 .ipynb_checkpoints
 __pycache__
 *data
 output*
 logs
-*.png
-*.pdf

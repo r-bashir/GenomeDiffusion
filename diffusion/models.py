@@ -24,7 +24,7 @@ def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
         return x
 
 
-# Time Sampling
+#  Discrete Time Sampling
 class UniformDiscreteTimeSampler:
 
     def __init__(self, tmin: int, tmax: int):
@@ -33,6 +33,20 @@ class UniformDiscreteTimeSampler:
 
     def sample(self, shape: Sequence[int]) -> torch.Tensor:
         return torch.randint(low=self._tmin, high=self._tmax, size=shape)
+
+
+#  Continuous Time Sampling
+# - rand : generates random values uniformly in [0, 1].
+# - Multiplying by (tmax - tmin) scales these values to [0, tmax - tmin].
+# - Adding tmin shifts the range to [tmin, tmax].
+# - This ensures that the output is sampled continuously from a uniform distribution between tmin and tmax.
+class UniformContinuousTimeSampler:
+    def __init__(self, tmin: float, tmax: float):
+        self._tmin = tmin
+        self._tmax = tmax
+
+    def sample(self, shape: Sequence[int]) -> torch.Tensor:
+        return self._tmin + (self._tmax - self._tmin) * torch.rand(size=shape)
 
 
 class DDPM:
