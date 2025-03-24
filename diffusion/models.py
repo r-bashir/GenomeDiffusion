@@ -70,7 +70,8 @@ class DDPM:
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
     ):
-        """Initialize the DDPM.
+        """
+        Initializes the diffusion process.
 
         Args:
             num_diffusion_timesteps (int): Number of diffusion steps.
@@ -120,6 +121,12 @@ class DDPM:
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
+        
+        # Handle device mismatch - move indices to CPU if needed
+        if idx.device.type == 'cuda' and self._alphas.device.type == 'cpu':
+            idx = idx.cpu()
+            
+        # Get values and move to the same device as input
         return self._alphas[idx].to(t.device)
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
@@ -136,6 +143,12 @@ class DDPM:
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
+        
+        # Handle device mismatch - move indices to CPU if needed
+        if idx.device.type == 'cuda' and self._sigmas.device.type == 'cpu':
+            idx = idx.cpu()
+            
+        # Get values and move to the same device as input
         return self._sigmas[idx].to(t.device)
 
     def sample(
