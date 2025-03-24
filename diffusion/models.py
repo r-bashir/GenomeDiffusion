@@ -178,13 +178,21 @@ class DDPM:
         Returns:
             torch.Tensor: Noisy sample xt.
         """
+        # Get alpha and sigma values for the timesteps
+        alpha_values = self.alpha(t)
+        sigma_values = self.sigma(t)
+        
+        # Move alpha and sigma to the same device as x0
+        alpha_values = alpha_values.to(x0.device)
+        sigma_values = sigma_values.to(x0.device)
+        
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
-            alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor
-            sigma_t = self.sigma(t).view(-1, 1, 1)
+            alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
+            sigma_t = sigma_values.view(-1, 1, 1)
         else:  # [batch_size, seq_len]
-            alpha_t = self.alpha(t).view(-1, 1)  # Reshape for 2D tensor
-            sigma_t = self.sigma(t).view(-1, 1)
+            alpha_t = alpha_values.view(-1, 1)  # Reshape for 2D tensor
+            sigma_t = sigma_values.view(-1, 1)
 
         xt = alpha_t * x0 + sigma_t * eps
         return xt
@@ -311,13 +319,21 @@ class DDPMModule(nn.Module):
         Returns:
             torch.Tensor: Noisy sample xt.
         """
+        # Get alpha and sigma values for the timesteps
+        alpha_values = self.alpha(t)
+        sigma_values = self.sigma(t)
+        
+        # Move alpha and sigma to the same device as x0
+        alpha_values = alpha_values.to(x0.device)
+        sigma_values = sigma_values.to(x0.device)
+        
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
-            alpha_t = self.alpha(t).view(-1, 1, 1)  # Reshape for 3D tensor
-            sigma_t = self.sigma(t).view(-1, 1, 1)
+            alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
+            sigma_t = sigma_values.view(-1, 1, 1)
         else:  # [batch_size, seq_len]
-            alpha_t = self.alpha(t).view(-1, 1)  # Reshape for 2D tensor
-            sigma_t = self.sigma(t).view(-1, 1)
+            alpha_t = alpha_values.view(-1, 1)  # Reshape for 2D tensor
+            sigma_t = sigma_values.view(-1, 1)
 
         xt = alpha_t * x0 + sigma_t * eps
         return xt
