@@ -555,6 +555,7 @@ class UNet1D(nn.Module):
 
         self.channels = channels
         self.seq_length = seq_length  # Make sequence length configurable
+        self.use_gradient_checkpointing = False  # Gradient checkpointing flag
 
         # Start with a small initial dimension
         init_dim = 16  # Fixed small initial dimension
@@ -641,6 +642,10 @@ class UNet1D(nn.Module):
             ),  # 1x1 conv to match channels
         )
 
+    def gradient_checkpointing_enable(self):
+        """Enable gradient checkpointing for memory efficiency."""
+        self.use_gradient_checkpointing = True
+
     def forward(self, x, time):
         """
         Forward pass for UNet1D.
@@ -682,8 +687,12 @@ class UNet1D(nn.Module):
 
         # Downsampling
         for i, (block1, block2, _, downsample) in enumerate(self.downs):
-            x = block1(x, t)
-            x = block2(x, t)
+            if self.use_gradient_checkpointing:
+                x = torch.utils.checkpoint.checkpoint(block1, x, t)
+                x = torch.utils.checkpoint.checkpoint(block2, x, t)
+            else:
+                x = block1(x, t)
+                x = block2(x, t)
             h.append(x)  # Save features for skip connection
 
             # Track length before downsampling
@@ -724,9 +733,12 @@ class UNet1D(nn.Module):
             # Concatenate along channel dimension
             x = torch.cat((x, skip_x), dim=1)
 
-            # Apply blocks
-            x = block1(x, t)
-            x = block2(x, t)
+            if self.use_gradient_checkpointing:
+                x = torch.utils.checkpoint.checkpoint(block1, x, t)
+                x = torch.utils.checkpoint.checkpoint(block2, x, t)
+            else:
+                x = block1(x, t)
+                x = block2(x, t)
 
         # Final convolution
         x = self.final_conv(x)

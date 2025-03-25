@@ -2,7 +2,7 @@
 # coding: utf-8
 
 from .dataset import SNPDataset, SNPDataModule
-from .models import DDPM, DDPMModule, DiffusionModel, UNet1D, 
+from .models import DDPM, DDPMModule, DiffusionModel, UNet1D
 from .models import UniformDiscreteTimeSampler, UniformContinuousTimeSampler
 __all__ = [
     "SNPDataset",
