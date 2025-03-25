@@ -20,9 +20,6 @@ CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
 PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
-# Set Weights & Biases API key
-export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
-
 # Validate paths before execution
 if [[ ! -f "$CONTAINER" ]]; then
     echo "Error: Container file $CONTAINER not found!" >&2
@@ -43,10 +40,7 @@ fi
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0  # Start timer
 
-echo ""
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
-echo "Running with ${SLURM_MEM_PER_NODE} MB of memory and ${SLURM_CPUS_PER_TASK} CPUs"
-echo ""
 
 # Run the container
 apptainer exec \
@@ -54,13 +48,10 @@ apptainer exec \
     --nv \
     --bind $PROJECT_DIR:/workspace \
     --bind $DATA_DIR:/data \
-    --env WANDB_API_KEY=$WANDB_API_KEY \
     --env PYTHONPATH=/workspace \
+    --env WANDB_MODE=online \
     $CONTAINER \
-    /bin/bash -c '
-        echo "Debug: WANDB_API_KEY inside container: $WANDB_API_KEY"
-        python /workspace/train.py --config /workspace/config.yaml
-    ' || {
+    python /workspace/train.py --config /workspace/config.yaml || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
@@ -69,6 +60,5 @@ apptainer exec \
 END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 ELAPSED_TIME=$SECONDS  # Get elapsed seconds
 
-echo ""
 echo "Job $SLURM_JOB_ID finished at $END_TIME"
 echo "Total execution time: $(($ELAPSED_TIME / 60)) min $(($ELAPSED_TIME % 60)) sec"
