@@ -106,25 +106,30 @@ def setup_logger(
 
     logger_type = config["training"]["logger"]
     if logger_type == "wandb":
-        import wandb
+        try:
+            import wandb
 
-        # Get WANDB API key from environment
-        wandb_key = os.environ.get("WANDB_API_KEY")
-        if not wandb_key:
-            raise ValueError("WANDB_API_KEY environment variable not set")
-        
-        # Initialize wandb with API key
-        wandb.login(key=wandb_key)
-        
-        # Create a proper WandbLogger instance
-        wandb_logger = WandbLogger(
-            project=config.get("project_name", "GenomeDiffusion"),
-            save_dir=logs_dir,
-            config=config,
-            version=version,
-            resume="allow" if resume_from_checkpoint else None,
-        )
-        return wandb_logger
+            # Get WANDB API key from environment
+            wandb_key = os.environ.get("WANDB_API_KEY")
+            if not wandb_key:
+                print("Warning: WANDB_API_KEY environment variable not set, falling back to TensorBoard")
+                return TensorBoardLogger(save_dir=logs_dir, name="", version=version)
+            
+            # Initialize wandb with API key
+            wandb.login(key=wandb_key)
+            
+            # Create a proper WandbLogger instance
+            wandb_logger = WandbLogger(
+                project=config.get("project_name", "GenomeDiffusion"),
+                save_dir=logs_dir,
+                config=config,
+                version=version,
+                resume="allow" if resume_from_checkpoint else None,
+            )
+            return wandb_logger
+        except Exception as e:
+            print(f"Warning: Failed to initialize wandb ({str(e)}), falling back to TensorBoard")
+            return TensorBoardLogger(save_dir=logs_dir, name="", version=version)
     elif logger_type == "tb":
         # Use the lightning_logs directory for TensorBoard
         tb_logger = TensorBoardLogger(save_dir=logs_dir, name="", version=version)

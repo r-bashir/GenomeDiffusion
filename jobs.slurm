@@ -50,13 +50,17 @@ echo ""
 
 # Run the container
 apptainer exec \
+    --cleanenv \
     --nv \
     --bind $PROJECT_DIR:/workspace \
     --bind $DATA_DIR:/data \
     --env WANDB_API_KEY=$WANDB_API_KEY \
+    --env PYTHONPATH=/workspace \
     $CONTAINER \
-    python /workspace/train.py \
-    --config /workspace/config.yaml || {
+    /bin/bash -c '
+        echo "Debug: WANDB_API_KEY inside container: $WANDB_API_KEY"
+        python /workspace/train.py --config /workspace/config.yaml
+    ' || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
