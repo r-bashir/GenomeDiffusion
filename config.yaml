@@ -1,7 +1,13 @@
 # Input data path
 input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 output_path: "output"
+
+# Wandb configuration
 project_name: "GenomeDiffusion"  # Project name for wandb
+wandb_entity: "r-bashir"  # Your wandb username
+wandb:
+  log_model: True
+  tags: ["genomic-data", "diffusion-model"]
 
 # DDPM
 diffusion:

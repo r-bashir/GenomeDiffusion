@@ -117,10 +117,22 @@ def setup_logger(
             
             # Initialize wandb with API key
             wandb.login(key=wandb_key)
+
+            # Get wandb config
+            project_name = config.get("project_name", "GenomeDiffusion")
+            entity = config.get("wandb_entity", "r-bashir")  # Your wandb username
+            
+            # Try to ensure project exists first
+            try:
+                wandb.init(project=project_name, entity=entity, mode="offline")
+                wandb.finish()
+            except Exception as e:
+                print(f"Warning: Could not initialize wandb project: {e}")
             
             # Create a proper WandbLogger instance
             wandb_logger = WandbLogger(
-                project=config.get("project_name", "GenomeDiffusion"),
+                project=project_name,
+                entity=entity,
                 save_dir=logs_dir,
                 config=config,
                 version=version,
