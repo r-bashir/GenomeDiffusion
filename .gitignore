@@ -3,6 +3,6 @@
 *.pdf
 .ipynb_checkpoints
 __pycache__
-*data
+data*
 output*
 logs

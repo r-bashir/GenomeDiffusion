@@ -6,12 +6,10 @@
 import argparse
 import os
 import yaml
-from typing import Dict, List, Optional, Union
-import numpy as np
-import pandas as pd
+from typing import Dict
 import torch
-from scipy import stats
 from diffusion.dataset import load_data
+import wandb
 
 def check_path_exists(path):
     """Check if a path exists."""
@@ -47,11 +45,18 @@ def main(args):
     output_dir = (
         args.output_dir
         if args.output_dir is not None
-        else config.get("output_path", "test_output")
+        else config.get("output_path", "output")
     )
     os.makedirs(output_dir, exist_ok=True)
 
+    # Initialize wandb
+    wandb.init(project=config["project_name"],
+               entity=config["wandb_entity"],
+               dir=output_dir)
     
+    # Log a test message
+    wandb.log({"test": "wandb initialized and authenticated successfully"})
+
     # Test Loading
     print("\nExamining data:")
     dataset = load_data(input_path=config["input_path"])

@@ -1,0 +1,23 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:25.01-py3
+
+%post
+    # Update package list
+    apt-get update && apt-get install -y \
+        python3-pip \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Install PyTorch Lightning and WandB
+    pip install --no-cache-dir \
+        pytorch-lightning wandb
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export PYTHONPATH=/opt/conda/lib/python3.8/site-packages:$PYTHONPATH
+    export LC_ALL=C.UTF-8
+    export LANG=C.UTF-8
+
+%runscript
+    exec python3 "$@"
+
+

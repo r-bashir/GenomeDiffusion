@@ -1,12 +1,16 @@
 #!/bin/bash
 
 # Paths
-# CONTAINER=/proj/gcae_berzelius/users/x_rabba/pytorch_25.01-py3.sif
-CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
-PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
-DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
+CONTAINER=lightning_25.01-py3.sif
+PROJECT_DIR=$PWD
 
-# Run inside Apptainer, ensuring "data/" is mapped correctly
-apptainer exec --nv -B $PROJECT_DIR:/workspace -B $DATA_DIR:/workspace/data \
-$CONTAINER bash -c "cd /workspace && python run_sif.py --config config.yaml"
+# WandB API Key
+export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
 
+apptainer exec --nv \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml" || {
+    echo "Error: Apptainer execution failed!" >&2
+    exit 1
+}
