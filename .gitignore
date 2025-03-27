@@ -3,6 +3,7 @@
 *.pdf
 .ipynb_checkpoints
 __pycache__
+.wandb
 data*
 output*
 logs

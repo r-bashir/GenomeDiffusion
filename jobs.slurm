@@ -20,7 +20,7 @@ PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
 # WandB API Key
-export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
+export WANDB_API_KEY="145f0112a8066d63f7e4856f3ac01edd336afebd"
 
 # Log Start Time
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
