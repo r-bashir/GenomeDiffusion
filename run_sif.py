@@ -6,10 +6,8 @@
 import argparse
 import os
 import yaml
-from typing import Dict
 import torch
 from diffusion.dataset import load_data
-import wandb
 
 def check_path_exists(path):
     """Check if a path exists."""
@@ -29,7 +27,7 @@ def parse_args():
     )
     return parser.parse_args()
 
-def load_config(config_path: str) -> Dict:
+def load_config(config_path: str):
     """Load configuration from YAML file."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
@@ -48,14 +46,6 @@ def main(args):
         else config.get("output_path", "output")
     )
     os.makedirs(output_dir, exist_ok=True)
-
-    # Initialize wandb
-    wandb.init(project=config["project_name"],
-               entity=config["wandb_entity"],
-               dir=output_dir)
-    
-    # Log a test message
-    wandb.log({"test": "wandb initialized and authenticated successfully"})
 
     # Test Loading
     print("\nExamining data:")

@@ -1,13 +1,14 @@
-# Input data path
+# Project
+project_name: "GenDiffusion"
+
+# Input and output paths
 input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 output_path: "output"
 
-# Wandb configuration
-project_name: "GenomeDiffusion"  # Project name for wandb
-wandb_entity: "r-bashir"  # Your wandb username
-wandb:
-  log_model: True
-  tags: ["genomic-data", "diffusion-model"]
+# Time Sampler
+time_sampler:
+  tmin: 1
+  tmax: 1000
 
 # DDPM
 diffusion:
@@ -15,10 +16,6 @@ diffusion:
   beta_start: 0.0001
   beta_end: 0.02
 
-# Time Sampler
-time_sampler:
-  tmin: 1
-  tmax: 1000
 
 # UNet1D
 unet:
@@ -37,31 +34,35 @@ data:
 
 # Training
 training:
+
+  # Core training settings
   num_epochs: 100
   gradient_clip_val: 1.0
-  save_top_k: 3
-  logger: "wandb"
   
-  # Memory optimization
-  gradient_checkpointing: true  # Enable gradient checkpointing  
-
-  # Training optimization
-  grad_accum: 2  # Gradient accumulation steps
+  # Checkpoint settings
+  save_top_k: 3
+  
+  # Performance optimization
+  gradient_checkpointing: true
+  grad_accum: 2
   val_check_interval: 0.5  # Validate twice per epoch
   
   # Early stopping
-  patience: 10  # Number of epochs to wait for improvement
-  test_threshold: 0.1  # Only test if validation loss is below this
+  patience: 10
+  test_threshold: 0.1
   
-  # Learning rate warmup
-  warmup_epochs: 5  # Number of epochs for learning rate warmup
+  # Learning rate schedule
+  warmup_epochs: 5
   
-  # Generation settings
-  num_samples: 10  # Number of samples to generate
+  # Sample generation
+  num_samples: 10
+
+  # Logger
+  logger: "wandb"
 
 # Optimizer
 optimizer:
-  name: 'adamw'
+  name: "adamw"
   lr: 1.0e-4
   min_lr: 1.0e-6
   weight_decay: 0.01

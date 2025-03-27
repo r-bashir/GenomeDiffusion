@@ -19,7 +19,7 @@ from pytorch_lightning.callbacks import (
     LearningRateMonitor,
     ModelCheckpoint,
 )
-from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger, CSVLogger
 
 from diffusion_model import DiffusionModel
 
@@ -80,74 +80,70 @@ def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]
 
 
 def setup_logger(
-    config: Dict, output_dir: Optional[str], resume_from_checkpoint: Optional[str]
-) -> Union[TensorBoardLogger, WandbLogger]:
+    config: Dict, resume_from_checkpoint: Optional[str]
+) -> Union[TensorBoardLogger, WandbLogger, CSVLogger]:
     """Setup logger based on configuration.
 
     Args:
         config: Configuration dictionary
-        output_dir: Output directory path (overrides config output_path)
         resume_from_checkpoint: Path to checkpoint for resuming training
 
     Returns:
-        Logger instance
+        Logger instance (TensorBoardLogger, WandbLogger, or CSVLogger)
     """
-    # Use output_dir if provided, otherwise use config output_path
-    base_dir = (
-        output_dir if output_dir is not None else config.get("output_path", "output")
-    )
-
-    # Create the lightning_logs directory in the output path
+    # Get base directory for logs
+    base_dir = config.get("output_path", "output")
     logs_dir = os.path.join(base_dir, "lightning_logs")
     os.makedirs(logs_dir, exist_ok=True)
 
-    # Extract version number from checkpoint path if resuming
+    # Get version from checkpoint if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
-
+    
+    # Common logger parameters
+    logger_params = {
+        "name": "",
+        "save_dir": logs_dir,
+        "version": version
+    }
+    
+    # Select logger type from config
     logger_type = config["training"]["logger"]
+    
     if logger_type == "wandb":
         try:
+            # Try loading API key from environment variable first
             import wandb
-
-            # Get WANDB API key from environment
-            wandb_key = os.environ.get("WANDB_API_KEY")
-            if not wandb_key:
-                print("Warning: WANDB_API_KEY environment variable not set, falling back to TensorBoard")
-                return TensorBoardLogger(save_dir=logs_dir, name="", version=version)
+            import os
             
-            # Initialize wandb with API key
-            wandb.login(key=wandb_key)
-
-            # Get wandb config
-            project_name = config.get("project_name", "GenomeDiffusion")
-            entity = config.get("wandb_entity", "r-bashir")  # Your wandb username
-            
-            # Try to ensure project exists first
-            try:
-                wandb.init(project=project_name, entity=entity, mode="offline")
-                wandb.finish()
-            except Exception as e:
-                print(f"Warning: Could not initialize wandb project: {e}")
-            
-            # Create a proper WandbLogger instance
+            api_key = os.environ.get("WANDB_API_KEY")
+            if api_key:
+                wandb.login(key=api_key)
+            elif not wandb.api.api_key:
+                print("Wandb API key not found. Attempting to log in...")
+                wandb.login()
+                
+            # Create WandbLogger with consistent parameters
             wandb_logger = WandbLogger(
-                project=project_name,
-                entity=entity,
-                save_dir=logs_dir,
+                **logger_params,
+                project=config.get("project_name", "GenomeDiffusion"),
                 config=config,
-                version=version,
                 resume="allow" if resume_from_checkpoint else None,
             )
             return wandb_logger
+            
         except Exception as e:
-            print(f"Warning: Failed to initialize wandb ({str(e)}), falling back to TensorBoard")
-            return TensorBoardLogger(save_dir=logs_dir, name="", version=version)
+            print(f"Warning: Failed to initialize wandb: {str(e)}")
+            print("Falling back to TensorBoard logger")
+            logger_type = "tb"  # Fall back to TensorBoard
+    
     elif logger_type == "tb":
-        # Use the lightning_logs directory for TensorBoard
-        tb_logger = TensorBoardLogger(save_dir=logs_dir, name="", version=version)
-        return tb_logger
+        return TensorBoardLogger(**logger_params)
+    
+    elif logger_type == "csv":
+        return CSVLogger(**logger_params)
+    
     else:
-        raise ValueError(f"Logger '{logger_type}' not recognized. Use 'wandb' or 'tb'.")
+        raise ValueError(f"Logger '{logger_type}' not recognized. Use 'wandb', 'tb', or 'csv'.")
 
 
 def setup_callbacks(config: Dict) -> List:
@@ -191,21 +187,21 @@ def main(args):
     model = DiffusionModel(config)
 
     # Setup logger and callbacks
-    logger = setup_logger(config, output_dir, args.resume_from_checkpoint)
+    logger = setup_logger(config, args.resume_from_checkpoint)
     callbacks = setup_callbacks(config)
 
     # Setup trainer
     trainer = pl.Trainer(
         accelerator="cuda" if torch.cuda.is_available() else "cpu",
         devices=1,
-        max_epochs=config["training"]["num_epochs"],
-        gradient_clip_val=config["training"]["gradient_clip_val"],
+        strategy="auto",
+        precision="16-mixed",
         logger=logger,
         callbacks=callbacks,
-        precision="16-mixed", 
+        max_epochs=config["training"]["num_epochs"],
+        gradient_clip_val=config["training"]["gradient_clip_val"],
         accumulate_grad_batches=config["training"].get("grad_accum", 2),
         val_check_interval=config["training"].get("val_check_interval", 0.5),
-        strategy="auto",
     )
 
     # Train model
