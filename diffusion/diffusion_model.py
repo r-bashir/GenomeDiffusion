@@ -170,6 +170,12 @@ class DiffusionModel(NetworkBase):
         inv_sqrt_a_t = 1.0 / sqrt_a_t
         beta_t = 1.0 - sqrt_a_t**2
         inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
+
+        # Add proper broadcasting for all scalar tensors
+        inv_sqrt_a_t = inv_sqrt_a_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
+        beta_t = beta_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
+        inv_sigma_t = inv_sigma_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
+        
         mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
         # DDPM instructs to use either the variance of the forward process
         # or the variance of posterior q(x_{t-1}|x_t, x_0). Former is easier.
