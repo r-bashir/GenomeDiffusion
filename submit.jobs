@@ -12,7 +12,7 @@
 #SBATCH -e $SLURM_SUBMIT_DIR/slurm_logs/%x-%j.err  # Standard error log
 
 # Ensure logs directory exists
-mkdir -p $SLURM_SUBMIT_DIR/logs
+mkdir -p $SLURM_SUBMIT_DIR/slurm_logs
 
 # Paths and variables
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
