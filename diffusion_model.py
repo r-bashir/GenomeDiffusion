@@ -212,8 +212,10 @@ class DiffusionModel(NetworkBase):
         t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=xt.device)
         # Get predicted noise from the U-Net 
         eps_pred = self.predict_added_noise(xt, t)
-        if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1 )
+        # Handle the case where t > 1 for all elements in batch
+        is_t_greater_than_one = (t > 1).all()
+        if is_t_greater_than_one:
+            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(t - 1)
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)        
         # Perform the denoising step to take the snp from t to t-1
