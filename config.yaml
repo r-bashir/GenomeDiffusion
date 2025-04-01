@@ -16,7 +16,6 @@ diffusion:
   beta_start: 0.0001
   beta_end: 0.02
 
-
 # UNet1D
 unet:
   embedding_dim: 32
@@ -34,38 +33,25 @@ data:
 
 # Training
 training:
-
-  # Core training settings
-  num_epochs: 100
-  gradient_clip_val: 1.0
-  
-  # Checkpoint settings
-  save_top_k: 3
-  
-  # Performance optimization
-  gradient_checkpointing: true
-  grad_accum: 2
-  val_check_interval: 0.5  # Validate twice per epoch
-  
-  # Early stopping
+  epochs: 100
+  early_stopping: true
   patience: 10
+  save_top_k: 3
+  compute_test_metrics: true
   test_threshold: 0.1
-  
-  # Learning rate schedule
-  warmup_epochs: 5
-  
-  # Sample generation
   num_samples: 10
-
-  # Logger
-  logger: "wandb"
+  logger: "wandb"  # Options: wandb, tb, csv
 
 # Optimizer
 optimizer:
-  name: "adamw"
-  lr: 1.0e-4
-  min_lr: 1.0e-6
+  lr: 1e-4
   weight_decay: 0.01
   betas: [0.9, 0.999]
-  eps: 1.0e-8
+  eps: 1e-8
   amsgrad: true
+
+# Scheduler
+scheduler:
+  name: "cosine"
+  T_max: 100  # Same as max_epochs
+  eta_min: 1e-6

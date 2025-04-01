@@ -1,16 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-from .dataset import SNPDataset, SNPDataModule
-from .models import DDPM, DDPMModule, DiffusionModel, UNet1D
-from .models import UniformDiscreteTimeSampler, UniformContinuousTimeSampler
+from .dataset import SNPDataset
+from .models import DDPM, UNet1D, UniformDiscreteTimeSampler, UniformContinuousTimeSampler
+from .diffusion_model import DiffusionModel
+
 __all__ = [
     "SNPDataset",
-    "SNPDataModule",
     "DDPM",
-    "DDPMModule",
     "UNet1D",
-    "DiffusionModel",
     "UniformDiscreteTimeSampler",
     "UniformContinuousTimeSampler",
+    "DiffusionModel",
 ]

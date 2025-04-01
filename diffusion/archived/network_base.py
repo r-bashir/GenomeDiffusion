@@ -14,7 +14,6 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, random_split
 
 
-# TODO: Move it to diffusion directory.
 class NetworkBase(pl.LightningModule):
     """Base class for all network modules with PyTorch Lightning integration.
 
@@ -137,6 +136,32 @@ class NetworkBase(pl.LightningModule):
             pin_memory=True,
         )
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through the model.
+
+        Override this method in subclasses to implement the specific forward pass.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            torch.Tensor: Model output.
+        """
+        raise NotImplementedError("Subclasses must implement forward")
+
+    def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
+        """Compute loss for a batch.
+
+        Override this method in subclasses to implement the specific loss computation.
+
+        Args:
+            batch: Input batch.
+
+        Returns:
+            torch.Tensor: Computed loss.
+        """
+        raise NotImplementedError("Subclasses must implement compute_loss")
+
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Training step.
 
@@ -257,32 +282,6 @@ class NetworkBase(pl.LightningModule):
         min_lr = self.config["optimizer"].get("min_lr", 0.0)
         for pg in optimizer.param_groups:
             pg["lr"] = max(pg["lr"], min_lr)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the model.
-
-        Override this method in subclasses to implement the specific forward pass.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            torch.Tensor: Model output.
-        """
-        raise NotImplementedError("Subclasses must implement forward")
-
-    def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
-        """Compute loss for a batch.
-
-        Override this method in subclasses to implement the specific loss computation.
-
-        Args:
-            batch: Input batch.
-
-        Returns:
-            torch.Tensor: Computed loss.
-        """
-        raise NotImplementedError("Subclasses must implement compute_loss")
 
     def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model.

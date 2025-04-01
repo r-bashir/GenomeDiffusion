@@ -21,7 +21,8 @@ from pytorch_lightning.callbacks import (
 )
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger, CSVLogger
 
-from diffusion_model import DiffusionModel
+from diffusion import DiffusionModel, inference_callback
+from diffusion.inference_callback import InferenceCallback
 
 
 def parse_args():
@@ -146,6 +147,10 @@ def setup_logger(
 
 def setup_callbacks(config: Dict) -> List:
     """Setup training callbacks."""
+    # Get base directory for logs
+    base_dir = config.get("output_path", "output")
+    logs_dir = os.path.join(base_dir, "metric_logs")
+    os.makedirs(logs_dir, exist_ok=True)
 
     callbacks = [
         # Save best and last checkpoints
@@ -165,6 +170,12 @@ def setup_callbacks(config: Dict) -> List:
         # Monitor learning rate
         LearningRateMonitor(logging_interval="step"),
     ]
+
+    # Inference callback for test metrics
+    if config["training"].get("compute_test_metrics", True):
+        inference_callback = InferenceCallback(output_dir=logs_dir)
+        callbacks.append(inference_callback)
+
     return callbacks
 
 
@@ -173,33 +184,28 @@ def main(args):
     # Load configuration
     config = load_config(args.config)
 
-    # Determine output directory (command line arg overrides config)
-    output_dir = (
-        args.output_dir
-        if args.output_dir is not None
-        else config.get("output_path", "output")
-    )
-    os.makedirs(output_dir, exist_ok=True)
+    # Override output directory if specified
+    if args.output_dir:
+        config["output_path"] = args.output_dir
 
     # Initialize model
     model = DiffusionModel(config)
 
-    # Setup logger and callbacks
+    # Set up logger
     logger = setup_logger(config, args.resume_from_checkpoint)
+
+    # Set up callbacks
     callbacks = setup_callbacks(config)
 
-    # Setup trainer
+    # Initialize trainer
     trainer = pl.Trainer(
-        accelerator="cuda" if torch.cuda.is_available() else "cpu",
-        devices=1,
-        strategy="auto",
-        precision="16-mixed",
+        max_epochs=config["training"]["epochs"],
+        accelerator="auto",  # Will automatically detect and use GPU if available
+        devices="auto",      # Use all available devices
+        precision="bf16-mixed",  # Use bfloat16 mixed precision
         logger=logger,
         callbacks=callbacks,
-        max_epochs=config["training"]["num_epochs"],
-        gradient_clip_val=config["training"]["gradient_clip_val"],
-        accumulate_grad_batches=config["training"].get("grad_accum", 2),
-        val_check_interval=config["training"].get("val_check_interval", 0.5),
+        default_root_dir=config["output_path"],
     )
 
     # Train model
@@ -217,17 +223,16 @@ def main(args):
 
     # Generate and save samples if requested
     if args.generate_samples:
+        print("Generating samples...")
         samples = model.generate_samples(
             num_samples=config["training"].get("num_samples", 10)
         )
 
         # Save samples in the same version directory as the logs
         if hasattr(logger, "log_dir"):
-            # For TensorBoard or WandbLogger
             samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
         else:
-            # Fallback to output directory
-            samples_path = os.path.join(output_dir, "generated_samples.pt")
+            samples_path = os.path.join(config["output_path"], "generated_samples.pt")
 
         torch.save(samples, samples_path)
         print(f"Generated samples shape: {samples.shape}")

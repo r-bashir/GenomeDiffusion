@@ -688,8 +688,8 @@ class UNet1D(nn.Module):
         # Downsampling
         for i, (block1, block2, _, downsample) in enumerate(self.downs):
             if self.use_gradient_checkpointing:
-                x = torch.utils.checkpoint.checkpoint(block1, x, t)
-                x = torch.utils.checkpoint.checkpoint(block2, x, t)
+                x = torch.utils.checkpoint.checkpoint(block1, x, t, use_reentrant=False)
+                x = torch.utils.checkpoint.checkpoint(block2, x, t, use_reentrant=False)
             else:
                 x = block1(x, t)
                 x = block2(x, t)
@@ -734,8 +734,8 @@ class UNet1D(nn.Module):
             x = torch.cat((x, skip_x), dim=1)
 
             if self.use_gradient_checkpointing:
-                x = torch.utils.checkpoint.checkpoint(block1, x, t)
-                x = torch.utils.checkpoint.checkpoint(block2, x, t)
+                x = torch.utils.checkpoint.checkpoint(block1, x, t, use_reentrant=False)
+                x = torch.utils.checkpoint.checkpoint(block2, x, t, use_reentrant=False)
             else:
                 x = block1(x, t)
                 x = block2(x, t)
@@ -775,14 +775,10 @@ class UNet1D(nn.Module):
 # Diffusion Model: We wont use this model, since it is an nn.Module for PyTorch.
 # To use it with PyTorch Lighting, we have transfered it to 'diffusion_model.py'
 # as a LightingModule with additional hooks for training. Kept it for PyTorch.
-class DiffusionModel(nn.Module):
-    """Diffusion model with 1D Convolutional network for SNP data.
-
-    Implements both forward diffusion (data corruption) and reverse diffusion (denoising)
-    processes for SNP data. The forward process gradually adds noise to the data following
-    a predefined schedule, while the reverse process learns to denoise the data using a
-    UNet1D architecture.
-    """
+class DiffModel(nn.Module):
+    """PyTorch nn.Module implementation of diffusion model
+    This is kept as a reference implementation. For training with PyTorch Lightning,
+    use DiffusionModel from diffusion_model.py"""
 
     def __init__(self, hparams: Dict):
         """
