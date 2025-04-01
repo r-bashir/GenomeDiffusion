@@ -113,8 +113,6 @@ def setup_logger(
         try:
             # Try loading API key from environment variable first
             import wandb
-            import os
-            
             api_key = os.environ.get("WANDB_API_KEY")
             if api_key:
                 wandb.login(key=api_key)
