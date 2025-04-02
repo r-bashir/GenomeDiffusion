@@ -200,9 +200,9 @@ def main(args):
     # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
-        accelerator="auto",  # Will automatically detect and use GPU if available
-        devices="auto",      # Use all available devices
-        precision="bf16-mixed",  # Use bfloat16 mixed precision
+        accelerator="auto",
+        devices="auto",
+        precision="bf16-mixed",
         logger=logger,
         callbacks=callbacks,
         default_root_dir=config["output_path"],
@@ -228,11 +228,22 @@ def main(args):
             num_samples=config["training"].get("num_samples", 10)
         )
 
-        # Save samples in the same version directory as the logs
-        if hasattr(logger, "log_dir"):
+        # Determine save path
+        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger)):
+            # For TensorBoard and CSV loggers, use their version-specific directory
             samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
+        elif isinstance(logger, pl.loggers.WandbLogger):
+            # For WandB logger, use the output path with run ID
+            samples_path = os.path.join(
+                config["output_path"],
+                f"generated_samples_{logger.version}.pt"
+            )
         else:
+            # Fallback to output directory
             samples_path = os.path.join(config["output_path"], "generated_samples.pt")
+
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(samples_path), exist_ok=True)
 
         torch.save(samples, samples_path)
         print(f"Generated samples shape: {samples.shape}")

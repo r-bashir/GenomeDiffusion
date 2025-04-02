@@ -194,9 +194,23 @@ class DiffusionModel(NetworkBase):
             torch.Tensor: Generated samples.
         """
         with torch.no_grad():
+            # Start with random noise
             x = torch.randn((num_samples,) + self._data_shape, device=self.device)
+            
+            # Track statistics for debugging
+            print(f"Initial noise stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}")
+            
+            # Reverse diffusion process
             for t in range(self._forward_diffusion.tmax, 0, -1):
+                if t % 100 == 0:  # Print progress every 100 steps
+                    print(f"Step {t} stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}")
                 x = self._reverse_process_step(x, t)
+                
+                # Clamp intermediate values to prevent explosion
+                x = torch.clamp(x, -5.0, 5.0)
+            
+            # Final normalization to [0, 1]
             x = torch.clamp(x, 0, 1)
-        print(f"Final sample mean: {x.mean().item()}, std: {x.std().item()}")        
-        return x
+            
+            print(f"Final sample stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}")
+            return x

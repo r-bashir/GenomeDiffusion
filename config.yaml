@@ -33,7 +33,7 @@ data:
 
 # Training
 training:
-  epochs: 100
+  epochs: 10
   early_stopping: true
   patience: 10
   save_top_k: 3
