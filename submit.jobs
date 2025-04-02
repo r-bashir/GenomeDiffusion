@@ -1,5 +1,4 @@
 #!/bin/bash
-#S-BATCH -A berzelius-2025-96    # Account name
 #SBATCH -J GenDiff               # Job name
 #SBATCH -t 04:30:00              # Time limit (HH:MM:SS)
 #SBATCH -n 1                     # Number of tasks
