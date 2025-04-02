@@ -71,15 +71,13 @@ class InferenceCallback(Callback):
         if not self._test_outputs or not self._test_targets:
             return
 
-        # Get output directory
+        # Always use the provided output directory or metric_logs as fallback
         output_dir = self.output_dir
-        if output_dir is None and trainer.logger is not None:
-            if hasattr(trainer.logger, "log_dir"):
-                output_dir = trainer.logger.log_dir
-
         if output_dir is None:
-            print("Warning: No output directory specified. Metrics will only be logged.")
-            
+            base_dir = trainer.logger.save_dir if trainer.logger else "output"
+            output_dir = os.path.join(base_dir, "metric_logs")
+            os.makedirs(output_dir, exist_ok=True)
+
         # Concatenate all batches
         outputs = torch.cat(self._test_outputs, dim=0)
         targets = torch.cat(self._test_targets, dim=0)
@@ -99,10 +97,10 @@ class InferenceCallback(Callback):
             fpr, tpr, _ = roc_curve(targets_binary.flatten().numpy(), 
                                   outputs.flatten().numpy())
             roc_auc = auc(fpr, tpr)
-            
+
             # Plot ROC curve
             plt.figure(figsize=(8, 8))
-            plt.plot(fpr, tpr, color='darkorange', lw=2, 
+            plt.plot(fpr, tpr, color='darkorange', lw=2,
                     label=f'ROC curve (AUC = {roc_auc:.2f})')
             plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
             plt.xlim([0.0, 1.0])
@@ -112,44 +110,33 @@ class InferenceCallback(Callback):
             plt.title('Receiver Operating Characteristic')
             plt.legend(loc="lower right")
             
-            if output_dir is not None:
-                plt.savefig(os.path.join(output_dir, 'roc_curve.png'))
+            # Save ROC curve
+            roc_path = os.path.join(output_dir, "roc_curve.png")
+            plt.savefig(roc_path)
             plt.close()
+            print(f"ROC curve saved to {roc_path}")
 
             # Compute confusion matrix
-            cm = confusion_matrix(targets_binary.flatten().numpy(), 
+            cm = confusion_matrix(targets_binary.flatten().numpy(),
                                 predictions_binary.flatten().numpy())
             
-            # Calculate metrics
-            tn, fp, fn, tp = cm.ravel()
-            metrics = {
-                "accuracy": (tp + tn) / (tp + tn + fp + fn),
-                "precision": tp / (tp + fp) if (tp + fp) > 0 else 0,
-                "recall": tp / (tp + fn) if (tp + fn) > 0 else 0,
-                "specificity": tn / (tn + fp) if (tn + fp) > 0 else 0,
-                "f1": 2 * tp / (2 * tp + fp + fn) if (2 * tp + fp + fn) > 0 else 0,
-                "roc_auc": roc_auc
-            }
+            # Plot confusion matrix
+            plt.figure(figsize=(8, 8))
+            plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+            plt.title('Confusion Matrix')
+            plt.colorbar()
+            plt.ylabel('True label')
+            plt.xlabel('Predicted label')
+            
+            # Save confusion matrix
+            cm_path = os.path.join(output_dir, "confusion_matrix.png")
+            plt.savefig(cm_path)
+            plt.close()
+            print(f"Confusion matrix saved to {cm_path}")
 
-            # Log all metrics
-            for name, value in metrics.items():
-                pl_module.log(f"test_{name}", value)
-
-            # Save metrics to file
-            if output_dir is not None:
-                metrics_file = os.path.join(output_dir, "test_metrics.txt")
-                with open(metrics_file, "w") as f:
-                    for name, value in metrics.items():
-                        f.write(f"{name}: {value:.4f}\n")
-                    
-                # Save confusion matrix
-                np.save(os.path.join(output_dir, "confusion_matrix.npy"), cm)
-
-        except ImportError:
-            print("Warning: scikit-learn not found. Skipping ROC and confusion matrix metrics.")
         except Exception as e:
-            print(f"Warning: Error computing classification metrics: {str(e)}")
-        finally:
-            # Clear stored predictions
-            self._test_outputs.clear()
-            self._test_targets.clear()
+            print(f"Warning: Could not compute classification metrics: {str(e)}")
+
+        # Clear stored outputs
+        self._test_outputs.clear()
+        self._test_targets.clear()

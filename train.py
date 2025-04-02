@@ -171,10 +171,11 @@ def setup_callbacks(config: Dict) -> List:
         LearningRateMonitor(logging_interval="step"),
     ]
 
-    # Inference callback for test metrics
+    # Add inference callback for test metrics if enabled
     if config["training"].get("compute_test_metrics", True):
-        inference_callback = InferenceCallback(output_dir=logs_dir)
-        callbacks.append(inference_callback)
+        metric_logs_dir = os.path.join(config["output_path"], "metric_logs")
+        os.makedirs(metric_logs_dir, exist_ok=True)
+        callbacks.append(InferenceCallback(output_dir=metric_logs_dir))
 
     return callbacks
 
