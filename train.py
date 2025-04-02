@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Main steering script for training SNP diffusion model."""
-# python train.py --config config.yaml
-# python train.py --resume_from_checkpoint output/lightning_logs/version_x/checkpoints/last.ckpt
-# python train.py --config config.yaml --generate_samples
+"""Main script for training the SNP diffusion model.
+
+Examples:
+    # Train a new model using configuration from config.yaml
+    python train.py --config config.yaml
+
+    # Resume training from a checkpoint
+    python train.py --config config.yaml --resume path/to/checkpoint.ckpt
+"""
 
 import argparse
 import os
@@ -22,28 +27,22 @@ from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger, CSVLogger
 
 from diffusion import DiffusionModel
-from diffusion.inference_callback import InferenceCallback
+from diffusion.evaluation_callback import EvaluationCallback
 
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--config", type=str, default="config.yaml", help="Path to configuration file"
+    parser = argparse.ArgumentParser(
+        description="Train a diffusion model for SNP data generation"
     )
     parser.add_argument(
-        "--output_dir",
+        "--config",
         type=str,
-        default=None,
-        help="Directory to save outputs (overrides config.yaml output_path)",
+        required=True,
+        help="Path to configuration file",
     )
     parser.add_argument(
-        "--generate_samples",
-        action="store_true",
-        help="Generate samples after training",
-    )
-    parser.add_argument(
-        "--resume_from_checkpoint",
+        "--resume",
         type=str,
         default=None,
         help="Path to checkpoint file to resume training from",
@@ -174,9 +173,9 @@ def setup_callbacks(config: Dict) -> List:
 
     # Add inference callback for test metrics if enabled
     if config["training"].get("compute_test_metrics", True):
-        metric_logs_dir = os.path.join(config["output_path"], "metric_logs")
-        os.makedirs(metric_logs_dir, exist_ok=True)
-        callbacks.append(InferenceCallback(output_dir=metric_logs_dir))
+        eval_dir = os.path.join(config["output_path"], "evaluation")
+        os.makedirs(eval_dir, exist_ok=True)
+        callbacks.append(EvaluationCallback(output_dir=eval_dir))
 
     return callbacks
 
@@ -186,15 +185,19 @@ def main(args):
     # Load configuration
     config = load_config(args.config)
 
-    # Override output directory if specified
-    if args.output_dir:
-        config["output_path"] = args.output_dir
+    # Ensure output directory exists
+    os.makedirs(config["output_path"], exist_ok=True)
 
     # Initialize model
-    model = DiffusionModel(config)
+    try:
+        print("Initializing model...")
+        model = DiffusionModel(config)
+        print(f"Model initialized successfully")
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize model: {e}")
 
-    # Set up logger
-    logger = setup_logger(config, args.resume_from_checkpoint)
+    # Set up loggers
+    logger = setup_logger(config, args.resume)
 
     # Set up callbacks
     callbacks = setup_callbacks(config)
@@ -205,45 +208,32 @@ def main(args):
         accelerator="auto",
         devices="auto",
         precision="bf16-mixed",
-        logger=logger,
         callbacks=callbacks,
+        logger=logger,
         default_root_dir=config["output_path"],
+        enable_progress_bar=True,
+        enable_model_summary=True,
+        gradient_clip_val=config["training"].get("gradient_clip_val", 1.0),
+        accumulate_grad_batches=config["training"].get("accumulate_grad_batches", 1),
+        log_every_n_steps=config["training"].get("log_every_n_steps", 50),
+        val_check_interval=config["training"].get("val_check_interval", 1.0),
+        limit_val_batches=config["training"].get("limit_val_batches", 1.0),
     )
 
     # Train model
-    if args.resume_from_checkpoint:
-        print(f"Resuming training from checkpoint: {args.resume_from_checkpoint}")
-        trainer.fit(model, ckpt_path=args.resume_from_checkpoint)
-    else:
-        trainer.fit(model)
-
-    # Generate and save samples if requested
-    if args.generate_samples:
-        print("Generating samples...")
-        samples = model.generate_samples(
-            num_samples=config["training"].get("num_samples", 10)
+    try:
+        print("Starting training...")
+        trainer.fit(
+            model,
+            ckpt_path=args.resume,
         )
-
-        # Get metric logs directory
-        base_dir = config.get("output_path", "output")
-        metric_logs_dir = os.path.join(base_dir, "metric_logs")
-        os.makedirs(metric_logs_dir, exist_ok=True)
-
-        # Save samples in metric_logs directory
-        samples_path = os.path.join(metric_logs_dir, "generated_samples.pt")
-        torch.save(samples, samples_path)
-        print(f"Generated samples shape: {samples.shape}")
-        print(f"Samples saved to {samples_path}")
-
-        # Also save a copy in logger's directory if available
-        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger, pl.loggers.WandbLogger)):
-            try:
-                logger_samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
-                os.makedirs(os.path.dirname(logger_samples_path), exist_ok=True)
-                torch.save(samples, logger_samples_path)
-                print(f"Additional copy saved to {logger_samples_path}")
-            except (TypeError, AttributeError):
-                print("Could not save to logger directory")
+        print("Training completed successfully")
+        print("\nTo evaluate the model, run:")
+        print(f"python test.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}")
+        print("\nTo generate samples, run:")
+        print(f"python inference.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}")
+    except Exception as e:
+        raise RuntimeError(f"Training failed: {e}")
 
 
 if __name__ == "__main__":

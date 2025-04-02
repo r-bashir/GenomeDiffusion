@@ -1,7 +1,21 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Script for generating samples using trained SNP diffusion model."""
+"""Script for generating and analyzing samples from trained SNP diffusion models.
+
+Examples:
+    # Generate default number of samples (from config)
+    python inference.py --config config.yaml --checkpoint path/to/checkpoint.ckpt
+
+    # Generate specific number of samples
+    python inference.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --num_samples 100
+
+Generated outputs are saved in the 'inference' directory, including:
+- Generated samples (.pt file)
+- Sample comparisons with real data
+- Statistical analysis
+- Visualization plots
+"""
 
 import argparse
 import os
@@ -40,13 +54,39 @@ def parse_args():
         default=None,
         help="Number of samples to generate (overrides config)",
     )
+
     return parser.parse_args()
 
 
-def load_config(config_path: str):
+def load_config(config_path: str) -> Dict:
     """Load configuration from YAML file."""
     with open(config_path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    return config
+
+
+def plot_sample_grid(samples, save_path, title):
+    """Plot a grid of samples showing the diffusion process."""
+    n_samples = min(samples.shape[0], 10)  # Show at most 10 timesteps
+    seq_length = samples.shape[-1]
+    
+    # Create figure
+    fig, axes = plt.subplots(n_samples, 1, figsize=(15, 2*n_samples))
+    fig.suptitle(title)
+    
+    # If only one sample, axes won't be an array
+    if n_samples == 1:
+        axes = [axes]
+    
+    # Plot each sample
+    for i in range(n_samples):
+        axes[i].imshow(samples[i,0,:].reshape(1,-1), aspect='auto', cmap='viridis')
+        axes[i].set_title(f'Step {i}')
+        axes[i].set_yticks([])
+    
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
 
 
 def plot_comparison(real_samples, generated_samples, save_path):
@@ -94,11 +134,15 @@ def main(args):
     # Setup output directory
     checkpoint_path = Path(args.checkpoint)
     if 'checkpoints' in str(checkpoint_path):
-        output_dir = checkpoint_path.parent.parent
+        base_dir = checkpoint_path.parent.parent  # Go up two levels: from checkpoint file to run directory
     else:
-        output_dir = checkpoint_path.parent
+        base_dir = checkpoint_path.parent
+    base_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create inference directory for generated samples and comparisons
+    output_dir = base_dir / "inference"
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Generated samples will be saved to: {output_dir}")
+    print(f"Generated samples and comparisons will be saved to: {output_dir}")
     
     # Load some real samples for comparison
     print("Loading test dataset for comparison...")
@@ -156,6 +200,31 @@ def main(args):
             plot_path = output_dir / "sample_comparison.png"
             plot_comparison(real_samples, samples, plot_path)
             print(f"Comparison plots saved to: {plot_path}")
+            
+            # Generate reverse diffusion visualization
+            print("\nGenerating reverse diffusion visualization...")
+            reverse_samples = []
+            x = torch.randn((1,) + model._data_shape, device=model.device)
+            reverse_samples.append(x.cpu())
+            
+            for t in range(model._forward_diffusion.tmax, 0, -100):
+                x = model._reverse_process_step(x, t)
+                x = torch.clamp(x, -5.0, 5.0)  # Prevent explosion
+                reverse_samples.append(x.cpu())
+            
+            # Final normalization
+            x = torch.clamp(x, 0, 1)
+            reverse_samples.append(x.cpu())
+            
+            # Plot reverse diffusion
+            reverse_samples = torch.cat(reverse_samples, dim=0)
+            plot_path = output_dir / "reverse_diffusion.png"
+            plot_sample_grid(
+                reverse_samples,
+                plot_path,
+                "Reverse Diffusion Process (t=T to 0)"
+            )
+            print(f"Reverse diffusion visualization saved to: {plot_path}")
             
     except Exception as e:
         raise RuntimeError(f"Sample generation failed: {e}")
