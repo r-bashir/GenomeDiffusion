@@ -29,7 +29,7 @@ apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
-    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml --generate_samples" || {
+    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }

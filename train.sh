@@ -1,39 +1,32 @@
 #!/bin/bash
 
-# Default values
-CONFIG="config.yaml"
-OUTPUT_DIR="runs/default"
+# Paths and variables
+CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
+PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
+DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --config)
-      CONFIG="$2"
-      shift 2
-      ;;
-    --output_dir)
-      OUTPUT_DIR="$2"
-      shift 2
-      ;;
-    *)
-      echo "Unknown argument: $1"
-      exit 1
-      ;;
-  esac
-done
+# WandB API Key
+export WANDB_API_KEY="145f0112a8066d63f7e4856f3ac01edd336afebd"
 
-# Create output directory
-mkdir -p "$OUTPUT_DIR"
+# Log Start Time
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+SECONDS=0  # Start timer
 
-# Run training
-python train.py \
-  --config "$CONFIG" \
-  --output_dir "$OUTPUT_DIR"
+echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 
-status=$?
-if [ $status -ne 0 ]; then
-    echo "Training failed with status $status"
-    exit $status
-fi
+# Run the container
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml" || {
+    echo "Error: Apptainer execution failed!" >&2
+    exit 1
+}
 
-echo "Training completed. Model checkpoints saved in: $OUTPUT_DIR/checkpoints/"
+# Log End Time
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+ELAPSED_TIME=$SECONDS  # Get elapsed seconds
+
+echo "Job $SLURM_JOB_ID finished at $END_TIME"
+echo "Total execution time: $(($ELAPSED_TIME / 60)) min $(($ELAPSED_TIME % 60)) sec"
