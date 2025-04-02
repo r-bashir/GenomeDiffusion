@@ -7,11 +7,8 @@
 #SBATCH --partition=berzelius    # Ensure correct partition
 #SBATCH --mail-type=ALL          # Send email on job begin, end, fail, etc.
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
-#SBATCH -o $SLURM_SUBMIT_DIR/slurm_logs/%x-%j.out  # Standard output log
-#SBATCH -e $SLURM_SUBMIT_DIR/slurm_logs/%x-%j.err  # Standard error log
-
-# Ensure logs directory exists
-mkdir -p $SLURM_SUBMIT_DIR/slurm_logs
+#SBATCH -o slurm_logs/%x-%j.out  # Standard output log
+#SBATCH -e slurm_logs/%x-%j.err  # Standard error log
 
 # Paths and variables
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
