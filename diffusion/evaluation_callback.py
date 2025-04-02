@@ -1,4 +1,4 @@
-"""Callback for model inference and evaluation metrics."""
+"""Callback for model evaluation metrics."""
 
 import os
 from typing import Any, Dict, List, Optional
@@ -12,8 +12,8 @@ from pytorch_lightning.callbacks import Callback
 from sklearn.metrics import roc_curve, auc, confusion_matrix
 
 
-class InferenceCallback(Callback):
-    """Callback for model inference and evaluation metrics.
+class EvaluationCallback(Callback):
+    """Callback for model evaluation metrics.
     
     This callback collects model outputs during testing and computes various evaluation
     metrics including ROC curves, confusion matrices, and classification metrics.
