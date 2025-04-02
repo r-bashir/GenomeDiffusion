@@ -215,11 +215,12 @@ def main(args):
     else:
         trainer.fit(model)
 
-    # Test model if validation performance is good
-    test_threshold = config["training"].get("test_threshold", float("inf"))
-    val_loss = trainer.callback_metrics.get("val_loss", float("inf"))
-    if val_loss < test_threshold:
+    # Run test phase if enabled in config
+    if config["training"].get("compute_test_metrics", True):
+        print("Running test phase to compute metrics...")
         trainer.test(model)
+    else:
+        print("Skipping test phase (compute_test_metrics is False in config)")
 
     # Generate and save samples if requested
     if args.generate_samples:
@@ -229,17 +230,11 @@ def main(args):
         )
 
         # Determine save path
-        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger)):
-            # For TensorBoard and CSV loggers, use their version-specific directory
+        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger, pl.loggers.WandbLogger)):
+            # Use logger's version-specific directory for all logger types
             samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
-        elif isinstance(logger, pl.loggers.WandbLogger):
-            # For WandB logger, use the output path with run ID
-            samples_path = os.path.join(
-                config["output_path"],
-                f"generated_samples_{logger.version}.pt"
-            )
         else:
-            # Fallback to output directory
+            # Fallback to output directory only if logger type is unknown
             samples_path = os.path.join(config["output_path"], "generated_samples.pt")
 
         # Ensure directory exists
