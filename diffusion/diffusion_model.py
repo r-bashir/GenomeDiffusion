@@ -61,25 +61,6 @@ class DiffusionModel(NetworkBase):
         else:
             print("Warning: `gradient_checkpointing_enable()` not found in UNet1D. Skipping...")
 
-    def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Predict the noise that was added during forward diffusion.
-
-        Args:
-            x: Noisy input data of shape [B, C, seq_len].
-            t: Timesteps of shape [B].
-
-        Returns:
-            torch.Tensor: Predicted noise of shape [B, C, seq_len].
-        """
-        # Ensure x has the correct shape for UNet input
-        if len(x.shape) == 2:     # If shape is (batch_size, seq_len)
-            x = x.unsqueeze(1)    # Convert to (batch_size, 1, seq_len)
-        # print(f"Noise prediction input shape: {x.shape}")
-        # Run through UNet
-        pred_noise = self.unet(x, t)
-        # print(f"Noise prediction output shape: {pred_noise.shape}")
-        return pred_noise
-
     def forward(self, batch: torch.Tensor) -> torch.Tensor:
         """Forward pass of the diffusion model.
 
@@ -103,7 +84,26 @@ class DiffusionModel(NetworkBase):
             xt = xt[:, :1, :]       # Force to 1 channel
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
+        
+    def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """Predict the noise that was added during forward diffusion.
 
+        Args:
+            x: Noisy input data of shape [B, C, seq_len].
+            t: Timesteps of shape [B].
+
+        Returns:
+            torch.Tensor: Predicted noise of shape [B, C, seq_len].
+        """
+        # Ensure x has the correct shape for UNet input
+        if len(x.shape) == 2:     # If shape is (batch_size, seq_len)
+            x = x.unsqueeze(1)    # Convert to (batch_size, 1, seq_len)
+        # print(f"Noise prediction input shape: {x.shape}")
+        # Run through UNet
+        pred_noise = self.unet(x, t)
+        # print(f"Noise prediction output shape: {pred_noise.shape}")
+        return pred_noise
+        
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
         The network's goal is to correctly predict noise (eps) from noisy observations.
@@ -115,12 +115,22 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: MSE loss.
         """
-        # Sample true noise
+        # t = self._time_sampler.sample(shape=(batch.shape[0],))  # sample time
+        # eps = torch.randn_like(batch)                           # sample noise
+        # xt = self._forward_diffusion.sample(batch, t, eps)      # add noise
+        # pred_noise = self.unet(xt, t)                           # predict noise
+        # loss = torch.mean((pred_noise - eps) ** 2)              # compute loss
+        
+        # Sample true noise (sample noise same as in forward function)
         eps = torch.randn_like(batch)
-        # Get model predicted noise
+        
+        # Get model predicted noise (sample time, sample noise, add & predict noise)
         pred_eps = self.forward(batch)
+        
         # Compute MSE loss
-        return F.mse_loss(pred_eps, eps)
+        loss = F.mse_loss(pred_eps, eps)
+        
+        return loss
 
     def loss_per_timesteps(
         self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
