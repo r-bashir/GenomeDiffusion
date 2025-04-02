@@ -77,15 +77,19 @@ class DDPM:
         self._num_diffusion_timesteps = num_diffusion_timesteps
         self._beta_start = beta_start
         self._beta_end = beta_end
-        
+
         self._betas = np.linspace(
             self._beta_start, self._beta_end, self._num_diffusion_timesteps
         )
         alphas_bar = self._get_alphas_bar()
-        
+
         # Register these as nn.Parameters so they move with the model
-        self.register_buffer('_alphas', torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32))
-        self.register_buffer('_sigmas', torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32))
+        self.register_buffer(
+            "_alphas", torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
+        )
+        self.register_buffer(
+            "_sigmas", torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
+        )
 
     def register_buffer(self, name, tensor):
         """
@@ -134,11 +138,11 @@ class DDPM:
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        
+
         # Ensure idx is on the same device as _alphas
         if idx.device != self._alphas.device:
             idx = idx.to(self._alphas.device)
-        
+
         # Return values on the correct device
         return self._alphas[idx]
 
@@ -156,11 +160,11 @@ class DDPM:
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        
+
         # Ensure idx is on the same device as _sigmas
         if idx.device != self._sigmas.device:
             idx = idx.to(self._sigmas.device)
-        
+
         # Return values on the correct device
         return self._sigmas[idx]
 
@@ -181,11 +185,11 @@ class DDPM:
         # Get alpha and sigma values for the timesteps
         alpha_values = self.alpha(t)
         sigma_values = self.sigma(t)
-        
+
         # Move alpha and sigma to the same device as x0
         alpha_values = alpha_values.to(x0.device)
         sigma_values = sigma_values.to(x0.device)
-        
+
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
             alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
@@ -212,7 +216,7 @@ class DDPMModule(nn.Module):
     As t increases, more noise is added until the data becomes pure noise.
     This creates the training pairs (xt, t, eps) that teach the UNet to
     predict the added noise at each timestep.
-    
+
     This version inherits from nn.Module for proper device handling.
     """
 
@@ -234,15 +238,19 @@ class DDPMModule(nn.Module):
         self._num_diffusion_timesteps = num_diffusion_timesteps
         self._beta_start = beta_start
         self._beta_end = beta_end
-        
+
         self._betas = np.linspace(
             self._beta_start, self._beta_end, self._num_diffusion_timesteps
         )
         alphas_bar = self._get_alphas_bar()
-        
+
         # Register tensors as buffers so they move with the model
-        self.register_buffer('_alphas', torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32))
-        self.register_buffer('_sigmas', torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32))
+        self.register_buffer(
+            "_alphas", torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
+        )
+        self.register_buffer(
+            "_sigmas", torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
+        )
 
     @property
     def tmin(self) -> int:
@@ -275,11 +283,11 @@ class DDPMModule(nn.Module):
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        
+
         # Ensure idx is on the same device as _alphas
         if idx.device != self._alphas.device:
             idx = idx.to(self._alphas.device)
-        
+
         # Return values on the correct device
         return self._alphas[idx]
 
@@ -297,11 +305,11 @@ class DDPMModule(nn.Module):
         t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
-        
+
         # Ensure idx is on the same device as _sigmas
         if idx.device != self._sigmas.device:
             idx = idx.to(self._sigmas.device)
-        
+
         # Return values on the correct device
         return self._sigmas[idx]
 
@@ -322,11 +330,11 @@ class DDPMModule(nn.Module):
         # Get alpha and sigma values for the timesteps
         alpha_values = self.alpha(t)
         sigma_values = self.sigma(t)
-        
+
         # Move alpha and sigma to the same device as x0
         alpha_values = alpha_values.to(x0.device)
         sigma_values = sigma_values.to(x0.device)
-        
+
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
             alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
@@ -357,7 +365,7 @@ class SinusoidalPositionalEmbeddings(nn.Module):
         Returns:
             torch.Tensor: Embeddings of shape (batch_size, dim).
         """
-        device = time.device if torch.is_tensor(time) else torch.device('cpu')
+        device = time.device if torch.is_tensor(time) else torch.device("cpu")
         time = torch.as_tensor(time, device=device)
         half_dim = self.dim // 2
         e = math.log(10000.0) / (half_dim - 1)

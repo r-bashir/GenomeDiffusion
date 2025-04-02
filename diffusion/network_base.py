@@ -48,7 +48,7 @@ class NetworkBase(pl.LightningModule):
         Args:
             stage: Current stage ('fit', 'validate', 'test', or 'predict').
         """
-        if not hasattr(self, 'dataset') or self.dataset is None:
+        if not hasattr(self, "dataset") or self.dataset is None:
             # Load dataset - override this in subclasses if needed
             self.dataset = self._create_dataset()
 
@@ -76,6 +76,7 @@ class NetworkBase(pl.LightningModule):
         if "input_path" not in self.hparams:
             raise ValueError("input_path must be specified in hparams")
         from diffusion import SNPDataset  # Import here to avoid circular imports
+
         return SNPDataset(self.hparams["input_path"])
 
     def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
@@ -90,8 +91,8 @@ class NetworkBase(pl.LightningModule):
         Returns:
             torch.Tensor: Prepared batch with shape [B, C, seq_len].
         """
-        if len(batch.shape) == 2:         
-            batch = batch.unsqueeze(1)    # Convert to (batch_size, 1, seq_len)
+        if len(batch.shape) == 2:
+            batch = batch.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
         return batch
 
     def train_dataloader(self) -> DataLoader:
@@ -128,10 +129,14 @@ class NetworkBase(pl.LightningModule):
         """Training step."""
         x = self._prepare_batch(batch)
         loss = self.compute_loss(x)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log(
+            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True
+        )
         return loss
 
-    def _shared_evaluation(self, batch: torch.Tensor, stage: str, log: bool = True) -> Dict:
+    def _shared_evaluation(
+        self, batch: torch.Tensor, stage: str, log: bool = True
+    ) -> Dict:
         """Shared evaluation logic for validation and test.
 
         Args:
@@ -144,14 +149,21 @@ class NetworkBase(pl.LightningModule):
         """
         batch = self._prepare_batch(batch)
         loss = self.compute_loss(batch)
-        
+
         if log:
-            self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        
+            self.log(
+                f"{stage}_loss",
+                loss,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
+
         return {
             "loss": loss,
             "model_output": batch,  # Original input for comparison
-            "predicted": self.forward(batch)  # Model's prediction
+            "predicted": self.forward(batch),  # Model's prediction
         }
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:

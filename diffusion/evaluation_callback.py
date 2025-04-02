@@ -14,14 +14,14 @@ from sklearn.metrics import roc_curve, auc, confusion_matrix
 
 class EvaluationCallback(Callback):
     """Callback for model evaluation metrics.
-    
+
     This callback collects model outputs during testing and computes various evaluation
     metrics including ROC curves, confusion matrices, and classification metrics.
     """
 
     def __init__(self, output_dir: Optional[str] = None):
         """Initialize the callback.
-        
+
         Args:
             output_dir: Directory to save plots and metrics. If None, will use logger's directory.
         """
@@ -31,7 +31,7 @@ class EvaluationCallback(Callback):
         self._test_targets: List[torch.Tensor] = []
 
     def on_test_batch_end(
-        self, 
+        self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
         outputs: Dict[str, Any],
@@ -40,7 +40,7 @@ class EvaluationCallback(Callback):
         dataloader_idx: int = 0,
     ) -> None:
         """Collect outputs and targets after each test batch.
-        
+
         Args:
             trainer: PyTorch Lightning trainer instance
             pl_module: The current PyTorch Lightning module
@@ -51,19 +51,19 @@ class EvaluationCallback(Callback):
         """
         if isinstance(batch, (tuple, list)):
             batch = batch[0]  # Get just the data, not labels if present
-            
+
         # Store model outputs and targets
         if isinstance(outputs, dict) and "model_output" in outputs:
             self._test_outputs.append(outputs["predicted"].detach().cpu())
             self._test_targets.append(outputs["model_output"].detach().cpu())
 
     def on_test_epoch_end(
-        self, 
+        self,
         trainer: pl.Trainer,
         pl_module: pl.LightningModule,
     ) -> None:
         """Compute evaluation metrics at the end of the test epoch.
-        
+
         Args:
             trainer: PyTorch Lightning trainer instance
             pl_module: The current PyTorch Lightning module
@@ -98,22 +98,28 @@ class EvaluationCallback(Callback):
 
         try:
             # Compute ROC curve and area
-            fpr, tpr, _ = roc_curve(targets_binary.flatten().numpy(), 
-                                  outputs_float.flatten().numpy())
+            fpr, tpr, _ = roc_curve(
+                targets_binary.flatten().numpy(), outputs_float.flatten().numpy()
+            )
             roc_auc = auc(fpr, tpr)
 
             # Plot ROC curve
             plt.figure(figsize=(8, 8))
-            plt.plot(fpr, tpr, color='darkorange', lw=2,
-                    label=f'ROC curve (AUC = {roc_auc:.2f})')
-            plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+            plt.plot(
+                fpr,
+                tpr,
+                color="darkorange",
+                lw=2,
+                label=f"ROC curve (AUC = {roc_auc:.2f})",
+            )
+            plt.plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
             plt.xlim([0.0, 1.0])
             plt.ylim([0.0, 1.05])
-            plt.xlabel('False Positive Rate')
-            plt.ylabel('True Positive Rate')
-            plt.title('Receiver Operating Characteristic')
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+            plt.title("Receiver Operating Characteristic")
             plt.legend(loc="lower right")
-            
+
             # Save ROC curve
             roc_path = os.path.join(output_dir, "roc_curve.png")
             plt.savefig(roc_path)
@@ -121,17 +127,18 @@ class EvaluationCallback(Callback):
             print(f"ROC curve saved to {roc_path}")
 
             # Compute confusion matrix
-            cm = confusion_matrix(targets_binary.flatten().numpy(),
-                                predictions_binary.flatten().numpy())
-            
+            cm = confusion_matrix(
+                targets_binary.flatten().numpy(), predictions_binary.flatten().numpy()
+            )
+
             # Plot confusion matrix
             plt.figure(figsize=(8, 8))
-            plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-            plt.title('Confusion Matrix')
+            plt.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
+            plt.title("Confusion Matrix")
             plt.colorbar()
-            plt.ylabel('True label')
-            plt.xlabel('Predicted label')
-            
+            plt.ylabel("True label")
+            plt.xlabel("Predicted label")
+
             # Save confusion matrix
             cm_path = os.path.join(output_dir, "confusion_matrix.png")
             plt.savefig(cm_path)

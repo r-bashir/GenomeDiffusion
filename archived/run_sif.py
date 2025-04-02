@@ -9,9 +9,11 @@ import yaml
 import torch
 from diffusion.dataset import load_data
 
+
 def check_path_exists(path):
     """Check if a path exists."""
     return os.path.exists(path)
+
 
 def parse_args():
     """Parse command line arguments."""
@@ -27,15 +29,17 @@ def parse_args():
     )
     return parser.parse_args()
 
+
 def load_config(config_path: str):
     """Load configuration from YAML file."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
     return config
 
+
 def main(args):
     """Main function to test SNPDataset and SNPDataModule."""
-    
+
     # Load configuration
     config = load_config(args.config)
 
@@ -68,6 +72,7 @@ def main(args):
 
     print(f"\nDataset length: {len(dataset)}")
     print(f"First example: {dataset[0].shape}")
+
 
 if __name__ == "__main__":
     args = parse_args()

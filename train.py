@@ -98,28 +98,25 @@ def setup_logger(
 
     # Get version from checkpoint if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
-    
+
     # Common logger parameters
-    logger_params = {
-        "name": "",
-        "save_dir": logs_dir,
-        "version": version
-    }
-    
+    logger_params = {"name": "", "save_dir": logs_dir, "version": version}
+
     # Select logger type from config
     logger_type = config["training"]["logger"]
-    
+
     if logger_type == "wandb":
         try:
             # Try loading API key from environment variable first
             import wandb
+
             api_key = os.environ.get("WANDB_API_KEY")
             if api_key:
                 wandb.login(key=api_key)
             elif not wandb.api.api_key:
                 print("Wandb API key not found. Attempting to log in...")
                 wandb.login()
-                
+
             # Create WandbLogger with consistent parameters
             wandb_logger = WandbLogger(
                 **logger_params,
@@ -128,20 +125,22 @@ def setup_logger(
                 resume="allow" if resume_from_checkpoint else None,
             )
             return wandb_logger
-            
+
         except Exception as e:
             print(f"Warning: Failed to initialize wandb: {str(e)}")
             print("Falling back to TensorBoard logger")
             logger_type = "tb"  # Fall back to TensorBoard
-    
+
     elif logger_type == "tb":
         return TensorBoardLogger(**logger_params)
-    
+
     elif logger_type == "csv":
         return CSVLogger(**logger_params)
-    
+
     else:
-        raise ValueError(f"Logger '{logger_type}' not recognized. Use 'wandb', 'tb', or 'csv'.")
+        raise ValueError(
+            f"Logger '{logger_type}' not recognized. Use 'wandb', 'tb', or 'csv'."
+        )
 
 
 def setup_callbacks(config: Dict) -> List:
@@ -229,9 +228,13 @@ def main(args):
         )
         print("Training completed successfully")
         print("\nTo evaluate the model, run:")
-        print(f"python test.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}")
+        print(
+            f"python test.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
+        )
         print("\nTo generate samples, run:")
-        print(f"python inference.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}")
+        print(
+            f"python inference.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
+        )
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")
 

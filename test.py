@@ -28,9 +28,12 @@ import yaml
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.evaluation_callback import EvaluationCallback
 
+
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Evaluate SNP diffusion model on test dataset")
+    parser = argparse.ArgumentParser(
+        description="Evaluate SNP diffusion model on test dataset"
+    )
     parser.add_argument(
         "--config",
         type=str,
@@ -64,12 +67,14 @@ def main(args):
 
     # Setup output directory
     checkpoint_path = Path(args.checkpoint)
-    if 'checkpoints' in str(checkpoint_path):
-        base_dir = checkpoint_path.parent.parent  # Go up two levels: from checkpoint file to run directory
+    if "checkpoints" in str(checkpoint_path):
+        base_dir = (
+            checkpoint_path.parent.parent
+        )  # Go up two levels: from checkpoint file to run directory
     else:
         base_dir = checkpoint_path.parent
     base_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create evaluation directory for model assessment results
     output_dir = base_dir / "evaluation"
     output_dir.mkdir(parents=True, exist_ok=True)
