@@ -88,14 +88,18 @@ class InferenceCallback(Callback):
         pl_module.log("test_mse", mse)
         pl_module.log("test_mae", mae)
 
+        # Convert tensors to float32 before computing metrics
+        outputs_float = outputs.float()
+        targets_float = targets.float()
+
         # Convert to binary for classification metrics
-        predictions_binary = (outputs > 0.5).float()
-        targets_binary = (targets > 0.5).float()
+        predictions_binary = (outputs_float > 0.5).float()
+        targets_binary = (targets_float > 0.5).float()
 
         try:
             # Compute ROC curve and area
             fpr, tpr, _ = roc_curve(targets_binary.flatten().numpy(), 
-                                  outputs.flatten().numpy())
+                                  outputs_float.flatten().numpy())
             roc_auc = auc(fpr, tpr)
 
             # Plot ROC curve

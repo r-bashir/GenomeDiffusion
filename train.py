@@ -216,13 +216,6 @@ def main(args):
     else:
         trainer.fit(model)
 
-    # Run test phase if enabled in config
-    if config["training"].get("compute_test_metrics", True):
-        print("Running test phase to compute metrics...")
-        trainer.test(model)
-    else:
-        print("Skipping test phase (compute_test_metrics is False in config)")
-
     # Generate and save samples if requested
     if args.generate_samples:
         print("Generating samples...")
