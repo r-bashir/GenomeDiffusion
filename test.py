@@ -66,30 +66,44 @@ def main(args):
 
     # Initialize model from checkpoint
     try:
+        print("Loading model from checkpoint...")
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location="cpu",  # Will be automatically moved to GPU if available
             strict=True,  # Ensure all weights are loaded correctly
+            config=config,  # Pass the config to the model
         )
+        print("Model loaded successfully")
+        
+        # Print model device to verify where it's loaded
+        print(f"Model is on device: {next(model.parameters()).device}")
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Set up inference callback
     inference_callback = InferenceCallback(output_dir=str(output_dir))
 
-    # Initialize trainer
+    # Initialize trainer with more logging
+    print("Initializing PyTorch Lightning Trainer...")
     trainer = pl.Trainer(
         accelerator="auto",  # Will automatically detect and use GPU if available
         devices="auto",      # Use all available devices
         precision="bf16-mixed",  # Use bfloat16 mixed precision
         callbacks=[inference_callback],
         default_root_dir=str(output_dir),
+        enable_progress_bar=True,  # Make sure progress bar is enabled
+        enable_model_summary=True,  # Print model summary
     )
+    print("Trainer initialized successfully")
 
-    # Run testing
+    # Run testing with more verbose output
     try:
+        print("Starting model testing...")
+        print(f"Current GPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
         trainer.test(model)
+        print("Testing completed successfully")
     except Exception as e:
+        print(f"Current GPU memory usage: {torch.cuda.memory_allocated() / 1024**2:.2f} MB")
         raise RuntimeError(f"Testing failed: {e}")
 
     # Generate samples if requested

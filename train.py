@@ -17,11 +17,11 @@ import yaml
 from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
-    ModelCheckpoint,
 )
+from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger, CSVLogger
 
-from diffusion import DiffusionModel, inference_callback
+from diffusion import DiffusionModel
 from diffusion.inference_callback import InferenceCallback
 
 
@@ -160,6 +160,7 @@ def setup_callbacks(config: Dict) -> List:
             save_top_k=3,
             mode="min",
             save_last=True,
+            auto_insert_metric_name=False,  # Keep filenames clean
         ),
         # Early stopping
         EarlyStopping(
