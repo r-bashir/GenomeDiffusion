@@ -53,9 +53,9 @@ class InferenceCallback(Callback):
             batch = batch[0]  # Get just the data, not labels if present
             
         # Store model outputs and targets
-        if "model_output" in outputs:
-            self._test_outputs.append(outputs["model_output"].detach().cpu())
-            self._test_targets.append(batch.detach().cpu())
+        if isinstance(outputs, dict) and "model_output" in outputs:
+            self._test_outputs.append(outputs["predicted"].detach().cpu())
+            self._test_targets.append(outputs["model_output"].detach().cpu())
 
     def on_test_epoch_end(
         self, 

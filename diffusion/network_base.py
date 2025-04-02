@@ -131,28 +131,45 @@ class NetworkBase(pl.LightningModule):
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
-    def _shared_evaluation(self, batch: torch.Tensor, stage: str) -> torch.Tensor:
-        """Shared evaluation step for validation and testing.
+    def _shared_evaluation(self, batch: torch.Tensor, stage: str, log: bool = True) -> Dict:
+        """Shared evaluation logic for validation and test.
 
         Args:
-            batch: Input batch from dataloader.
-            stage: One of 'val' or 'test'.
+            batch: Input batch from dataloader
+            stage: Stage name ('val' or 'test')
+            log: Whether to log metrics
 
         Returns:
-            torch.Tensor: Computed loss.
+            Dict containing loss and model outputs
         """
-        x = self._prepare_batch(batch)
-        loss = self.compute_loss(x)
-        self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
-        return loss
+        batch = self._prepare_batch(batch)
+        loss = self.compute_loss(batch)
+        
+        if log:
+            self.log(f"{stage}_loss", loss, prog_bar=True)
+        
+        return {
+            "loss": loss,
+            "model_output": batch,  # Original input for comparison
+            "predicted": self.forward(batch)  # Model's prediction
+        }
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Validation step."""
-        return self._shared_evaluation(batch, "val")
+        outputs = self._shared_evaluation(batch, "val")
+        return outputs["loss"]  # Only return loss for validation
 
-    def test_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
-        """Test step."""
-        return self._shared_evaluation(batch, "test")
+    def test_step(self, batch: torch.Tensor, batch_idx: int) -> Dict:
+        """Test step for evaluation.
+
+        Args:
+            batch: Input batch from test dataloader
+            batch_idx: Index of the current batch
+
+        Returns:
+            Dict containing test loss and model outputs
+        """
+        return self._shared_evaluation(batch, "test")  # Return full dict for test
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""
