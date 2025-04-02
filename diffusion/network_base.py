@@ -146,7 +146,7 @@ class NetworkBase(pl.LightningModule):
         loss = self.compute_loss(batch)
         
         if log:
-            self.log(f"{stage}_loss", loss, prog_bar=True)
+            self.log(f"{stage}_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         
         return {
             "loss": loss,

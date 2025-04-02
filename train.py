@@ -229,20 +229,26 @@ def main(args):
             num_samples=config["training"].get("num_samples", 10)
         )
 
-        # Determine save path
-        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger, pl.loggers.WandbLogger)):
-            # Use logger's version-specific directory for all logger types
-            samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
-        else:
-            # Fallback to output directory only if logger type is unknown
-            samples_path = os.path.join(config["output_path"], "generated_samples.pt")
+        # Get metric logs directory
+        base_dir = config.get("output_path", "output")
+        metric_logs_dir = os.path.join(base_dir, "metric_logs")
+        os.makedirs(metric_logs_dir, exist_ok=True)
 
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(samples_path), exist_ok=True)
-
+        # Save samples in metric_logs directory
+        samples_path = os.path.join(metric_logs_dir, "generated_samples.pt")
         torch.save(samples, samples_path)
         print(f"Generated samples shape: {samples.shape}")
         print(f"Samples saved to {samples_path}")
+
+        # Also save a copy in logger's directory if available
+        if isinstance(logger, (pl.loggers.TensorBoardLogger, pl.loggers.CSVLogger, pl.loggers.WandbLogger)):
+            try:
+                logger_samples_path = os.path.join(logger.log_dir, "generated_samples.pt")
+                os.makedirs(os.path.dirname(logger_samples_path), exist_ok=True)
+                torch.save(samples, logger_samples_path)
+                print(f"Additional copy saved to {logger_samples_path}")
+            except (TypeError, AttributeError):
+                print("Could not save to logger directory")
 
 
 if __name__ == "__main__":
