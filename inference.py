@@ -63,8 +63,15 @@ def load_config(config_path: str) -> Dict:
     return config
 
 
-def plot_sample_grid(samples, save_path, title):
-    """Plot a grid of samples showing the diffusion process."""
+def plot_sample_grid(samples, save_path, title, timesteps=None):
+    """Plot a grid of samples showing the diffusion process.
+    
+    Args:
+        samples: Tensor of samples to plot
+        save_path: Path to save the plot
+        title: Title for the plot
+        timesteps: List of timesteps corresponding to each sample
+    """
     n_samples = min(samples.shape[0], 10)  # Show at most 10 timesteps
     seq_length = samples.shape[-1]
 
@@ -79,7 +86,10 @@ def plot_sample_grid(samples, save_path, title):
     # Plot each sample
     for i in range(n_samples):
         axes[i].imshow(samples[i, 0, :].reshape(1, -1), aspect="auto", cmap="viridis")
-        axes[i].set_title(f"Step {i}")
+        if timesteps is not None:
+            axes[i].set_title(f"t = {timesteps[i]}")
+        else:
+            axes[i].set_title(f"Step {i}")
         axes[i].set_yticks([])
 
     plt.tight_layout()
@@ -206,20 +216,23 @@ def main(args):
     # Move model to the correct device
     model = model.to(trainer.strategy.root_device)
 
-    # Get real samples from test split for visualization
-    print("Loading samples from test split...")
+    # Load real SNP data from test split (ground truth)
+    print("Loading real SNP sequences from test split...")
     model.setup("test")  # Ensure test dataset is initialized
     real_samples = next(iter(model.test_dataloader()))
+    print(f"Real SNP data shape: {real_samples.shape}")
+    print(f"Real SNP values (should be 0, 0.5, 1.0): {torch.unique(real_samples)}")
 
-    # Generate samples
+    # Generate synthetic SNP sequences through reverse diffusion
     try:
-        print("\nGenerating samples...")
+        print("\nGenerating synthetic SNP sequences via reverse diffusion...")
         with torch.no_grad():
-            # Get number of samples from config or args
-            num_samples = args.num_samples or config["training"].get("num_samples", 10)
-            print(f"Generating {num_samples} samples...")
+            # Match number of synthetic samples with real data
+            num_samples = real_samples.shape[0]
+            print(f"Generating {num_samples} synthetic sequences...")
 
-            # Generate samples
+            # Run reverse diffusion to generate synthetic SNP sequences
+            # Starting from random noise, gradually denoise to get SNP-like data
             samples = model.generate_samples(num_samples=num_samples)
 
             # Check for NaN values in generated samples
@@ -229,12 +242,12 @@ def main(args):
                 )
                 samples = torch.nan_to_num(samples, nan=0.0)
 
-            # Save samples
-            samples_path = output_dir / "generated_samples.pt"
+            # Save synthetic SNP sequences
+            samples_path = output_dir / "synthetic_snp_sequences.pt"
             torch.save(samples.cpu(), samples_path)
-            print(f"Generated samples shape: {samples.shape}")
-            print(
-                f"Samples value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
+            print(f"Synthetic SNP data shape: {samples.shape}")
+            print(f"Synthetic SNP values (comparing to real 0, 0.5, 1.0): {torch.unique(samples)}")
+            print(f"Synthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
             )
             print(f"Samples saved to {samples_path}")
 
@@ -247,23 +260,33 @@ def main(args):
             # Generate reverse diffusion visualization
             print("\nGenerating reverse diffusion visualization...")
             reverse_samples = []
+            timesteps = []
+            
+            # Start with noise (t=T)
             x = torch.randn((1,) + model._data_shape, device=model.device)
             reverse_samples.append(x)
+            timesteps.append(model._forward_diffusion.tmax)
 
+            # Reverse diffusion process
             for t in range(model._forward_diffusion.tmax, 0, -100):
                 x = model._reverse_process_step(x, t)
                 x = torch.clamp(x, -5.0, 5.0)  # Prevent explosion
                 reverse_samples.append(x)
+                timesteps.append(t)
 
-            # Final normalization
+            # Final step (t=0)
             x = torch.clamp(x, 0, 1)
             reverse_samples.append(x)
+            timesteps.append(0)
 
             # Plot reverse diffusion
             reverse_samples = torch.cat(reverse_samples, dim=0)
             plot_path = output_dir / "reverse_diffusion.png"
             plot_sample_grid(
-                reverse_samples.cpu(), plot_path, "Reverse Diffusion Process (t=T to 0)"
+                reverse_samples.cpu(), 
+                plot_path, 
+                "Reverse Diffusion Process",
+                timesteps=timesteps
             )
             print(f"Reverse diffusion visualization saved to: {plot_path}")
 
