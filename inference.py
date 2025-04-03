@@ -20,6 +20,7 @@ Generated outputs are saved in the 'inference' directory, including:
 import argparse
 import os
 from pathlib import Path
+from typing import Dict
 
 import torch
 import yaml
@@ -147,8 +148,8 @@ def main(args):
     print(f"Generated samples and comparisons will be saved to: {output_dir}")
 
     # Load some real samples for comparison
-    print("Loading test dataset for comparison...")
-    test_dataset = SNPDataset(config["data"]["test_data_path"])
+    print("Loading dataset for comparison...")
+    test_dataset = SNPDataset(config["input_path"])
     test_loader = DataLoader(test_dataset, batch_size=10, shuffle=True)
     real_samples = next(iter(test_loader))
 
