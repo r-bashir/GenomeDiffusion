@@ -18,18 +18,13 @@ Generated outputs are saved in the 'inference' directory, including:
 """
 
 import argparse
-import os
 from pathlib import Path
-from typing import Dict
 
 import torch
 import yaml
 import matplotlib.pyplot as plt
-import numpy as np
-from torch.utils.data import DataLoader
-
+import pytorch_lightning as pl
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.dataset import SNPDataset
 
 
 def parse_args():
@@ -177,10 +172,7 @@ def main(args):
     # Get real samples from test split for visualization
     print("Loading samples from test split...")
     model.setup('test')  # Ensure test dataset is initialized
-    test_loader = model.test_dataloader()
-    if test_loader is None:
-        raise RuntimeError("Test dataloader is not properly initialized")
-    real_samples = next(iter(test_loader))
+    real_samples = next(iter(model.test_dataloader()))
 
     # Generate samples
     try:
