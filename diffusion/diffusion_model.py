@@ -180,10 +180,14 @@ class DiffusionModel(NetworkBase):
             )
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
+        
+        # Ensure all parameters are on the same device as xt
+        sqrt_a_t = sqrt_a_t.to(xt.device)
+        
         # Perform the denoising step to take the snp from t to t-1
-        inv_sqrt_a_t = 1.0 / sqrt_a_t
-        beta_t = 1.0 - sqrt_a_t**2
-        inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
+        inv_sqrt_a_t = (1.0 / sqrt_a_t).to(xt.device)
+        beta_t = (1.0 - sqrt_a_t**2).to(xt.device)
+        inv_sigma_t = (1.0 / self._forward_diffusion.sigma(t)).to(xt.device)
 
         # Add proper broadcasting for all scalar tensors
         inv_sqrt_a_t = inv_sqrt_a_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
