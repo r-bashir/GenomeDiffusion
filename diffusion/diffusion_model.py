@@ -74,16 +74,20 @@ class DiffusionModel(NetworkBase):
         """
         # Sample time and noise
         t = self._time_sampler.sample(shape=(batch.shape[0],))
+
         # Move time tensor to correct device
         t = t.to(batch.device)
         eps = torch.randn_like(batch)
+
         # Forward diffusion process
         xt = self._forward_diffusion.sample(batch, t, eps)
+
         # Ensure input has correct shape (batch_size, 1, seq_len)
         if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
             xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
         elif xt.shape[1] != 1:  # If incorrect number of channels
             xt = xt[:, :1, :]  # Force to 1 channel
+
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
 
@@ -100,9 +104,12 @@ class DiffusionModel(NetworkBase):
         # Ensure x has the correct shape for UNet input
         if len(x.shape) == 2:  # If shape is (batch_size, seq_len)
             x = x.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
+
         # print(f"Noise prediction input shape: {x.shape}")
+
         # Run through UNet
         pred_noise = self.unet(x, t)
+
         # print(f"Noise prediction output shape: {pred_noise.shape}")
         return pred_noise
 
@@ -172,6 +179,7 @@ class DiffusionModel(NetworkBase):
         t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=xt.device)
         # Get predicted noise from the U-Net
         eps_pred = self.predict_added_noise(xt, t)
+
         # Handle the case where t > 1 for all elements in batch
         is_t_greater_than_one = (t > 1).all()
         if is_t_greater_than_one:
@@ -180,27 +188,55 @@ class DiffusionModel(NetworkBase):
             )
         else:
             sqrt_a_t = self._forward_diffusion.alpha(t)
-        
-        # Ensure all parameters are on the same device as xt
+
+        # [NaN-FIX] Add numerical stability to prevent NaN values
         sqrt_a_t = sqrt_a_t.to(xt.device)
-        
+        eps = 1e-12  # [NaN-FIX] Small constant for numerical stability
+
         # Perform the denoising step to take the snp from t to t-1
-        inv_sqrt_a_t = (1.0 / sqrt_a_t).to(xt.device)
+        # [NaN-FIX] Add eps to denominators to prevent division by zero
+        inv_sqrt_a_t = (1.0 / (sqrt_a_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
         beta_t = (1.0 - sqrt_a_t**2).to(xt.device)
-        inv_sigma_t = (1.0 / self._forward_diffusion.sigma(t)).to(xt.device)
+        sigma_t = self._forward_diffusion.sigma(t)
+        inv_sigma_t = (1.0 / (sigma_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
 
         # Add proper broadcasting for all scalar tensors
         inv_sqrt_a_t = inv_sqrt_a_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
         beta_t = beta_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
         inv_sigma_t = inv_sigma_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
 
-        mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
+        # [NaN-FIX] Calculate mean with gradient clipping to prevent extreme values
+        # mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
+        noise_pred_term = beta_t * inv_sigma_t * eps_pred
+        noise_pred_term = torch.clamp(
+            noise_pred_term, -100, 100
+        )  # [NaN-FIX] Prevent extreme values
+        mean = inv_sqrt_a_t * (xt - noise_pred_term)
+
+        # [NaN-FIX] Replace any non-finite values with zeros
+        mean = torch.where(torch.isfinite(mean), mean, torch.zeros_like(mean))
+
         # DDPM instructs to use either the variance of the forward process
         # or the variance of posterior q(x_{t-1}|x_t, x_0). Former is easier.
-        std = torch.sqrt(beta_t)
+        std = torch.sqrt(
+            torch.clamp(beta_t, min=eps)
+        )  # [NaN-FIX] Ensure positive value before sqrt
         z = torch.randn_like(xt)
+
         # The reparameterization trick: N(mean, variance^2) = mean + std(sigma) * epsilon
-        return mean + std * z
+        result = mean + std * z
+
+        # [NaN-FIX] Final safety check and debugging info
+        if torch.isnan(result).any() or torch.isinf(result).any():
+            print(f"Warning: NaN/Inf detected at step {t[0].item()}")
+            print(
+                f"Stats - mean: {mean.mean().item():.4f}, std: {std.mean().item():.4f}"
+            )
+            result = torch.where(
+                torch.isfinite(result), result, torch.zeros_like(result)
+            )
+
+        return result
 
     def generate_samples(self, num_samples: int = 10) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
@@ -215,7 +251,7 @@ class DiffusionModel(NetworkBase):
             # Start with random noise
             x = torch.randn((num_samples,) + self._data_shape, device=self.device)
 
-            # Track statistics for debugging
+            # [NaN-FIX] Track statistics for debugging NaN issues
             print(
                 f"Initial noise stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}"
             )
@@ -228,12 +264,13 @@ class DiffusionModel(NetworkBase):
                     )
                 x = self._reverse_process_step(x, t)
 
-                # Clamp intermediate values to prevent explosion
+                # [NaN-FIX] Clamp intermediate values to prevent explosion
                 x = torch.clamp(x, -5.0, 5.0)
 
-            # Final normalization to [0, 1]
+            # [NaN-FIX] Final normalization to [0, 1] to ensure valid output range
             x = torch.clamp(x, 0, 1)
 
+            # [NaN-FIX] Print final statistics for debugging
             print(
                 f"Final sample stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}"
             )

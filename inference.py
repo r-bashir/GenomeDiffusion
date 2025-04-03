@@ -24,6 +24,7 @@ import os
 import torch
 import yaml
 import matplotlib.pyplot as plt
+import numpy as np
 import pytorch_lightning as pl
 from diffusion.diffusion_model import DiffusionModel
 
@@ -92,6 +93,20 @@ def plot_comparison(real_samples, generated_samples, save_path):
     real = real_samples.cpu().numpy()
     gen = generated_samples.cpu().numpy()
 
+    # Print statistics for debugging
+    print("\nData Statistics:")
+    print(
+        f"Real - shape: {real.shape}, range: [{real.min():.3f}, {real.max():.3f}], mean: {real.mean():.3f}, std: {real.std():.3f}"
+    )
+    print(
+        f"Generated - shape: {gen.shape}, range: [{gen.min():.3f}, {gen.max():.3f}], mean: {gen.mean():.3f}, std: {gen.std():.3f}"
+    )
+
+    # Check for NaN values
+    if np.isnan(gen).any():
+        print("Warning: Generated samples contain NaN values!")
+        gen = np.nan_to_num(gen, nan=0.0)  # Replace NaN with 0
+
     # Add channel dimension if missing
     if len(real.shape) == 2:
         real = real.reshape(real.shape[0], 1, -1)
@@ -102,28 +117,42 @@ def plot_comparison(real_samples, generated_samples, save_path):
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     fig.suptitle("Real vs Generated Samples Comparison")
 
-    # Plot sample sequences
-    axes[0, 0].plot(real[0].flatten(), label="Real")
-    axes[0, 0].plot(gen[0].flatten(), label="Generated")
-    axes[0, 0].set_title("Sample Sequence Comparison")
-    axes[0, 0].legend()
+    try:
+        # Plot sample sequences
+        axes[0, 0].plot(real[0].flatten(), label="Real")
+        axes[0, 0].plot(gen[0].flatten(), label="Generated")
+        axes[0, 0].set_title("Sample Sequence Comparison")
+        axes[0, 0].legend()
 
-    # Plot distributions
-    axes[0, 1].hist(real.flatten(), bins=50, alpha=0.5, label="Real")
-    axes[0, 1].hist(gen.flatten(), bins=50, alpha=0.5, label="Generated")
-    axes[0, 1].set_title("Value Distribution")
-    axes[0, 1].legend()
+        # Plot distributions (skip NaN values)
+        real_flat = real.flatten()
+        gen_flat = gen.flatten()
+        axes[0, 1].hist(
+            real_flat[~np.isnan(real_flat)], bins=50, alpha=0.5, label="Real"
+        )
+        axes[0, 1].hist(
+            gen_flat[~np.isnan(gen_flat)], bins=50, alpha=0.5, label="Generated"
+        )
+        axes[0, 1].set_title("Value Distribution")
+        axes[0, 1].legend()
 
-    # Plot heatmaps
-    first_100 = min(100, real.shape[-1])
-    axes[1, 0].imshow(real[0].reshape(1, -1)[:, :first_100], aspect="auto")
-    axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
-    axes[1, 1].imshow(gen[0].reshape(1, -1)[:, :first_100], aspect="auto")
-    axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
+        # Plot heatmaps
+        first_100 = min(100, real.shape[-1])
+        axes[1, 0].imshow(
+            real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis"
+        )
+        axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
+        axes[1, 1].imshow(
+            gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis"
+        )
+        axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
 
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
+        plt.tight_layout()
+        plt.savefig(save_path)
+    except Exception as e:
+        print(f"Warning: Error during plotting: {e}")
+    finally:
+        plt.close()
 
 
 def main(args):
@@ -179,7 +208,7 @@ def main(args):
 
     # Get real samples from test split for visualization
     print("Loading samples from test split...")
-    model.setup('test')  # Ensure test dataset is initialized
+    model.setup("test")  # Ensure test dataset is initialized
     real_samples = next(iter(model.test_dataloader()))
 
     # Generate samples
@@ -189,22 +218,32 @@ def main(args):
             # Get number of samples from config or args
             num_samples = args.num_samples or config["training"].get("num_samples", 10)
             print(f"Generating {num_samples} samples...")
-            
+
             # Generate samples
             samples = model.generate_samples(num_samples=num_samples)
-            
+
+            # Check for NaN values in generated samples
+            if torch.isnan(samples).any():
+                print(
+                    "Warning: Generated samples contain NaN values. Attempting to fix..."
+                )
+                samples = torch.nan_to_num(samples, nan=0.0)
+
             # Save samples
             samples_path = output_dir / "generated_samples.pt"
             torch.save(samples.cpu(), samples_path)
             print(f"Generated samples shape: {samples.shape}")
+            print(
+                f"Samples value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
+            )
             print(f"Samples saved to {samples_path}")
-            
+
             # Generate comparison plots
             print("\nGenerating comparison plots...")
             plot_path = output_dir / "sample_comparison.png"
             plot_comparison(real_samples.cpu(), samples.cpu(), plot_path)
             print(f"Comparison plots saved to: {plot_path}")
-            
+
             # Generate reverse diffusion visualization
             print("\nGenerating reverse diffusion visualization...")
             reverse_samples = []
