@@ -147,12 +147,6 @@ def main(args):
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Generated samples and comparisons will be saved to: {output_dir}")
 
-    # Load some real samples for comparison
-    print("Loading dataset for comparison...")
-    test_dataset = SNPDataset(config["input_path"])
-    test_loader = DataLoader(test_dataset, batch_size=10, shuffle=True)
-    real_samples = next(iter(test_loader))
-
     # Initialize model from checkpoint
     try:
         print("Loading model from checkpoint...")
@@ -167,63 +161,65 @@ def main(args):
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Generate samples
-    print("Generating samples...")
+    # Get real samples from test split for visualization
+    print("Loading samples from test split...")
+    real_samples = next(iter(model.test_dataloader()))
+
+    # Initialize trainer for proper device handling
+    trainer = pl.Trainer(
+        accelerator="auto",
+        devices="auto",
+        precision="bf16-mixed",
+        default_root_dir=str(output_dir),
+        enable_progress_bar=True,
+        enable_model_summary=True,
+    )
+
     try:
-        with torch.no_grad():  # Disable gradient computation for inference
+        print("\nGenerating samples...")
+        with torch.no_grad():
             # Get number of samples from config or args
             num_samples = args.num_samples or config["training"].get("num_samples", 10)
-
-            # Generate samples
             print(f"Generating {num_samples} samples...")
+            
+            # Move model to correct device using trainer's strategy
+            model = trainer.strategy.setup_model(model)
+            
+            # Generate samples
             samples = model.generate_samples(num_samples=num_samples)
-
+            
             # Save samples
             samples_path = output_dir / "generated_samples.pt"
-            torch.save(samples, samples_path)
+            torch.save(samples.cpu(), samples_path)
             print(f"Generated samples shape: {samples.shape}")
             print(f"Samples saved to {samples_path}")
-
-            # Print statistics comparison
-            print("\nStatistics Comparison:")
-            print("Generated Samples:")
-            print(f"  Mean: {samples.mean().item():.4f}")
-            print(f"  Std: {samples.std().item():.4f}")
-            print(f"  Min: {samples.min().item():.4f}")
-            print(f"  Max: {samples.max().item():.4f}")
-
-            print("\nReal Samples:")
-            print(f"  Mean: {real_samples.mean().item():.4f}")
-            print(f"  Std: {real_samples.std().item():.4f}")
-            print(f"  Min: {real_samples.min().item():.4f}")
-            print(f"  Max: {real_samples.max().item():.4f}")
-
+            
             # Generate comparison plots
             print("\nGenerating comparison plots...")
             plot_path = output_dir / "sample_comparison.png"
-            plot_comparison(real_samples, samples, plot_path)
+            plot_comparison(real_samples.cpu(), samples.cpu(), plot_path)
             print(f"Comparison plots saved to: {plot_path}")
-
+            
             # Generate reverse diffusion visualization
             print("\nGenerating reverse diffusion visualization...")
             reverse_samples = []
             x = torch.randn((1,) + model._data_shape, device=model.device)
-            reverse_samples.append(x.cpu())
+            reverse_samples.append(x)
 
             for t in range(model._forward_diffusion.tmax, 0, -100):
                 x = model._reverse_process_step(x, t)
                 x = torch.clamp(x, -5.0, 5.0)  # Prevent explosion
-                reverse_samples.append(x.cpu())
+                reverse_samples.append(x)
 
             # Final normalization
             x = torch.clamp(x, 0, 1)
-            reverse_samples.append(x.cpu())
+            reverse_samples.append(x)
 
             # Plot reverse diffusion
             reverse_samples = torch.cat(reverse_samples, dim=0)
             plot_path = output_dir / "reverse_diffusion.png"
             plot_sample_grid(
-                reverse_samples, plot_path, "Reverse Diffusion Process (t=T to 0)"
+                reverse_samples.cpu(), plot_path, "Reverse Diffusion Process (t=T to 0)"
             )
             print(f"Reverse diffusion visualization saved to: {plot_path}")
 
