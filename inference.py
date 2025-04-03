@@ -161,10 +161,6 @@ def main(args):
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Get real samples from test split for visualization
-    print("Loading samples from test split...")
-    real_samples = next(iter(model.test_dataloader()))
-
     # Initialize trainer for proper device handling
     trainer = pl.Trainer(
         accelerator="auto",
@@ -175,6 +171,18 @@ def main(args):
         enable_model_summary=True,
     )
 
+    # Setup model with trainer to ensure proper initialization
+    model = trainer.strategy.setup_model(model)
+
+    # Get real samples from test split for visualization
+    print("Loading samples from test split...")
+    model.setup('test')  # Ensure test dataset is initialized
+    test_loader = model.test_dataloader()
+    if test_loader is None:
+        raise RuntimeError("Test dataloader is not properly initialized")
+    real_samples = next(iter(test_loader))
+
+    # Generate samples
     try:
         print("\nGenerating samples...")
         with torch.no_grad():
