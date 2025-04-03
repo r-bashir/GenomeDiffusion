@@ -4,7 +4,13 @@
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
 PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
-CHECKPOINT_DIR=/path/to/checkpoint.ckpt
+
+# Set default checkpoint path, but allow override from command line
+DEFAULT_CHECKPOINT=checkpoints/last.ckpt
+CHECKPOINT_DIR=${1:-$DEFAULT_CHECKPOINT}
+
+# Print checkpoint being used
+echo "Using checkpoint: $CHECKPOINT_DIR"
 
 # WandB API Key
 export WANDB_API_KEY="145f0112a8066d63f7e4856f3ac01edd336afebd"
