@@ -92,13 +92,19 @@ def plot_comparison(real_samples, generated_samples, save_path):
     real = real_samples.cpu().numpy()
     gen = generated_samples.cpu().numpy()
 
+    # Add channel dimension if missing
+    if len(real.shape) == 2:
+        real = real.reshape(real.shape[0], 1, -1)
+    if len(gen.shape) == 2:
+        gen = gen.reshape(gen.shape[0], 1, -1)
+
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     fig.suptitle("Real vs Generated Samples Comparison")
 
     # Plot sample sequences
-    axes[0, 0].plot(real[0, 0, :], label="Real")
-    axes[0, 0].plot(gen[0, 0, :], label="Generated")
+    axes[0, 0].plot(real[0].flatten(), label="Real")
+    axes[0, 0].plot(gen[0].flatten(), label="Generated")
     axes[0, 0].set_title("Sample Sequence Comparison")
     axes[0, 0].legend()
 
@@ -109,9 +115,10 @@ def plot_comparison(real_samples, generated_samples, save_path):
     axes[0, 1].legend()
 
     # Plot heatmaps
-    axes[1, 0].imshow(real[0, 0, :100].reshape(10, -1), aspect="auto")
+    first_100 = min(100, real.shape[-1])
+    axes[1, 0].imshow(real[0].reshape(1, -1)[:, :first_100], aspect="auto")
     axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
-    axes[1, 1].imshow(gen[0, 0, :100].reshape(10, -1), aspect="auto")
+    axes[1, 1].imshow(gen[0].reshape(1, -1)[:, :first_100], aspect="auto")
     axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
 
     plt.tight_layout()
