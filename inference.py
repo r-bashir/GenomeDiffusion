@@ -19,7 +19,8 @@ Generated outputs are saved in the 'inference' directory, including:
 
 import argparse
 from pathlib import Path
-
+from typing import Dict
+import os
 import torch
 import yaml
 import matplotlib.pyplot as plt
@@ -166,8 +167,8 @@ def main(args):
         enable_model_summary=True,
     )
 
-    # Setup model with trainer to ensure proper initialization
-    model = trainer.strategy.setup_model(model)
+    # Move model to the correct device
+    model = model.to(trainer.strategy.root_device)
 
     # Get real samples from test split for visualization
     print("Loading samples from test split...")
@@ -181,9 +182,6 @@ def main(args):
             # Get number of samples from config or args
             num_samples = args.num_samples or config["training"].get("num_samples", 10)
             print(f"Generating {num_samples} samples...")
-            
-            # Move model to correct device using trainer's strategy
-            model = trainer.strategy.setup_model(model)
             
             # Generate samples
             samples = model.generate_samples(num_samples=num_samples)
