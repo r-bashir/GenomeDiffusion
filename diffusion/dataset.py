@@ -15,21 +15,44 @@ from scipy import stats
 
 # load dataset
 def load_data(input_path=None):
-    # read data
+    """
+    Load data and process it.
+    """
+    # Read data
     try:
-        data = pd.read_parquet(input_path).to_numpy()
+        # The parquet data is stored as (n_markers, n_samples).
+        # We transpose it to get shape as (n_samples, n_markers)
+        data = pd.read_parquet(input_path).to_numpy().T
     except Exception as e:
         raise ValueError(f"Error loading data: {e}")
-
-    # normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
-    data = np.where(data == 0, 0.0, data)  # Map 0 to 0.0
-    data = np.where(data == 1, 0.5, data)  # Map 1 to 0.5
-    data = np.where(data == 2, 1.0, data)  # Map 2 to 1.0
-
-    # replace missing values with most frequent value
-    data = np.where(data == 9, 0.0, data)  # Map 9 to 0.0
-
+    
+    # Handle missing values
+    for i in range(data.shape[0]):
+        row = data[i]
+        valid_values = row[row != 9]
+        if len(valid_values) > 0:
+            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
+            row[row == 9] = mode_value
+    
+    # Normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
+    data[data == 0] = 0.0
+    data[data == 1] = 0.5
+    data[data == 2] = 1.0
+    
+    # Convert to tensor
     return torch.FloatTensor(data)
+
+def handle_missing_values(data):
+    """
+    Handles missing values in the dataset.
+    """
+    for i in range(data.shape[0]):
+        row = data[i]
+        valid_values = row[row != 9]
+        if len(valid_values) > 0:
+            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
+            row[row == 9] = mode_value
+    return data 
 
 
 # SNPDataset
@@ -200,40 +223,58 @@ def check_path_exists(path):
     """Check if a path exists."""
     return os.path.exists(path)
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_path", type=str, required=True)
+    args = parser.parse_args()
 
-def main(args):
-    """Main function to test SNPDataset and SNPDataModule."""
+    # Initial marker frequencies (whole dataset)
+    print("\nInitial marker frequencies (whole dataset)...")
+    raw_data = pd.read_parquet(args.input_path).to_numpy().T
+    unique, counts = np.unique(raw_data, return_counts=True)
+    freq_dict = dict(zip(unique, counts))
+    for value in sorted(freq_dict.keys()):
+        percentage = (freq_dict[value] / raw_data.size) * 100
+        print(f"Value {value}: {percentage:.2f}%")
 
-    # Test Loading
-    print("\nExamining data:")
+    # Handle missing values
+    print("\nHandling missing values...")
+    raw_data = handle_missing_values(raw_data)
+
+    print("\nFinal marker frequencies (whole dataset)...")
+    unique, counts = np.unique(raw_data, return_counts=True)
+    freq_dict = dict(zip(unique, counts))
+    for value in sorted(freq_dict.keys()):
+        percentage = (freq_dict[value] / raw_data.size) * 100
+        print(f"Value {value}: {percentage:.2f}%")
+
+    # Handling normalization
+    print("\nHandling normalization...")
+    raw_data[raw_data == 0] = 0.0
+    raw_data[raw_data == 1] = 0.5
+    raw_data[raw_data == 2] = 1.0
+
+    print("\nNormalized marker frequencies (whole dataset)...")
+    unique, counts = np.unique(raw_data, return_counts=True)
+    freq_dict = dict(zip(unique, counts))
+    for value in sorted(freq_dict.keys()):
+        percentage = (freq_dict[value] / raw_data.size) * 100
+        print(f"Value {value}: {percentage:.2f}%")
+
+    # Test Python Dataset
+    print("\nTesting Python Dataset:")
     dataset = load_data(input_path=args.input_path)
-
-    # Analyze unique values in the data
-    unique_values = torch.unique(dataset)
-    print(f"\nUnique values in data: {unique_values.tolist()}")
-
-    # Count occurrences of each value
-    value_counts = {}
-    for value in [0.0, 0.5, 1.0, 9.0]:
-        count = (dataset == value).sum().item()
-        percentage = (count / dataset.numel()) * 100
-        value_counts[value] = (count, percentage)
-
-    print("\nValue distribution (percentage):")
-    for value, (count, percentage) in value_counts.items():
-        print(f"{value:.1f}: {count} occurrences ({percentage:.2f}%)")
-
     print(f"Dataset length: {len(dataset)}")
     print(f"First example: {dataset[0].shape}")
 
-    # Test SNPDataset
-    print("\nTesting SNPDataset Class:")
+    # Test PyTorch Dataset
+    print("\nTesting PyTorch Dataset:")
     snp_dataset = SNPDataset(args.input_path)
     print(f"Dataset length: {len(snp_dataset)}")
     print(f"First example: {snp_dataset[0].shape}")
 
-    # Test SNPDataModule
-    print("\nTesting SNPDataModule Class:")
+    # Test Lightning DataModule
+    print("\nTesting Lightning DataModule:")
     data_module = SNPDataModule(args.input_path, batch_size=256, num_workers=1)
     data_module.setup(fractions=[0.8, 0.1, 0.1])
     print(f"Train batches: {len(data_module.train_dataloader())}")
@@ -241,20 +282,6 @@ def main(args):
     print(f"Batch length: {len(batch)}")
     print(f"First example: {batch[0].shape}")
 
-
+    
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--input_path",
-        type=str,
-        default="../data/HO_data_filtered/HumanOrigins2067_filtered.parquet",
-        help="Path to the input SNP dataset file.",
-    )
-    args = parser.parse_args()
-
-    if check_path_exists(args.input_path):
-        print(f"The path {args.input_path} exists")
-    else:
-        print(f"The path {args.input_path} does not exist")
-
-    main(args)
+    main()
