@@ -206,17 +206,17 @@ def main(args):
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
-        precision="bf16-mixed",
+        #precision="bf16-mixed",
         callbacks=callbacks,
         logger=logger,
         default_root_dir=config["output_path"],
         enable_progress_bar=True,
         enable_model_summary=True,
-        gradient_clip_val=config["training"].get("gradient_clip_val", 1.0),
-        accumulate_grad_batches=config["training"].get("accumulate_grad_batches", 1),
-        log_every_n_steps=config["training"].get("log_every_n_steps", 50),
-        val_check_interval=config["training"].get("val_check_interval", 1.0),
-        limit_val_batches=config["training"].get("limit_val_batches", 1.0),
+        #gradient_clip_val=config["training"].get("gradient_clip_val", 1.0),
+        #accumulate_grad_batches=config["training"].get("accumulate_grad_batches", 1),
+        #log_every_n_steps=config["training"].get("log_every_n_steps", 50),
+        #val_check_interval=config["training"].get("val_check_interval", 1.0),
+        #limit_val_batches=config["training"].get("limit_val_batches", 1.0),
     )
 
     # Train model

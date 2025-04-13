@@ -46,3 +46,25 @@ Verification code:
 # once connected, download full run (contains checkpoints, evaluation and infernece results)
 sftp> get -r path/to/run
 ```
+
+
+### _2. Working on PC_
+
+Working locally on PC/Laptop might get killed due to meomory unavailability. So make things a bit simple by clipping the `n_markers=160858` to some `n_markers=1000`. But we need to make changes at two places: _(i)_ slice output of `load_data()` in the `dataset.py`, and _(ii)_ set `seq_length=1000` in the `config.yaml`
+
+
+The directly run python scripts:
+
+```shell
+# run training
+python train.py --config config.yaml
+
+# resume training (if disrupted earlier)
+python train.py --config config.yaml --resume path/to/last.ckpt
+
+# run testing/evaluation
+python test.py --config config.yaml --checkpoint path/to/last.ckpt
+
+# run inference
+python inference.py --config config.yaml --checkpoint path/to/last.ckpt
+```

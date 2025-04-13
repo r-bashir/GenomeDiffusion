@@ -20,9 +20,9 @@ def load_data(input_path=None):
     """
     # Read data
     try:
-        # The parquet data is stored as (n_markers, n_samples).
-        # We transpose it to get shape as (n_samples, n_markers)
-        data = pd.read_parquet(input_path).to_numpy().T
+        # The parquet data is stored in shape (n_markers, n_samples).
+        # We need to transpose it to get shape as (n_samples, n_markers)
+        data = pd.read_parquet(input_path).to_numpy()
     except Exception as e:
         raise ValueError(f"Error loading data: {e}")
     
@@ -39,8 +39,8 @@ def load_data(input_path=None):
     data[data == 1] = 0.5
     data[data == 2] = 1.0
     
-    # Convert to tensor
-    return torch.FloatTensor(data)
+    # Convert to Float and Transpose
+    return torch.FloatTensor(data.T)
 
 def handle_missing_values(data):
     """

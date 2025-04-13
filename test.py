@@ -101,7 +101,7 @@ def main(args):
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
-        precision="bf16-mixed",
+        # precision="bf16-mixed",
         callbacks=[eval_callback],
         default_root_dir=str(output_dir),
         enable_progress_bar=True,

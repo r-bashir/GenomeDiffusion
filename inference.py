@@ -203,11 +203,11 @@ def main(args):
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Initialize trainer for proper device handling
+    # Initialize trainer
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
-        precision="bf16-mixed",
+        # precision="bf16-mixed",
         default_root_dir=str(output_dir),
         enable_progress_bar=True,
         enable_model_summary=True,
