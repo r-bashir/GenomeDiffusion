@@ -104,13 +104,13 @@ def plot_comparison(real_samples, generated_samples, save_path):
     gen = generated_samples.cpu().numpy()
 
     # Print statistics for debugging
-    print("\nData Statistics:")
-    print(
-        f"Real - shape: {real.shape}, range: [{real.min():.3f}, {real.max():.3f}], mean: {real.mean():.3f}, std: {real.std():.3f}"
-    )
-    print(
-        f"Generated - shape: {gen.shape}, range: [{gen.min():.3f}, {gen.max():.3f}], mean: {gen.mean():.3f}, std: {gen.std():.3f}"
-    )
+    # print("\nData Statistics:")
+    # print(
+    #    f"Real - shape: {real.shape}, range: [{real.min():.3f}, {real.max():.3f}], mean: {real.mean():.3f}, std: {real.std():.3f}"
+    # )
+    # print(
+    #    f"Generated - shape: {gen.shape}, range: [{gen.min():.3f}, {gen.max():.3f}], mean: {gen.mean():.3f}, std: {gen.std():.3f}"
+    # )
 
     # Check for NaN values
     if np.isnan(gen).any():
@@ -187,7 +187,7 @@ def main(args):
     # Create inference directory for generated samples and comparisons
     output_dir = base_dir / "inference"
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Generated samples and comparisons will be saved to: {output_dir}")
+    print(f"\nInference results will be saved to: {output_dir}")
 
     # Initialize model from checkpoint
     try:

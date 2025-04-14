@@ -38,6 +38,7 @@ class NetworkBase(pl.LightningModule):
         self._train_dataset = None
         self._val_dataset = None
         self._test_dataset = None
+        self._datasplit = None
 
     def setup(self, stage: Optional[str] = None):
         """Setup datasets for training, validation, and testing.
@@ -51,20 +52,12 @@ class NetworkBase(pl.LightningModule):
         if not hasattr(self, "dataset") or self.dataset is None:
             # Load dataset - override this in subclasses if needed
             self.dataset = self._create_dataset()
-
-            # Split dataset
-            train_size = int(len(self.dataset) * self.hparams["data"]["split"][0])
-            val_size = int(len(self.dataset) * self.hparams["data"]["split"][1])
-            test_size = len(self.dataset) - train_size - val_size
-
+s            
+            self._datasplit = self.hparams["data"]["datasplit"]
             self._train_dataset, self._val_dataset, self._test_dataset = random_split(
                 self.dataset,
-                [train_size, val_size, test_size],
+                self._datasplit,
                 generator=torch.Generator().manual_seed(42),
-            )
-
-            print(
-                f"Dataset splits: Train={train_size}, Val={val_size}, Test={test_size}"
             )
 
     def _create_dataset(self) -> Dataset:
