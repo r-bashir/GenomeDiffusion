@@ -98,6 +98,7 @@ def main(args):
     eval_callback = EvaluationCallback(output_dir=str(output_dir))
 
     # Initialize trainer
+    print("\nInitializing trainer...")
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
