@@ -78,18 +78,40 @@ class DDPM:
         self._beta_start = beta_start
         self._beta_end = beta_end
 
+        # Use liner beta scheduler
         self._betas = np.linspace(
             self._beta_start, self._beta_end, self._num_diffusion_timesteps
         )
+
+        # Use cosine beta scheduler
+        self._betas = self._cosine_beta_schedule(self._num_diffusion_timesteps)
         alphas_bar = self._get_alphas_bar()
 
-        # Register these as nn.Parameters so they move with the model
+        # Register tensors as buffers so they move with the model
         self.register_buffer(
             "_alphas", torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
         )
         self.register_buffer(
             "_sigmas", torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
         )
+
+    @staticmethod
+    def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> np.ndarray:
+        """Cosine schedule as proposed in https://arxiv.org/abs/2102.09672.
+
+        Args:
+            timesteps: Number of diffusion timesteps
+            s: Offset parameter (default: 0.008)
+
+        Returns:
+            np.ndarray: Beta schedule array of shape (timesteps,)
+        """
+        steps = timesteps + 1
+        x = np.linspace(0, steps, steps)
+        alphas_cumprod = np.cos(((x / steps) + s) / (1 + s) * np.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+        return np.clip(betas, 0, 0.999)
 
     def register_buffer(self, name, tensor):
         """

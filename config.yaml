@@ -3,7 +3,7 @@ project_name: "TestDiff"
 
 # Input and output paths
 input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
-output_path: "output"
+output_path: "outputs"
 
 # Time Sampler
 time_sampler:
@@ -33,14 +33,12 @@ data:
 
 # Training
 training:
-  epochs: 15
-  early_stopping: true
+  epochs: 50
+  early_stopping: false
   patience: 10
   save_top_k: 3
-  compute_test_metrics: true
-  test_threshold: 0.1
   num_samples: 10
-  logger: "wandb"  # Options: wandb, tb, csv
+  logger: "wandb"
   log_every_n_steps: 25
 
 # Optimizer

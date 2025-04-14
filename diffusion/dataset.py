@@ -25,7 +25,7 @@ def load_data(input_path=None):
         data = pd.read_parquet(input_path).to_numpy()
     except Exception as e:
         raise ValueError(f"Error loading data: {e}")
-    
+
     # Handle missing values
     for i in range(data.shape[0]):
         row = data[i]
@@ -33,14 +33,15 @@ def load_data(input_path=None):
         if len(valid_values) > 0:
             mode_value = stats.mode(valid_values, keepdims=True)[0][0]
             row[row == 9] = mode_value
-    
+
     # Normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
     data[data == 0] = 0.0
     data[data == 1] = 0.5
     data[data == 2] = 1.0
-    
+
     # Convert to Float and Transpose
     return torch.FloatTensor(data.T)
+
 
 def handle_missing_values(data):
     """
@@ -52,7 +53,7 @@ def handle_missing_values(data):
         if len(valid_values) > 0:
             mode_value = stats.mode(valid_values, keepdims=True)[0][0]
             row[row == 9] = mode_value
-    return data 
+    return data
 
 
 # SNPDataset
@@ -223,6 +224,7 @@ def check_path_exists(path):
     """Check if a path exists."""
     return os.path.exists(path)
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_path", type=str, required=True)
@@ -282,6 +284,6 @@ def main():
     print(f"Batch length: {len(batch)}")
     print(f"First example: {batch[0].shape}")
 
-    
+
 if __name__ == "__main__":
     main()

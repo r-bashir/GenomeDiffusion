@@ -144,37 +144,36 @@ def setup_logger(
 
 
 def setup_callbacks(config: Dict) -> List:
-    """Setup training callbacks."""
-    # Get base directory for logs
-    base_dir = config.get("output_path", "output")
-    logs_dir = os.path.join(base_dir, "metric_logs")
-    os.makedirs(logs_dir, exist_ok=True)
+    """Setup training callbacks.
 
+    Returns a list of callbacks for model training:
+    - ModelCheckpoint: Saves best and last model checkpoints
+    - LearningRateMonitor: Tracks learning rate changes
+    - EarlyStopping: Optional, stops training if no improvement
+    """
     callbacks = [
         # Save best and last checkpoints
         ModelCheckpoint(
             filename="{epoch}-{val_loss:.2f}",
             monitor="val_loss",
-            save_top_k=3,
+            save_top_k=config["training"].get("save_top_k", 3),
             mode="min",
             save_last=True,
             auto_insert_metric_name=False,  # Keep filenames clean
-        ),
-        # Early stopping
-        EarlyStopping(
-            monitor="val_loss",
-            patience=config["training"].get("patience", 10),
-            mode="min",
         ),
         # Monitor learning rate
         LearningRateMonitor(logging_interval="step"),
     ]
 
-    # Add inference callback for test metrics if enabled
-    if config["training"].get("compute_test_metrics", True):
-        eval_dir = os.path.join(config["output_path"], "evaluation")
-        os.makedirs(eval_dir, exist_ok=True)
-        callbacks.append(EvaluationCallback(output_dir=eval_dir))
+    # Add early stopping if enabled in config
+    if config["training"].get("early_stopping", False):
+        callbacks.append(
+            EarlyStopping(
+                monitor="val_loss",
+                patience=config["training"].get("patience", 10),
+                mode="min",
+            )
+        )
 
     return callbacks
 
@@ -206,7 +205,7 @@ def main(args):
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
-        #precision="bf16-mixed",
+        # precision="bf16-mixed",
         callbacks=callbacks,
         logger=logger,
         default_root_dir=config["output_path"],
@@ -224,11 +223,12 @@ def main(args):
             ckpt_path=args.resume,
         )
         print("Training completed successfully")
-        print("\nTo evaluate the best model, run:")
+
+        print("\nTo evaluate the model, execute:")
         print(
             f"python test.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
-        print("\nTo generate samples, run:")
+        print("\nTo run inference and generate samples, execute:")
         print(
             f"python inference.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )

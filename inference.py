@@ -65,7 +65,7 @@ def load_config(config_path: str) -> Dict:
 
 def plot_sample_grid(samples, save_path, title, timesteps=None):
     """Plot a grid of samples showing the diffusion process.
-    
+
     Args:
         samples: Tensor of samples to plot
         save_path: Path to save the plot
@@ -248,8 +248,11 @@ def main(args):
             samples_path = output_dir / "synthetic_snp_sequences.pt"
             torch.save(samples.cpu(), samples_path)
             print(f"\nSynthetic SNP data shape: {samples.shape}")
-            print(f"Synthetic SNP values (comparing to real 0, 0.5, 1.0):\n{torch.unique(samples)}")
-            print(f"\nSynthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
+            print(
+                f"Synthetic SNP values (comparing to real 0, 0.5, 1.0):\n{torch.unique(samples)}"
+            )
+            print(
+                f"\nSynthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
             )
             print(f"\nSamples saved to {samples_path}")
 
@@ -263,7 +266,7 @@ def main(args):
             print("\nGenerating reverse diffusion visualization...")
             reverse_samples = []
             timesteps = []
-            
+
             # Start with noise (t=T)
             x = torch.randn((1,) + model._data_shape, device=model.device)
             reverse_samples.append(x)
@@ -285,10 +288,10 @@ def main(args):
             reverse_samples = torch.cat(reverse_samples, dim=0)
             plot_path = output_dir / "reverse_diffusion.png"
             plot_sample_grid(
-                reverse_samples.cpu(), 
-                plot_path, 
+                reverse_samples.cpu(),
+                plot_path,
                 "Reverse Diffusion Process",
-                timesteps=timesteps
+                timesteps=timesteps,
             )
             print(f"Reverse diffusion visualization saved to: {plot_path}")
 

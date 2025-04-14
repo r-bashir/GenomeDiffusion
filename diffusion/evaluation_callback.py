@@ -71,12 +71,30 @@ class EvaluationCallback(Callback):
         if not self._test_outputs or not self._test_targets:
             return
 
-        # Always use the provided output directory or metric_logs as fallback
-        output_dir = self.output_dir
-        if output_dir is None:
-            base_dir = trainer.logger.save_dir if trainer.logger else "output"
-            output_dir = os.path.join(base_dir, "metric_logs")
-            os.makedirs(output_dir, exist_ok=True)
+        # Determine output directory
+        if self.output_dir is not None:
+            # If output_dir was explicitly provided (e.g., in test.py), use it
+            output_dir = self.output_dir
+        else:
+            # During training, store in version-specific directory
+            if trainer.logger:
+                if (
+                    hasattr(trainer.logger, "version")
+                    and trainer.logger.version is not None
+                ):
+                    # Get the version-specific directory
+                    log_dir = trainer.logger.log_dir
+                    output_dir = os.path.join(log_dir, "evaluation")
+                else:
+                    # Fallback if no version available
+                    base_dir = trainer.logger.save_dir or "output"
+                    output_dir = os.path.join(base_dir, "evaluation")
+            else:
+                # Ultimate fallback
+                output_dir = os.path.join("output", "evaluation")
+
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
 
         # Concatenate all batches
         outputs = torch.cat(self._test_outputs, dim=0)
