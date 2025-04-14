@@ -72,7 +72,7 @@ def plot_sample_grid(samples, save_path, title, timesteps=None):
         title: Title for the plot
         timesteps: List of timesteps corresponding to each sample
     """
-    n_samples = min(samples.shape[0], 10)  # Show at most 10 timesteps
+    n_samples = min(samples.shape[0], 500)  # Show at most 500 timesteps
     seq_length = samples.shape[-1]
 
     # Create figure
@@ -147,7 +147,7 @@ def plot_comparison(real_samples, generated_samples, save_path):
         axes[0, 1].legend()
 
         # Plot heatmaps
-        first_100 = min(100, real.shape[-1])
+        first_100 = min(1000, real.shape[-1])
         axes[1, 0].imshow(
             real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis"
         )
@@ -191,7 +191,7 @@ def main(args):
 
     # Initialize model from checkpoint
     try:
-        print("Loading model from checkpoint...")
+        print("\nLoading model from checkpoint...")
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location="cuda" if torch.cuda.is_available() else "cpu",
@@ -204,6 +204,7 @@ def main(args):
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Initialize trainer
+    print("\nInitializing trainer...")
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
@@ -217,19 +218,20 @@ def main(args):
     model = model.to(trainer.strategy.root_device)
 
     # Load real SNP data from test split (ground truth)
-    print("Loading real SNP sequences from test split...")
+    print("\nLoading test dataset...")
     model.setup("test")  # Ensure test dataset is initialized
+    print(f"Selecting first batch of test dataset...")
     real_samples = next(iter(model.test_dataloader()))
-    print(f"Real SNP data shape: {real_samples.shape}")
-    print(f"Real SNP values (should be 0, 0.5, 1.0): {torch.unique(real_samples)}")
+    print(f"\nReal SNP data sample shape: {real_samples.shape}")
+    print(f"Real unique SNP values: {torch.unique(real_samples)}")
 
     # Generate synthetic SNP sequences through reverse diffusion
     try:
-        print("\nGenerating synthetic SNP sequences via reverse diffusion...")
+        # print("\nGenerating synthetic SNP sequences via reverse diffusion...")
         with torch.no_grad():
             # Match number of synthetic samples with real data
             num_samples = real_samples.shape[0]
-            print(f"Generating {num_samples} synthetic sequences...")
+            print(f"\nGenerating {num_samples} synthetic sequences...")
 
             # Run reverse diffusion to generate synthetic SNP sequences
             # Starting from random noise, gradually denoise to get SNP-like data
@@ -245,11 +247,11 @@ def main(args):
             # Save synthetic SNP sequences
             samples_path = output_dir / "synthetic_snp_sequences.pt"
             torch.save(samples.cpu(), samples_path)
-            print(f"Synthetic SNP data shape: {samples.shape}")
-            print(f"Synthetic SNP values (comparing to real 0, 0.5, 1.0): {torch.unique(samples)}")
-            print(f"Synthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
+            print(f"\nSynthetic SNP data shape: {samples.shape}")
+            print(f"Synthetic SNP values (comparing to real 0, 0.5, 1.0):\n{torch.unique(samples)}")
+            print(f"\nSynthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
             )
-            print(f"Samples saved to {samples_path}")
+            print(f"\nSamples saved to {samples_path}")
 
             # Generate comparison plots
             print("\nGenerating comparison plots...")
