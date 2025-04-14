@@ -52,7 +52,6 @@ class NetworkBase(pl.LightningModule):
         if not hasattr(self, "dataset") or self.dataset is None:
             # Load dataset - override this in subclasses if needed
             self.dataset = self._create_dataset()
-s            
             self._datasplit = self.hparams["data"]["datasplit"]
             self._train_dataset, self._val_dataset, self._test_dataset = random_split(
                 self.dataset,
