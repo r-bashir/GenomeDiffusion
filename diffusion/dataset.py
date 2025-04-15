@@ -40,7 +40,7 @@ def load_data(input_path=None):
     data[data == 2] = 1.0
 
     # Convert to Float and Transpose
-    return torch.FloatTensor(data.T)
+    return torch.FloatTensor(data.T[:, :1000])
 
 
 def handle_missing_values(data):

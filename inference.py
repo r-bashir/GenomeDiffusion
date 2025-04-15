@@ -24,9 +24,11 @@ import os
 import torch
 import yaml
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import numpy as np
 import pytorch_lightning as pl
 from diffusion.diffusion_model import DiffusionModel
+
 
 
 def parse_args():
@@ -148,15 +150,24 @@ def plot_comparison(real_samples, generated_samples, save_path):
 
         # Plot heatmaps
         first_100 = min(1000, real.shape[-1])
-        axes[1, 0].imshow(
-            real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis"
-        )
-        axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
-        axes[1, 1].imshow(
-            gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis"
-        )
-        axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
+        
+        #axes[1, 0].imshow(
+            #real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis")
+        #axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
+        #axes[1, 1].imshow(
+        #    gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis")
+        #axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
 
+        # Custom colormap: 0 → blue, 0.5 → green, 1 → red
+        cmap = ListedColormap(["#1f77b4", "#2ca02c", "#d62728"])
+        # Plot real data
+        axes[1, 0].imshow(
+            real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap=cmap, vmin=0.0, vmax=1.0)
+        axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
+        # Plot generated data
+        axes[1, 1].imshow(
+            gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap=cmap, vmin=0.0, vmax=1.0)
+        axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")       
         plt.tight_layout()
         plt.savefig(save_path)
     except Exception as e:
