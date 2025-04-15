@@ -53,9 +53,9 @@ class EvaluationCallback(Callback):
             batch = batch[0]  # Get just the data, not labels if present
 
         # Store model outputs and targets
-        if isinstance(outputs, dict) and "model_output" in outputs:
-            self._test_outputs.append(outputs["predicted"].detach().cpu())
-            self._test_targets.append(outputs["model_output"].detach().cpu())
+        if isinstance(outputs, dict) and "reconstruction" in outputs and "target" in outputs:
+            self._test_outputs.append(outputs["reconstruction"].detach().cpu())
+            self._test_targets.append(outputs["target"].detach().cpu())
 
     def on_test_epoch_end(
         self,
@@ -105,6 +105,60 @@ class EvaluationCallback(Callback):
         mae = F.l1_loss(outputs, targets)
         pl_module.log("test_mse", mse)
         pl_module.log("test_mae", mae)
+        
+        # Genomic-specific metrics
+        
+        # 1. Genotype accuracy (treating 0, 0.5, 1.0 as distinct classes)
+        recon_genotypes = torch.round(outputs * 2) / 2  # Maps to 0, 0.5, or 1.0
+        orig_genotypes = torch.round(targets * 2) / 2
+        genotype_acc = (recon_genotypes == orig_genotypes).float().mean()
+        pl_module.log("test_genotype_accuracy", genotype_acc)
+        print(f"Genotype accuracy: {genotype_acc.item():.4f}")
+        
+        # 2. Minor Allele Frequency correlation
+        try:
+            # Calculate MAF for each SNP (column)
+            orig_maf = targets.mean(dim=0)  # Average across samples
+            recon_maf = outputs.mean(dim=0)
+            
+            # Calculate correlation
+            maf_corr = torch.corrcoef(torch.stack([orig_maf.flatten(), recon_maf.flatten()]))[0,1]
+            pl_module.log("test_maf_correlation", maf_corr)
+            print(f"MAF correlation: {maf_corr.item():.4f}")
+            
+            # Plot MAF comparison
+            plt.figure(figsize=(8, 8))
+            plt.scatter(orig_maf.cpu().numpy(), recon_maf.cpu().numpy(), alpha=0.5)
+            plt.plot([0, 1], [0, 1], 'r--')
+            plt.xlabel('Original MAF')
+            plt.ylabel('Reconstructed MAF')
+            plt.title('Minor Allele Frequency Preservation')
+            plt.savefig(os.path.join(output_dir, "maf_comparison.png"))
+            plt.close()
+        except Exception as e:
+            print(f"Warning: Could not compute MAF correlation: {str(e)}")
+            
+        # 3. Sample-level visualization
+        try:
+            # Plot a few samples (original vs reconstructed)
+            num_samples = min(5, outputs.shape[0])
+            plt.figure(figsize=(15, 10))
+            for i in range(num_samples):
+                plt.subplot(num_samples, 2, i*2+1)
+                plt.imshow(targets[i].cpu().numpy(), aspect='auto', cmap='viridis')
+                plt.title(f"Original Sample {i}")
+                plt.colorbar()
+                
+                plt.subplot(num_samples, 2, i*2+2)
+                plt.imshow(outputs[i].cpu().numpy(), aspect='auto', cmap='viridis')
+                plt.title(f"Reconstructed Sample {i}")
+                plt.colorbar()
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(output_dir, "sample_reconstructions.png"))
+            plt.close()
+        except Exception as e:
+            print(f"Warning: Could not generate sample visualizations: {str(e)}")
 
         # Convert tensors to float32 before computing metrics
         outputs_float = outputs.float()

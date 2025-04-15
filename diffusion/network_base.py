@@ -118,62 +118,87 @@ class NetworkBase(pl.LightningModule):
         )
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
-        """Training step."""
-        x = self._prepare_batch(batch)
-        loss = self.compute_loss(x)
-        self.log(
-            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True
-        )
-        return loss
-
-    def _shared_evaluation(
-        self, batch: torch.Tensor, stage: str, log: bool = True
-    ) -> Dict:
-        """Shared evaluation logic for validation and test.
-
+        """Training step for model optimization.
+        
         Args:
             batch: Input batch from dataloader
-            stage: Stage name ('val' or 'test')
-            log: Whether to log metrics
-
+            batch_idx: Index of the current batch
+            
         Returns:
-            Dict containing loss and model outputs
+            torch.Tensor: Computed loss for backpropagation
         """
         batch = self._prepare_batch(batch)
         loss = self.compute_loss(batch)
-
-        if log:
-            self.log(
-                f"{stage}_loss",
-                loss,
-                on_step=True,
-                on_epoch=True,
-                prog_bar=True,
-                logger=True,
-            )
-
-        return {
-            "loss": loss,
-            "model_output": batch,  # Original input for comparison
-            "predicted": self.forward(batch),  # Model's prediction
-        }
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        return loss
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
-        """Validation step."""
-        outputs = self._shared_evaluation(batch, "val")
-        return outputs["loss"]  # Only return loss for validation
+        """Validation step for model evaluation.
+        
+        Args:
+            batch: Input batch from validation dataloader
+            batch_idx: Index of the current batch
+            
+        Returns:
+            torch.Tensor: Validation loss
+        """
+        return self._shared_evaluation(batch, "val")["loss"]
 
-    def test_step(self, batch: torch.Tensor, batch_idx: int) -> Dict:
-        """Test step for evaluation.
-
+    def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict:
+        """Test step for model evaluation.
+        
         Args:
             batch: Input batch from test dataloader
             batch_idx: Index of the current batch
-
+            
         Returns:
-            Dict containing test loss and model outputs
+            dict: Dictionary containing test loss, input targets, and reconstructions
         """
-        return self._shared_evaluation(batch, "test")  # Return full dict for test
+        return self._shared_evaluation(batch, "test")
+
+    def predict_step(self, batch: torch.Tensor, batch_idx: int, dataloader_idx: int = 0) -> dict:
+        """Prediction step for model inference.
+        
+        Args:
+            batch: Input batch from prediction dataloader
+            batch_idx: Index of the current batch
+            dataloader_idx: Index of the dataloader (for multiple dataloaders)
+            
+        Returns:
+            dict: Dictionary containing model reconstructions
+        """
+        return self._shared_evaluation(batch, "predict")
+
+    def _shared_evaluation(self, batch: torch.Tensor, stage: str) -> dict:
+        """Shared evaluation logic for validation, test, and prediction stages.
+        
+        Args:
+            batch: Input batch from dataloader
+            stage: Evaluation stage ('val', 'test', or 'predict')
+            
+        Returns:
+            dict: Dictionary with stage-appropriate outputs:
+                - val: loss
+                - test: loss, target, reconstruction
+                - predict: reconstruction
+        """
+        batch = self._prepare_batch(batch)
+        loss = self.compute_loss(batch)
+        if stage == "val":
+            self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            return {"loss": loss}
+        elif stage == "test":
+            return {
+                "loss": loss,
+                "target": batch,
+                "reconstruction": self.denoise_batch(batch)
+            }
+        elif stage == "predict":
+            return {
+                "reconstruction": self.denoise_batch(batch)
+            }
+        else:
+            raise ValueError(f"Unknown stage: {stage}")
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""
@@ -222,34 +247,17 @@ class NetworkBase(pl.LightningModule):
             pg["lr"] = max(pg["lr"], min_lr)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the model.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            torch.Tensor: Model output.
-        """
+        """Forward pass through the model."""
         raise NotImplementedError("Subclasses must implement forward")
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
-        """Compute loss for a batch.
-
-        Args:
-            batch: Input batch.
-
-        Returns:
-            torch.Tensor: Computed loss.
-        """
+        """Compute loss for a batch."""
         raise NotImplementedError("Subclasses must implement compute_loss")
 
+    def denoise_batch(self, batch: torch.Tensor) -> torch.Tensor:
+        """Denoise a batch using the model's generative process."""
+        raise NotImplementedError("Subclasses must implement denoise_batch")
+
     def generate_samples(self, num_samples: int = 10) -> torch.Tensor:
-        """Generate samples from the model.
-
-        Args:
-            num_samples: Number of samples to generate.
-
-        Returns:
-            torch.Tensor: Generated samples.
-        """
+        """Generate samples from the model."""
         raise NotImplementedError("Subclasses must implement generate_samples")

@@ -21,12 +21,15 @@ import argparse
 from pathlib import Path
 from typing import Dict
 import os
+import json
 import torch
 import yaml
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
 import pytorch_lightning as pl
+import torch.nn.functional as F
+from sklearn.decomposition import PCA
 from diffusion.diffusion_model import DiffusionModel
 
 
@@ -134,46 +137,177 @@ def plot_comparison(real_samples, generated_samples, save_path):
         axes[0, 0].plot(real[0].flatten(), label="Real")
         axes[0, 0].plot(gen[0].flatten(), label="Generated")
         axes[0, 0].set_title("Sample Sequence Comparison")
+        axes[0, 0].set_xlabel("Position")
+        axes[0, 0].set_ylabel("Value")
         axes[0, 0].legend()
 
-        # Plot distributions (skip NaN values)
-        real_flat = real.flatten()
-        gen_flat = gen.flatten()
-        axes[0, 1].hist(
-            real_flat[~np.isnan(real_flat)], bins=50, alpha=0.5, label="Real"
-        )
-        axes[0, 1].hist(
-            gen_flat[~np.isnan(gen_flat)], bins=50, alpha=0.5, label="Generated"
-        )
-        axes[0, 1].set_title("Value Distribution")
-        axes[0, 1].legend()
-
         # Plot heatmaps
-        first_100 = min(1000, real.shape[-1])
+        first_100 = min(100, real.shape[-1])
         
-        #axes[1, 0].imshow(
-            #real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis")
-        #axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
-        #axes[1, 1].imshow(
-        #    gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap="viridis")
-        #axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
-
         # Custom colormap: 0 → blue, 0.5 → green, 1 → red
         cmap = ListedColormap(["#1f77b4", "#2ca02c", "#d62728"])
+        
         # Plot real data
-        axes[1, 0].imshow(
+        axes[0, 1].imshow(
             real[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap=cmap, vmin=0.0, vmax=1.0)
-        axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
+        axes[0, 1].set_title("Real Data Pattern (first 100 positions)")
+        axes[0, 1].set_yticks([])
+        
         # Plot generated data
-        axes[1, 1].imshow(
+        axes[1, 0].imshow(
             gen[0].reshape(1, -1)[:, :first_100], aspect="auto", cmap=cmap, vmin=0.0, vmax=1.0)
-        axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")       
+        axes[1, 0].set_title("Generated Data Pattern (first 100 positions)")
+        axes[1, 0].set_yticks([])
+
+        # Plot value distributions
+        axes[1, 1].hist(
+            real.flatten(), bins=50, alpha=0.5, label="Real", density=True
+        )
+        axes[1, 1].hist(
+            gen.flatten(), bins=50, alpha=0.5, label="Generated", density=True
+        )
+        axes[1, 1].set_title("Value Distribution")
+        axes[1, 1].set_xlabel("Value")
+        axes[1, 1].set_ylabel("Density")
+        axes[1, 1].legend()
+
         plt.tight_layout()
         plt.savefig(save_path)
+        plt.close()
     except Exception as e:
         print(f"Warning: Error during plotting: {e}")
-    finally:
         plt.close()
+
+
+def compute_genomic_metrics(real_samples, generated_samples, output_dir):
+    """Compute genomic-specific metrics for generated samples.
+    
+    Args:
+        real_samples: Tensor of real SNP data [batch_size, channels, seq_len]
+        generated_samples: Tensor of generated SNP data [batch_size, channels, seq_len]
+        output_dir: Directory to save plots
+        
+    Returns:
+        dict: Dictionary of genomic metrics
+    """
+    metrics = {}
+    
+    # Ensure tensors are on CPU
+    real = real_samples.cpu()
+    gen = generated_samples.cpu()
+    
+    # Flatten channel dimension if present
+    if len(real.shape) > 2 and real.shape[1] == 1:
+        real = real.squeeze(1)
+    if len(gen.shape) > 2 and gen.shape[1] == 1:
+        gen = gen.squeeze(1)
+    
+    print("\nComputing genomic-specific metrics...")
+    
+    # 1. Genotype distribution analysis
+    try:
+        # Round to nearest genotype (0, 0.5, 1.0)
+        real_genotypes = torch.round(real * 2) / 2
+        gen_genotypes = torch.round(gen * 2) / 2
+        
+        # Count occurrences of each genotype
+        real_counts = torch.bincount(real_genotypes.flatten().long() * 2, minlength=3).float()
+        gen_counts = torch.bincount(gen_genotypes.flatten().long() * 2, minlength=3).float()
+        
+        # Normalize to get frequencies
+        real_freq = real_counts / real_counts.sum()
+        gen_freq = gen_counts / gen_counts.sum()
+        
+        # Calculate Jensen-Shannon divergence (symmetric KL divergence)
+        m = 0.5 * (real_freq + gen_freq)
+        js_div = 0.5 * (F.kl_div(m.log(), real_freq, reduction='sum') + 
+                      F.kl_div(m.log(), gen_freq, reduction='sum'))
+        
+        metrics['genotype_js_div'] = js_div.item()
+        print(f"Genotype distribution JS divergence: {js_div.item():.4f}")
+        
+        # Plot genotype distribution
+        plt.figure(figsize=(10, 6))
+        labels = ['0.0', '0.5', '1.0']
+        x = np.arange(len(labels))
+        width = 0.35
+        
+        plt.bar(x - width/2, real_freq.numpy(), width, label='Real')
+        plt.bar(x + width/2, gen_freq.numpy(), width, label='Generated')
+        
+        plt.xlabel('Genotype')
+        plt.ylabel('Frequency')
+        plt.title('Genotype Distribution Comparison')
+        plt.xticks(x, labels)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'genotype_distribution.png'))
+        plt.close()
+        print(f"Genotype distribution plot saved to: {os.path.join(output_dir, 'genotype_distribution.png')}")
+        
+    except Exception as e:
+        print(f"Warning: Could not compute genotype distribution: {str(e)}")
+    
+    # 2. Minor Allele Frequency (MAF) analysis
+    try:
+        # Calculate MAF for each SNP (column)
+        real_maf = real.mean(dim=0)  # Average across samples
+        gen_maf = gen.mean(dim=0)
+        
+        # Calculate correlation
+        maf_corr = torch.corrcoef(torch.stack([real_maf.flatten(), gen_maf.flatten()]))[0,1]
+        metrics['maf_correlation'] = maf_corr.item()
+        print(f"MAF correlation: {maf_corr.item():.4f}")
+        
+        # Plot MAF comparison
+        plt.figure(figsize=(8, 8))
+        plt.scatter(real_maf.numpy(), gen_maf.numpy(), alpha=0.5)
+        plt.plot([0, 1], [0, 1], 'r--')
+        plt.xlabel('Real MAF')
+        plt.ylabel('Generated MAF')
+        plt.title('Minor Allele Frequency Comparison')
+        plt.savefig(os.path.join(output_dir, 'maf_comparison.png'))
+        plt.close()
+        print(f"MAF comparison plot saved to: {os.path.join(output_dir, 'maf_comparison.png')}")
+        
+    except Exception as e:
+        print(f"Warning: Could not compute MAF correlation: {str(e)}")
+    
+    # 3. Population structure analysis via PCA
+    try:
+        # Perform PCA on real data
+        n_components = min(5, min(real.shape[0], real.shape[1]) - 1)
+        pca = PCA(n_components=n_components)
+        real_pca = pca.fit_transform(real.numpy())
+        
+        # Project generated data onto same PC space
+        gen_pca = pca.transform(gen.numpy())
+        
+        # Calculate correlation between PC coordinates
+        pc_corrs = []
+        for i in range(n_components):
+            corr = np.corrcoef(real_pca[:, i], gen_pca[:, i])[0, 1]
+            pc_corrs.append(corr)
+        
+        metrics['pca_correlation_mean'] = np.mean(pc_corrs)
+        print(f"PCA correlation (mean across {n_components} PCs): {np.mean(pc_corrs):.4f}")
+        
+        # Plot PCA comparison (first 2 PCs)
+        plt.figure(figsize=(10, 8))
+        plt.scatter(real_pca[:, 0], real_pca[:, 1], alpha=0.7, label='Real')
+        plt.scatter(gen_pca[:, 0], gen_pca[:, 1], alpha=0.7, label='Generated')
+        plt.xlabel('PC1')
+        plt.ylabel('PC2')
+        plt.title('PCA Comparison of Real vs Generated Data')
+        plt.legend()
+        plt.savefig(os.path.join(output_dir, 'pca_comparison.png'))
+        plt.close()
+        print(f"PCA comparison plot saved to: {os.path.join(output_dir, 'pca_comparison.png')}")
+        
+    except Exception as e:
+        print(f"Warning: Could not compute PCA analysis: {str(e)}")
+    
+    return metrics
 
 
 def main(args):
@@ -272,6 +406,24 @@ def main(args):
             plot_path = output_dir / "sample_comparison.png"
             plot_comparison(real_samples.cpu(), samples.cpu(), plot_path)
             print(f"Comparison plots saved to: {plot_path}")
+            
+            # Compute genomic metrics
+            print("\nComputing genomic metrics...")
+            metrics = compute_genomic_metrics(real_samples.cpu(), samples.cpu(), output_dir)
+            
+            # Save metrics to JSON file
+            metrics_path = output_dir / "genomic_metrics.json"
+            with open(metrics_path, 'w') as f:
+                json.dump({k: float(v) if isinstance(v, (np.float32, np.float64)) else v 
+                           for k, v in metrics.items()}, f, indent=4)
+            print(f"Genomic metrics saved to: {metrics_path}")
+            
+            # Print summary of metrics
+            print("\nGenome Diffusion Model Evaluation Metrics:")
+            print("-" * 50)
+            for k, v in metrics.items():
+                print(f"{k}: {v:.4f}" if isinstance(v, (float, np.float32, np.float64)) else f"{k}: {v}")
+            print("-" * 50)
 
             # Generate reverse diffusion visualization
             print("\nGenerating reverse diffusion visualization...")

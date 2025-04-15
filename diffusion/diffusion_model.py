@@ -91,6 +91,27 @@ class DiffusionModel(NetworkBase):
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
 
+    def denoise_batch(self, batch: torch.Tensor) -> torch.Tensor:
+        """Run the reverse diffusion process to generate denoised samples.
+        
+        Performs the full reverse diffusion process starting from pure noise
+        and progressively denoising through all timesteps to generate clean samples.
+        
+        Args:
+            batch: Input batch of shape [B, C, seq_len], used for shape and device reference.
+            
+        Returns:
+            torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
+        """
+        with torch.no_grad():
+            # Start from pure noise (or optionally from batch if you want conditional denoising)
+            x = torch.randn_like(batch)
+            for t in reversed(range(1, self._forward_diffusion._num_diffusion_timesteps + 1)):
+                t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
+                x = self._reverse_process_step(x, t_tensor)
+            return torch.clamp(x, 0, 1)
+
+
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict the noise that was added during forward diffusion.
 

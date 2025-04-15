@@ -78,11 +78,11 @@ def main(args):
     # Create evaluation directory for model assessment results
     output_dir = base_dir / "evaluation"
     output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Evaluation results will be saved to: {output_dir}")
+    print(f"\nEvaluation results will be saved to: {output_dir}")
 
     # Initialize model from checkpoint
     try:
-        print("Loading model from checkpoint...")
+        print("\nLoading model from checkpoint...")
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location="cuda" if torch.cuda.is_available() else "cpu",
@@ -111,10 +111,10 @@ def main(args):
 
     # Run evaluation on test dataset
     try:
-        print("Starting model evaluation...")
+        print("\nStarting model evaluation...")
         trainer.test(model)
         print("Evaluation completed successfully")
-        print(f"Test metrics and plots saved to: {output_dir}")
+        print(f"\nTest metrics and plots saved to: {output_dir}")
     except Exception as e:
         raise RuntimeError(f"Evaluation failed: {e}")
 
