@@ -119,26 +119,28 @@ class NetworkBase(pl.LightningModule):
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Training step for model optimization.
-        
+
         Args:
             batch: Input batch from dataloader
             batch_idx: Index of the current batch
-            
+
         Returns:
             torch.Tensor: Computed loss for backpropagation
         """
         batch = self._prepare_batch(batch)
         loss = self.compute_loss(batch)
-        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        self.log(
+            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True
+        )
         return loss
 
     def validation_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Validation step for model evaluation.
-        
+
         Args:
             batch: Input batch from validation dataloader
             batch_idx: Index of the current batch
-            
+
         Returns:
             torch.Tensor: Validation loss
         """
@@ -146,24 +148,26 @@ class NetworkBase(pl.LightningModule):
 
     def test_step(self, batch: torch.Tensor, batch_idx: int) -> dict:
         """Test step for model evaluation.
-        
+
         Args:
             batch: Input batch from test dataloader
             batch_idx: Index of the current batch
-            
+
         Returns:
             dict: Dictionary containing test loss, input targets, and reconstructions
         """
         return self._shared_evaluation(batch, "test")
 
-    def predict_step(self, batch: torch.Tensor, batch_idx: int, dataloader_idx: int = 0) -> dict:
+    def predict_step(
+        self, batch: torch.Tensor, batch_idx: int, dataloader_idx: int = 0
+    ) -> dict:
         """Prediction step for model inference.
-        
+
         Args:
             batch: Input batch from prediction dataloader
             batch_idx: Index of the current batch
             dataloader_idx: Index of the dataloader (for multiple dataloaders)
-            
+
         Returns:
             dict: Dictionary containing model reconstructions
         """
@@ -171,11 +175,11 @@ class NetworkBase(pl.LightningModule):
 
     def _shared_evaluation(self, batch: torch.Tensor, stage: str) -> dict:
         """Shared evaluation logic for validation, test, and prediction stages.
-        
+
         Args:
             batch: Input batch from dataloader
             stage: Evaluation stage ('val', 'test', or 'predict')
-            
+
         Returns:
             dict: Dictionary with stage-appropriate outputs:
                 - val: loss
@@ -185,18 +189,23 @@ class NetworkBase(pl.LightningModule):
         batch = self._prepare_batch(batch)
         loss = self.compute_loss(batch)
         if stage == "val":
-            self.log("val_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+            self.log(
+                "val_loss",
+                loss,
+                on_step=True,
+                on_epoch=True,
+                prog_bar=True,
+                logger=True,
+            )
             return {"loss": loss}
         elif stage == "test":
             return {
                 "loss": loss,
                 "target": batch,
-                "reconstruction": self.denoise_batch(batch)
+                "reconstruction": self.denoise_batch(batch),
             }
         elif stage == "predict":
-            return {
-                "reconstruction": self.denoise_batch(batch)
-            }
+            return {"reconstruction": self.denoise_batch(batch)}
         else:
             raise ValueError(f"Unknown stage: {stage}")
 

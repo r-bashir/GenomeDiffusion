@@ -91,26 +91,51 @@ class DiffusionModel(NetworkBase):
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
 
-    def denoise_batch(self, batch: torch.Tensor) -> torch.Tensor:
+    def denoise_batch(
+        self, batch: torch.Tensor, discretize: bool = False
+    ) -> torch.Tensor:
         """Run the reverse diffusion process to generate denoised samples.
-        
+
         Performs the full reverse diffusion process starting from pure noise
         and progressively denoising through all timesteps to generate clean samples.
-        
+
         Args:
             batch: Input batch of shape [B, C, seq_len], used for shape and device reference.
-            
+            discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
+
         Returns:
             torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
         """
         with torch.no_grad():
             # Start from pure noise (or optionally from batch if you want conditional denoising)
             x = torch.randn_like(batch)
-            for t in reversed(range(1, self._forward_diffusion._num_diffusion_timesteps + 1)):
-                t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-                x = self._reverse_process_step(x, t_tensor)
-            return torch.clamp(x, 0, 1)
 
+            # Print initial noise statistics
+            print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+
+            # Reverse diffusion process
+            for t in reversed(
+                range(1, self._forward_diffusion._num_diffusion_timesteps + 1, 100)
+            ):
+                t_tensor = torch.full(
+                    (x.size(0),), t, device=x.device, dtype=torch.long
+                )
+                x = self._reverse_process_step(x, t_tensor)
+
+                # Print statistics every 100 steps
+                if t % 100 == 0:
+                    print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+
+            # Clamp to valid range [0, 1]
+            x = torch.clamp(x, 0, 1)
+
+            # Discretize to SNP values if requested
+            if discretize:
+                # Round to nearest genotype (0, 0.5, 1.0)
+                x = torch.round(x * 2) / 2
+
+            print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+            return x
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict the noise that was added during forward diffusion.
@@ -259,40 +284,20 @@ class DiffusionModel(NetworkBase):
 
         return result
 
-    def generate_samples(self, num_samples: int = 10) -> torch.Tensor:
+    def generate_samples(
+        self, num_samples: int = 10, discretize: bool = True
+    ) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
 
         Args:
             num_samples: Number of samples to generate.
+            discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
 
         Returns:
             torch.Tensor: Generated samples.
         """
-        with torch.no_grad():
-            # Start with random noise
-            x = torch.randn((num_samples,) + self._data_shape, device=self.device)
+        # Create a dummy batch with the right shape for denoise_batch
+        dummy_batch = torch.zeros((num_samples,) + self._data_shape, device=self.device)
 
-            # [NaN-FIX] Track statistics for debugging NaN issues
-            print(
-                f"Initial noise stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}"
-            )
-
-            # Reverse diffusion process
-            for t in range(self._forward_diffusion.tmax, 0, -1):
-                if t % 100 == 0:  # Print progress every 100 steps
-                    print(
-                        f"Step {t} stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}"
-                    )
-                x = self._reverse_process_step(x, t)
-
-                # [NaN-FIX] Clamp intermediate values to prevent explosion
-                x = torch.clamp(x, -5.0, 5.0)
-
-            # [NaN-FIX] Final normalization to [0, 1] to ensure valid output range
-            x = torch.clamp(x, 0, 1)
-
-            # [NaN-FIX] Print final statistics for debugging
-            print(
-                f"Final sample stats - mean: {x.mean().item():.4f}, std: {x.std().item():.4f}"
-            )
-            return x
+        # Use the improved denoise_batch method
+        return self.denoise_batch(dummy_batch, discretize=discretize)
