@@ -228,38 +228,41 @@ class DDPM:
 class SinusoidalTimeEmbeddings(nn.Module):
     """Sinusoidal positional embedding (used for time steps in diffusion models)."""
 
-    def __init__(self, dim: int):
+    def __init__(self, dim):
         super().__init__()
         self.dim = dim
 
-    def forward(self, time: torch.Tensor) -> torch.Tensor:
-        """
-        Compute sinusoidal positional embeddings for the given time steps.
-
-        Args:
-            time: Time steps tensor of shape (batch_size,).
-
-        Returns:
-            torch.Tensor: Embeddings of shape (batch_size, dim).
-        """
-        device = time.device if torch.is_tensor(time) else torch.device("cpu")
-        time = torch.as_tensor(time, device=device)
+    def forward(self, time):
+        device = time.device
         half_dim = self.dim // 2
-        e = math.log(10000.0) / (half_dim - 1)
-        inv_freq = torch.exp(-e * torch.arange(half_dim, device=device).float())
-
-        embeddings = time[:, None] * inv_freq[None, :]
-        embeddings = torch.cat([torch.cos(embeddings), torch.sin(embeddings)], dim=-1)
-
-        if self.dim % 2 == 1:
-            embeddings = nn.functional.pad(
-                embeddings, (0, 1)
-            )  # Pad last dimension if odd
-
+        embeddings = math.log(10000) / (half_dim - 1)
+        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
+        embeddings = time[:, None] * embeddings[None, :]
+        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
+# Position Embeddings
+class SinusoidalPositionEmbeddings(nn.Module):
+    """Sinusoidal position embeddings for 1D sequences.
 
-# TODO: Add Positional Embeddings
+    This class implements position embeddings using sine and cosine functions
+    of different frequencies, similar to the Transformer architecture.
+    """
+
+    def __init__(self, dim):
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, positions):
+        device = positions.device
+        half_dim = self.dim // 2
+        # Create position indices for the sequence
+        embeddings = math.log(10000) / (half_dim - 1)
+        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
+        # Calculate position embeddings
+        embeddings = positions.unsqueeze(-1) * embeddings[None, :]
+        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
+        return embeddings  # Shape: [batch_size, seq_len, dim]
 
 
 # Residual Join
@@ -374,7 +377,9 @@ class ResnetBlock(nn.Module):
 
     def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
         super().__init__()
-        self.mlp = (
+
+        # Time embedding
+        self.mlp_time = (
             nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
             if time_emb_dim is not None
             else None
@@ -405,8 +410,8 @@ class ResnetBlock(nn.Module):
         h = self.block1(x)
 
         # Add time embedding if available
-        if self.mlp is not None and time_emb is not None:
-            time_emb = self.mlp(time_emb)
+        if self.mlp_time is not None and time_emb is not None:
+            time_emb = self.mlp_time(time_emb)
             # Reshape time embedding to match feature map dimensions
             time_emb = time_emb.view(time_emb.shape[0], time_emb.shape[1], 1)
             # Ensure time embedding is broadcast correctly
@@ -436,6 +441,7 @@ class UNet1D(nn.Module):
         dim_mults=(1, 2, 4, 8),  # Multipliers for feature dimensions at each UNet level
         channels=1,  # Input channels (SNP data has a single channel)
         with_time_emb=True,  # Whether to include time embeddings
+        with_pos_emb=True,  # Whether to include position embeddings
         resnet_block_groups=8,  # Number of groups in ResNet blocks for GroupNorm
         seq_length=2067,  # Expected sequence length
     ):
@@ -444,6 +450,7 @@ class UNet1D(nn.Module):
         self.channels = channels
         self.seq_length = seq_length  # Make sequence length configurable
         self.use_gradient_checkpointing = False  # Gradient checkpointing flag
+        self.with_pos_emb = with_pos_emb
 
         # Start with a small initial dimension
         init_dim = 16  # Fixed small initial dimension
@@ -479,6 +486,9 @@ class UNet1D(nn.Module):
         else:
             time_dim = None
             self.time_mlp = None
+
+        # Positional embeddings (use dedicated position embedding class)
+        self.pos_emb = SinusoidalPositionEmbeddings(embedding_dim) if with_pos_emb else None
 
         # number of block iterators
         num_resolutions = len(in_out)
@@ -555,6 +565,14 @@ class UNet1D(nn.Module):
         # Ensure input has shape [batch, 1, seq_len]
         if x.dim() == 2:
             x = x.unsqueeze(1)
+
+        # Add positional embedding (sinusoidal)
+        if self.with_pos_emb and self.pos_emb is not None:
+            positions = torch.arange(seq_len, device=x.device).expand(batch, -1)  # [batch, seq_len]
+            pos_encoding = self.pos_emb(positions)  # [batch, seq_len, embedding_dim]
+            pos_encoding = pos_encoding.permute(0, 2, 1)  # [batch, embedding_dim, seq_len]
+            # Add position encoding to input
+            x = x + pos_encoding[:, :x.shape[1], :]
 
         # Apply edge padding to better preserve boundary information
         # This extra padding helps the model learn edge patterns better

@@ -53,6 +53,7 @@ class DiffusionModel(NetworkBase):
             dim_mults=config["unet"]["dim_mults"],
             channels=config["unet"]["channels"],
             with_time_emb=config["unet"]["with_time_emb"],
+            with_pos_emb=config["unet"].get("with_pos_emb", True),
             resnet_block_groups=config["unet"]["resnet_block_groups"],
             seq_length=config["data"]["seq_length"],
         )
@@ -92,52 +93,6 @@ class DiffusionModel(NetworkBase):
 
         # Predict noise added during forward diffusion
         return self.predict_added_noise(xt, t)
-
-    def denoise_batch(
-        self, batch: torch.Tensor, discretize: bool = False
-    ) -> torch.Tensor:
-        """Run the reverse diffusion process to generate denoised samples.
-
-        Performs the full reverse diffusion process starting from pure noise
-        and progressively denoising through all timesteps to generate clean samples.
-
-        Args:
-            batch: Input batch of shape [B, C, seq_len], used for shape and device reference.
-            discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
-
-        Returns:
-            torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
-        """
-        with torch.no_grad():
-            # Start from pure noise (or optionally from batch if you want conditional denoising)
-            x = torch.randn_like(batch)
-
-            # Print initial noise statistics
-            print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-
-            # Reverse diffusion process
-            for t in reversed(
-                range(1, self._forward_diffusion._num_diffusion_timesteps + 1, 100)
-            ):
-                t_tensor = torch.full(
-                    (x.size(0),), t, device=x.device, dtype=torch.long
-                )
-                x = self._reverse_process_step(x, t_tensor)
-
-                # Print statistics every 100 steps
-                if t % 100 == 0:
-                    print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-
-            # Clamp to valid range [0, 1]
-            x = torch.clamp(x, 0, 1)
-
-            # Discretize to SNP values if requested
-            if discretize:
-                # Round to nearest genotype (0, 0.5, 1.0)
-                x = torch.round(x * 2) / 2
-
-            print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-            return x
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict the noise that was added during forward diffusion.
@@ -285,6 +240,52 @@ class DiffusionModel(NetworkBase):
             )
 
         return result
+
+    def denoise_batch(
+        self, batch: torch.Tensor, discretize: bool = False
+    ) -> torch.Tensor:
+        """Run the reverse diffusion process to generate denoised samples.
+
+        Performs the full reverse diffusion process starting from pure noise
+        and progressively denoising through all timesteps to generate clean samples.
+
+        Args:
+            batch: Input batch of shape [B, C, seq_len], used for shape and device reference.
+            discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
+
+        Returns:
+            torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
+        """
+        with torch.no_grad():
+            # Start from pure noise (or optionally from batch if you want conditional denoising)
+            x = torch.randn_like(batch)
+
+            # Print initial noise statistics
+            print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+
+            # Reverse diffusion process
+            for t in reversed(
+                range(1, self._forward_diffusion._num_diffusion_timesteps + 1, 100)
+            ):
+                t_tensor = torch.full(
+                    (x.size(0),), t, device=x.device, dtype=torch.long
+                )
+                x = self._reverse_process_step(x, t_tensor)
+
+                # Print statistics every 100 steps
+                if t % 100 == 0:
+                    print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+
+            # Clamp to valid range [0, 1]
+            x = torch.clamp(x, 0, 1)
+
+            # Discretize to SNP values if requested
+            if discretize:
+                # Round to nearest genotype (0, 0.5, 1.0)
+                x = torch.round(x * 2) / 2
+
+            print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+            return x
 
     def generate_samples(
         self, num_samples: int = 10, discretize: bool = True

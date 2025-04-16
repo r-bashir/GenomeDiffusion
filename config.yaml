@@ -22,6 +22,7 @@ unet:
   dim_mults: [1, 2, 4]  # Reduced from [1, 2, 4, 8]
   channels: 1
   with_time_emb: true
+  with_pos_emb: true     # <--- New flag for position embedding
   resnet_block_groups: 8
 
 # Dataset
