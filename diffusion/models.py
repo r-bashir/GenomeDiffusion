@@ -258,7 +258,9 @@ class SinusoidalTimeEmbeddings(nn.Module):
 
         return embeddings
 
+
 # TODO: Add Positional Embeddings
+
 
 # Residual Join
 class Residual(nn.Module):
