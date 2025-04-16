@@ -201,6 +201,7 @@ def main(args):
     callbacks = setup_callbacks(config)
 
     # Initialize trainer
+    print("\nInitializing trainer...")
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
