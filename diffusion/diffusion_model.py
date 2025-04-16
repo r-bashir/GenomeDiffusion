@@ -35,17 +35,19 @@ class DiffusionModel(NetworkBase):
         # Set data shape
         self._data_shape = (config["unet"]["channels"], config["data"]["seq_length"])
 
-        # Initialize components from configuration
+        # Continuous time sampler
+        self._time_sampler = UniformContinuousTimeSampler(
+            tmin=config["time_sampler"]["tmin"], tmax=config["time_sampler"]["tmax"]
+        )
+
+        # DDPM: Forward diffusion process
         self._forward_diffusion = DDPM(
             num_diffusion_timesteps=config["diffusion"]["num_diffusion_timesteps"],
             beta_start=config["diffusion"]["beta_start"],
             beta_end=config["diffusion"]["beta_end"],
         )
 
-        self._time_sampler = UniformContinuousTimeSampler(
-            tmin=config["time_sampler"]["tmin"], tmax=config["time_sampler"]["tmax"]
-        )
-
+        # UNet: Noise predictor
         self.unet = UNet1D(
             embedding_dim=config["unet"]["embedding_dim"],
             dim_mults=config["unet"]["dim_mults"],

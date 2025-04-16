@@ -224,153 +224,8 @@ class DDPM:
         return xt
 
 
-# DDPM as nn.Module - device-aware implementation
-class DDPMModule(nn.Module):
-    """
-    Implements the forward diffusion process that gradually adds noise to data.
-    Following DDPM framework, at each timestep t, we add a controlled amount of
-    Gaussian noise according to:
-        q(xt|x0) = N(alpha(t) * x0, sigma(t)^2 * I)
-
-    The forward process transitions from clean data x0 to noisy data xt via:
-        xt = alpha(t) * x0 + sigma(t) * eps, where eps ~ N(0, I)
-
-    As t increases, more noise is added until the data becomes pure noise.
-    This creates the training pairs (xt, t, eps) that teach the UNet to
-    predict the added noise at each timestep.
-
-    This version inherits from nn.Module for proper device handling.
-    """
-
-    def __init__(
-        self,
-        num_diffusion_timesteps: int = 1000,
-        beta_start: float = 0.0001,
-        beta_end: float = 0.02,
-    ):
-        """
-        Initializes the diffusion process.
-
-        Args:
-            num_diffusion_timesteps (int): Number of diffusion steps.
-            beta_start (float): Initial beta value.
-            beta_end (float): Final beta value.
-        """
-        super().__init__()
-        self._num_diffusion_timesteps = num_diffusion_timesteps
-        self._beta_start = beta_start
-        self._beta_end = beta_end
-
-        self._betas = np.linspace(
-            self._beta_start, self._beta_end, self._num_diffusion_timesteps
-        )
-        alphas_bar = self._get_alphas_bar()
-
-        # Register tensors as buffers so they move with the model
-        self.register_buffer(
-            "_alphas", torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
-        )
-        self.register_buffer(
-            "_sigmas", torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
-        )
-
-    @property
-    def tmin(self) -> int:
-        """Minimum timestep value."""
-        return 1
-
-    @property
-    def tmax(self) -> int:
-        """Maximum timestep value."""
-        return self._num_diffusion_timesteps
-
-    def _get_alphas_bar(self) -> np.ndarray:
-        """Computes cumulative alpha values following the DDPM formula."""
-        alphas_bar = np.cumprod(1.0 - self._betas)
-        # Append 1 at the beginning for convenient indexing
-        alphas_bar = np.concatenate(([1.0], alphas_bar))
-        return alphas_bar
-
-    def alpha(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        Retrieves alpha(t) for the given time indices.
-
-        Args:
-            t (torch.Tensor): Timesteps (batch_size,).
-
-        Returns:
-            torch.Tensor: Alpha values corresponding to timesteps.
-        """
-        # Ensure t is in the valid range
-        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
-        # Convert to indices (0-indexed)
-        idx = (t - 1).long()
-
-        # Ensure idx is on the same device as _alphas
-        if idx.device != self._alphas.device:
-            idx = idx.to(self._alphas.device)
-
-        # Return values on the correct device
-        return self._alphas[idx]
-
-    def sigma(self, t: torch.Tensor) -> torch.Tensor:
-        """
-        Retrieves sigma(t) for the given time indices.
-
-        Args:
-            t (torch.Tensor): Timesteps (batch_size,).
-
-        Returns:
-            torch.Tensor: Sigma values corresponding to timesteps.
-        """
-        # Ensure t is in the valid range
-        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
-        # Convert to indices (0-indexed)
-        idx = (t - 1).long()
-
-        # Ensure idx is on the same device as _sigmas
-        if idx.device != self._sigmas.device:
-            idx = idx.to(self._sigmas.device)
-
-        # Return values on the correct device
-        return self._sigmas[idx]
-
-    def sample(
-        self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Samples from the forward diffusion process q(xt | x0).
-
-        Args:
-            x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).
-            t (torch.Tensor): Diffusion timesteps (batch_size,).
-            eps (torch.Tensor): Gaussian noise with same shape as x0.
-
-        Returns:
-            torch.Tensor: Noisy sample xt.
-        """
-        # Get alpha and sigma values for the timesteps
-        alpha_values = self.alpha(t)
-        sigma_values = self.sigma(t)
-
-        # Move alpha and sigma to the same device as x0
-        alpha_values = alpha_values.to(x0.device)
-        sigma_values = sigma_values.to(x0.device)
-
-        # Reshape alpha_t and sigma_t according to the input shape
-        if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
-            alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
-            sigma_t = sigma_values.view(-1, 1, 1)
-        else:  # [batch_size, seq_len]
-            alpha_t = alpha_values.view(-1, 1)  # Reshape for 2D tensor
-            sigma_t = sigma_values.view(-1, 1)
-
-        xt = alpha_t * x0 + sigma_t * eps
-        return xt
-
-
-# Denoising Process
-class SinusoidalPositionalEmbeddings(nn.Module):
+# Time Embeddings
+class SinusoidalTimeEmbeddings(nn.Module):
     """Sinusoidal positional embedding (used for time steps in diffusion models)."""
 
     def __init__(self, dim: int):
@@ -403,6 +258,7 @@ class SinusoidalPositionalEmbeddings(nn.Module):
 
         return embeddings
 
+# TODO: Add Positional Embeddings
 
 # Residual Join
 class Residual(nn.Module):
@@ -564,7 +420,7 @@ class ResnetBlock(nn.Module):
         return h + self.res_conv(identity)
 
 
-# Denoising Process: UNet
+# Noise Predictor
 class UNet1D(nn.Module):
     """
     A 1D U-Net model with residual connections and sinusoidal time embeddings.
@@ -611,7 +467,7 @@ class UNet1D(nn.Module):
         if with_time_emb:
             time_dim = embedding_dim
             self.time_mlp = nn.Sequential(
-                SinusoidalPositionalEmbeddings(
+                SinusoidalTimeEmbeddings(
                     embedding_dim
                 ),  # Maps scalar time input to embedding
                 nn.Linear(embedding_dim, time_dim),
@@ -799,186 +655,4 @@ class UNet1D(nn.Module):
         # Print final dimensions for verification
         # print(f"Input length: {original_len}, Output length: {x.size(-1)}")
 
-        return x
-
-
-# Diffusion Model: We wont use this model, since it is an nn.Module for PyTorch.
-# To use it with PyTorch Lighting, we have transfered it to 'diffusion_model.py'
-# as a LightingModule with additional hooks for training. Kept it for PyTorch.
-class DiffModel(nn.Module):
-    """PyTorch nn.Module implementation of diffusion model
-    This is kept as a reference implementation. For training with PyTorch Lightning,
-    use DiffusionModel from diffusion_model.py"""
-
-    def __init__(self, hparams: Dict):
-        """
-        Initialize the diffusion model with hyperparameters.
-
-        Args:
-            hparams: Dictionary containing model hyperparameters.
-        """
-        super().__init__()
-
-        # Set data shape
-        self._data_shape = (hparams["unet"]["channels"], hparams["data"]["seq_length"])
-
-        # Initialize components from hyperparameters
-        self._forward_diffusion = DDPM(
-            num_diffusion_timesteps=hparams["diffusion"]["num_diffusion_timesteps"],
-            beta_start=hparams["diffusion"]["beta_start"],
-            beta_end=hparams["diffusion"]["beta_end"],
-        )
-
-        self._time_sampler = UniformDiscreteTimeSampler(
-            tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
-        )
-
-        self.unet = UNet1D(
-            embedding_dim=hparams["unet"]["embedding_dim"],
-            dim_mults=hparams["unet"]["dim_mults"],
-            channels=hparams["unet"]["channels"],
-            with_time_emb=hparams["unet"]["with_time_emb"],
-            resnet_block_groups=hparams["unet"]["resnet_block_groups"],
-            seq_length=hparams["data"]["seq_length"],
-        )
-
-    def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        """Predict the noise that was added during forward diffusion."""
-        # Ensure x has the correct shape for UNet input
-        if len(x.shape) == 2:  # If shape is (batch_size, seq_len)
-            x = x.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-
-        # Print input shape for debugging
-        print(f"Noise prediction input shape: {x.shape}")
-
-        # Run through UNet
-        pred_noise = self.unet(x, t)
-
-        # Print output shape for debugging
-        print(f"Noise prediction output shape: {pred_noise.shape}")
-
-        return pred_noise
-
-    def forward(self, batch: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass of the diffusion model.
-
-        Args:
-            batch (torch.Tensor): Input batch of shape (batch_size, channels, seq_len).
-
-        Returns:
-            torch.Tensor: Predicted noise
-        """
-        return self.forward_step(batch)
-
-    def forward_step(self, batch: torch.Tensor) -> torch.Tensor:
-        """Perform a forward pass through the model."""
-        # Sample time and noise
-        t = self._time_sampler.sample(shape=(batch.shape[0],))
-        eps = torch.randn_like(batch)
-
-        # Forward diffusion process
-        xt = self._forward_diffusion.sample(batch, t, eps)
-
-        # Debugging print statements
-        print(
-            f"Mean abs diff between x0 and xt: {(batch - xt).abs().mean().item()}"
-        )  # Check noise level
-
-        # Ensure input has correct shape (batch_size, 1, seq_len)
-        if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
-            xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-        elif xt.shape[1] != 1:  # If incorrect number of channels
-            print(f"Unexpected number of channels: {xt.shape[1]}, reshaping...")
-            xt = xt[:, :1, :]  # Force to 1 channel
-        print(f"Final shape before UNet: {xt.shape}")
-
-        # Predict noise added during forward diffusion
-        return self.predict_added_noise(xt, t)
-
-    def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
-        """Compute MSE between true noise and predicted noise.
-        The network's goal is to correctly predict noise (eps) from noisy observations.
-        xt = alpha(t) * x0 + sigma(t)**2 * eps
-
-        Args:
-            batch: Input batch from dataloader of shape (batch_size, channels, seq_len)
-
-        Returns:
-            torch.Tensor: MSE loss
-        """
-        # Sample true noise
-        eps = torch.randn_like(batch)
-
-        # Get model predictions
-        pred_eps = self.forward_step(batch)
-
-        # Compute MSE loss
-        return torch.mean((pred_eps - eps) ** 2)
-
-    def loss_per_timesteps(
-        self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
-    ) -> torch.Tensor:
-        """Computes loss at specific timesteps."""
-        losses = []
-        for t in timesteps:
-            t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
-            xt = self._forward_diffusion.sample(x0, t, eps)
-
-            predicted_noise = self.predict_added_noise(xt, t)
-            loss = torch.mean((predicted_noise - eps) ** 2)
-            losses.append(loss)
-
-        print(f"Loss across timesteps: {torch.stack(losses).detach().cpu().numpy()}")
-        return torch.stack(losses)
-
-    def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
-        """Reverse diffusion step to estimate x_{t-1} given x_t.
-        Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred),
-        DDPM sampling method - algorithm 1: It formalizes the whole generative procedure.
-        """
-
-        xt = xt.to(device)
-        t = t * torch.ones((xt.shape[0],), dtype=torch.int32, device=device)
-
-        eps_pred = self.predict_added_noise(xt, t)
-
-        if t > 1:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
-                t - 1
-            )
-        else:
-            sqrt_a_t = self._forward_diffusion.alpha(t)
-
-        inv_sqrt_a_t = 1.0 / sqrt_a_t
-        beta_t = 1.0 - sqrt_a_t**2
-        inv_sigma_t = 1.0 / self._forward_diffusion.sigma(t)
-
-        mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
-
-        # DDPM instructs to use either the variance of the forward process
-        # or the variance of posterior q(x_{t-1}|x_t, x_0). Former is easier.
-
-        std = torch.sqrt(beta_t)
-        z = torch.randn_like(xt, device=device)
-
-        # The reparameterization trick: N(mean, variance^2) = mean + std(sigma) * epsilon
-        return mean + std * z
-
-    def sample(self, sample_size: int) -> torch.Tensor:
-        """Samples from the learned reverse diffusion process without conditioning."""
-        with torch.no_grad():
-            x = torch.randn((sample_size,) + self._data_shape)
-
-            for t in range(self._forward_diffusion.tmax, 0, -1):
-                x = self._reverse_process_step(x, t)
-
-                if t % 100 == 0:
-                    print(
-                        f"Sampling at timestep {t}, mean: {x.mean().item()}, std: {x.std().item()}"
-                    )
-
-            x = torch.clamp(x, 0, 1)
-
-        print(f"Final sample mean: {x.mean().item()}, std: {x.std().item()}")
         return x
