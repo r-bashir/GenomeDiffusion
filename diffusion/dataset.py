@@ -26,33 +26,57 @@ def load_data(input_path=None):
     except Exception as e:
         raise ValueError(f"Error loading data: {e}")
 
-    # Handle missing values
-    for i in range(data.shape[0]):
-        row = data[i]
-        valid_values = row[row != 9]
-        if len(valid_values) > 0:
-            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
-            row[row == 9] = mode_value
+    # Handle NaNs
+    data = handle_missing_values(data)
 
-    # Normalize data: map (0 → 0.0, 1 → 0.5, 2 → 1.0)
-    data[data == 0] = 0.0
-    data[data == 1] = 0.5
-    data[data == 2] = 1.0
+    # Normalize Data
+    data = normalize_data(data)
+
+    # Augment Data
+    # data = data_augmentation(data)
 
     # Convert to Float and Transpose
     return torch.FloatTensor(data.T[:, :1000])
 
 
+def data_augmentation(data):
+    """Augment data by changing the values of certain markers"""
+
+    # Replace 50% of data values with 0.5
+    num_elements = data.size
+    num_to_replace = num_elements // 2
+    indices = np.unravel_index(
+        np.random.choice(num_elements, num_to_replace, replace=False), data.shape
+    )
+    data[indices] = 0.5
+
+    return data
+
+
+def normalize_data(data):
+    """Normalize data by mapping original SNP/marker values to new
+    SNP/marker values. We map 0 → 0.0, 1 → 0.5, and 2 → 1.0"""
+
+    # Normalize by mapping
+    data[data == 0] = 0.0
+    data[data == 1] = 0.5
+    data[data == 2] = 1.0
+
+    return data
+
+
 def handle_missing_values(data):
-    """
-    Handles missing values in the dataset.
-    """
+    """Handles missing values in the dataset per SNP marker i.e. columnwise
+    Note that the data is in transposed form so we change rowwise."""
+
+    # Loop over each SNP/marker
     for i in range(data.shape[0]):
         row = data[i]
         valid_values = row[row != 9]
         if len(valid_values) > 0:
             mode_value = stats.mode(valid_values, keepdims=True)[0][0]
             row[row == 9] = mode_value
+
     return data
 
 
