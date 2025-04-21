@@ -18,23 +18,23 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 32     # Reduced from 64
-  dim_mults: [1, 2, 4]  # Reduced from [1, 2, 4, 8]
+  embedding_dim: 128       # Reduced from 128
+  dim_mults: [1, 2, 4, 8]  # Reduced from [1, 2, 4, 8]
   channels: 1
   with_time_emb: true
-  with_pos_emb: true     # <--- New flag for position embedding
+  with_pos_emb: false
   resnet_block_groups: 8
 
 # Dataset
 data:
-  seq_length: 1000     # Actual seq length was 160858
+  seq_length: 160858       # Reduced from 160858
   batch_size: 64
   num_workers: 4
   datasplit: [1700, 200, 167]
 
 # Training
 training:
-  epochs: 50
+  epochs: 10
   early_stopping: false
   patience: 10
   save_top_k: 3

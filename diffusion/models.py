@@ -241,6 +241,7 @@ class SinusoidalTimeEmbeddings(nn.Module):
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
 
+
 # Position Embeddings
 class SinusoidalPositionEmbeddings(nn.Module):
     """Sinusoidal position embeddings for 1D sequences.
@@ -488,7 +489,9 @@ class UNet1D(nn.Module):
             self.time_mlp = None
 
         # Positional embeddings (use dedicated position embedding class)
-        self.pos_emb = SinusoidalPositionEmbeddings(embedding_dim) if with_pos_emb else None
+        self.pos_emb = (
+            SinusoidalPositionEmbeddings(embedding_dim) if with_pos_emb else None
+        )
 
         # number of block iterators
         num_resolutions = len(in_out)
@@ -568,11 +571,15 @@ class UNet1D(nn.Module):
 
         # Add positional embedding (sinusoidal)
         if self.with_pos_emb and self.pos_emb is not None:
-            positions = torch.arange(seq_len, device=x.device).expand(batch, -1)  # [batch, seq_len]
+            positions = torch.arange(seq_len, device=x.device).expand(
+                batch, -1
+            )  # [batch, seq_len]
             pos_encoding = self.pos_emb(positions)  # [batch, seq_len, embedding_dim]
-            pos_encoding = pos_encoding.permute(0, 2, 1)  # [batch, embedding_dim, seq_len]
+            pos_encoding = pos_encoding.permute(
+                0, 2, 1
+            )  # [batch, embedding_dim, seq_len]
             # Add position encoding to input
-            x = x + pos_encoding[:, :x.shape[1], :]
+            x = x + pos_encoding[:, : x.shape[1], :]
 
         # Apply edge padding to better preserve boundary information
         # This extra padding helps the model learn edge patterns better

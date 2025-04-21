@@ -17,6 +17,8 @@ import json
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+
+matplotlib.use("Agg")
 import pytorch_lightning as pl
 from pathlib import Path
 import argparse
@@ -36,12 +38,8 @@ def calculate_maf_stats(maf):
     mean_val = float(np.mean(maf))
     median_val = float(np.median(maf))
     std_val = float(np.std(maf))
-    
-    return {
-        "mean": mean_val,
-        "median": median_val,
-        "std": std_val
-    }
+
+    return {"mean": mean_val, "median": median_val, "std": std_val}
 
 
 def analyze_maf_distribution(samples, save_path, bin_width=0.001):
@@ -106,7 +104,7 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
     # Convert peak values to a list of floats
     peak_indices = np.argsort(peak_counts)[-3:][::-1]
     peak_values = [float((i + 1) * peak_spacing) for i in peak_indices]
-    
+
     stats_text = (
         f"Statistics:\n"
         f'Mean MAF: {stats["mean"]:.4f}\n'
@@ -233,8 +231,8 @@ def main():
         )
 
         # Save samples
-        torch.save(samples, output_dir / "synthetic_snp_sequences.pt")
-        print(f"\nSamples saved to {output_dir / 'synthetic_snp_sequences.pt'}")
+        torch.save(samples, output_dir / "synthetic_sequences.pt")
+        print(f"\nSamples saved to {output_dir / 'synthetic_sequences.pt'}")
 
         # Analyze MAF distribution
         print("\nAnalyzing MAF distribution...")
@@ -242,7 +240,7 @@ def main():
             real_samples, output_dir / "real_maf_distribution.png"
         )
         gen_maf = analyze_maf_distribution(
-            samples, output_dir / "generated_maf_distribution.png"
+            samples, output_dir / "gen_maf_distribution.png"
         )
 
         # Calculate MAF correlation

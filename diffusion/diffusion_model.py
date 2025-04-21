@@ -288,7 +288,7 @@ class DiffusionModel(NetworkBase):
             return x
 
     def generate_samples(
-        self, num_samples: int = 10, discretize: bool = True
+        self, num_samples: int = 10, discretize: bool = False
     ) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
 
