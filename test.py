@@ -17,16 +17,19 @@ Evaluation results are saved in the 'evaluation' directory, including:
 """
 
 import argparse
-import os
 from pathlib import Path
-from typing import Dict
-
 import pytorch_lightning as pl
 import torch
 import yaml
-
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.evaluation_callback import EvaluationCallback
+
+
+def load_config(config_path):
+    """Load configuration from YAML file."""
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    return config
 
 
 def parse_args():
@@ -49,52 +52,44 @@ def parse_args():
     return parser.parse_args()
 
 
-def load_config(config_path: str) -> Dict:
-    """Load configuration from YAML file."""
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    return config
+def main():
+    """Main function."""
 
-
-def main(args):
-    """Main evaluation function."""
-    # Validate input files
-    if not os.path.exists(args.checkpoint):
-        raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
+    # Parse arguments
+    args = parse_args()
 
     # Load configuration
+    # FIXME: Get config from checkpoint, loading fresh may cause mismatch errors.
     config = load_config(args.config)
 
-    # Setup output directory
-    checkpoint_path = Path(args.checkpoint)
-    if "checkpoints" in str(checkpoint_path):
-        base_dir = (
-            checkpoint_path.parent.parent
-        )  # Go up two levels: from checkpoint file to run directory
-    else:
-        base_dir = checkpoint_path.parent
-    base_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create evaluation directory for model assessment results
-    output_dir = base_dir / "evaluation"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\nEvaluation results will be saved to: {output_dir}")
-
-    # Initialize model from checkpoint
+    # Load model
     try:
         print("\nLoading model from checkpoint...")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
-            map_location="cuda" if torch.cuda.is_available() else "cpu",
+            map_location=device,
             strict=True,
             config=config,
         )
-        model.eval()  # Set to evaluation mode
+        model.eval()
         print(f"Model loaded successfully on {next(model.parameters()).device}")
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Set up evaluation callback for metrics
+    # Setup output directory
+    checkpoint_path = Path(args.checkpoint)
+    if "checkpoints" in str(checkpoint_path):
+        base_dir = checkpoint_path.parent.parent
+    else:
+        base_dir = checkpoint_path.parent
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    output_dir = base_dir / "evaluation"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"\nEvaluation results will be saved to: {output_dir}")
+
+    # Evaluation callback
     eval_callback = EvaluationCallback(output_dir=str(output_dir))
 
     # Initialize trainer
@@ -102,7 +97,6 @@ def main(args):
     trainer = pl.Trainer(
         accelerator="auto",
         devices="auto",
-        # precision="bf16-mixed",
         callbacks=[eval_callback],
         default_root_dir=str(output_dir),
         enable_progress_bar=True,
@@ -120,5 +114,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()
