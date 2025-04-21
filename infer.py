@@ -17,8 +17,6 @@ import json
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-
-matplotlib.use("Agg")
 import pytorch_lightning as pl
 from pathlib import Path
 import argparse
@@ -60,9 +58,18 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
     if len(samples.shape) == 3:
         samples = samples.squeeze(1)
 
-    # Calculate MAF and convert to minor allele frequency
-    maf = np.mean(samples, axis=0)
-    maf = np.minimum(maf, 1 - maf)
+    # Calculate allele frequencies
+    freq = np.mean(samples, axis=0)
+    
+    # Print frequency distribution details
+    print(f"\nFrequency analysis for {save_path}:")
+    print(f"Raw frequency range: [{freq.min():.3f}, {freq.max():.3f}]")
+    print(f"Number of 0.5 frequencies: {np.sum(np.abs(freq - 0.5) < 0.001)}")
+    
+    # Convert to minor allele frequency
+    maf = np.minimum(freq, 1 - freq)
+    print(f"MAF range: [{maf.min():.3f}, {maf.max():.3f}]")
+    print(f"Number of MAF = 0.5: {np.sum(np.abs(maf - 0.5) < 0.001)}\n")
 
     # Plot setup
     plt.figure(figsize=(15, 8))
@@ -220,7 +227,15 @@ def main():
         # Generate synthetic SNP sequences matching the full test set size
         num_samples = real_samples.shape[0]
         print(f"\nGenerating {num_samples} synthetic sequences...")
-        samples = model.generate_samples(num_samples=num_samples, discretize=False)
+        
+        # Generate raw samples first
+        raw_samples = model.generate_samples(num_samples=num_samples, discretize=False)
+        print("\nRaw model output statistics:")
+        print(f"Value range: [{raw_samples.min():.3f}, {raw_samples.max():.3f}]")
+        print(f"Values near 0.5: {torch.sum((raw_samples > 0.49) & (raw_samples < 0.51)).item()}")
+        
+        # Now generate discretized samples
+        samples = model.generate_samples(num_samples=num_samples, discretize=True)
 
         # Print statistics
         print(f"\nSynthetic SNP data shape: {samples.shape}")
