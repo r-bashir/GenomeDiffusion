@@ -396,11 +396,22 @@ def main(args):
     model = model.to(trainer.strategy.root_device)
 
     # Load real SNP data from test split (ground truth)
-    print("\nLoading test dataset...")
+    print("\nLoading full test dataset...")
     model.setup("test")  # Ensure test dataset is initialized
-    print(f"Selecting first batch of test dataset...")
-    real_samples = next(iter(model.test_dataloader()))
-    print(f"\nReal SNP data sample shape: {real_samples.shape}")
+    test_loader = model.test_dataloader()
+
+    # Collect all test samples
+    real_samples = []
+    print("Loading all test batches...")
+    with torch.no_grad():
+        for batch in test_loader:
+            # Move batch to same device as model
+            if isinstance(batch, torch.Tensor):
+                batch = batch.to(device)
+            real_samples.append(batch)
+    real_samples = torch.cat(real_samples, dim=0)
+
+    print(f"\nFull test dataset shape: {real_samples.shape}")
     print(f"Real unique SNP values: {torch.unique(real_samples)}")
 
     # Generate synthetic SNP sequences through reverse diffusion
