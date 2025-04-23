@@ -5,10 +5,10 @@
 
 Examples:
     # Generate default number of samples (from config)
-    python inference.py --config config.yaml --checkpoint path/to/checkpoint.ckpt
+    python inference.py --checkpoint path/to/last.ckpt
 
     # Generate specific number of samples
-    python inference.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --num_samples 100
+    python inference.py --checkpoint path/to/last.ckpt --num_samples 100
 
 Generated outputs are saved in the 'inference' directory, including:
 - Generated samples (.pt file)
@@ -349,7 +349,7 @@ def main():
         print(f"Model loaded successfully from checkpoint on {device}")
         print("Model config loaded from checkpoint:\n")
         print(config)
-        
+
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
@@ -456,10 +456,10 @@ def main():
             # Start with noise (t=T)
             x = torch.randn((1,) + model._data_shape, device=model.device)
             reverse_samples.append(x)
-            timesteps.append(model._forward_diffusion.tmax)
+            timesteps.append(model.ddpm.tmax)
 
             # Reverse diffusion process
-            for t in range(model._forward_diffusion.tmax, 0, -100):
+            for t in range(model.ddpm.tmax, 0, -100):
                 x = model._reverse_process_step(x, t)
                 x = torch.clamp(x, -5.0, 5.0)  # Prevent explosion
                 reverse_samples.append(x)

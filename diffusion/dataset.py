@@ -14,9 +14,16 @@ from scipy import stats
 
 
 # load dataset
-def load_data(input_path=None):
+def load_data(input_path=None, seq_length=None):
     """
     Load data and process it.
+
+    Args:
+        input_path: Path to the parquet file containing SNP data
+        seq_length: Number of SNP markers to include (None for all markers)
+
+    Returns:
+        torch.FloatTensor: Processed data with shape (n_samples, seq_length)
     """
     # Read data
     try:
@@ -35,8 +42,18 @@ def load_data(input_path=None):
     # Augment Data
     # data = data_augmentation(data)
 
-    # Convert to Float and Transpose
-    return torch.FloatTensor(data.T[:, :1000])
+    # Transpose to get (n_samples, n_markers)
+    data = data.T
+
+    # Slice to seq_length if specified
+    if seq_length is not None:
+        print(f"Loading data with {seq_length} markers (out of {data.shape[1]})")
+        data = data[:, :seq_length]
+    else:
+        print(f"Loading full dataset with {data.shape[1]} markers")
+
+    # Convert to Float Tensor
+    return torch.FloatTensor(data)
 
 
 def data_augmentation(data):
@@ -66,15 +83,22 @@ def normalize_data(data):
 
 
 def handle_missing_values(data):
-    """Handles missing values in the dataset per SNP marker i.e. columnwise
-    Note that the data is in transposed form so we change rowwise."""
+    """Handles missing values in the dataset per SNP marker.
 
-    # Loop over each SNP/marker
+    At this point in the data pipeline, the data has shape (n_markers, n_samples),
+    where each row represents a single marker across all samples.
+    For each marker, we find the most frequent non-missing value and replace
+    any missing values (9) with that value.
+    """
+
+    # Loop over each SNP/marker (rows in the current orientation)
     for i in range(data.shape[0]):
-        row = data[i]
-        valid_values = row[row != 9]
+        row = data[i]  # All samples for this marker
+        valid_values = row[row != 9]  # Filter out missing values
         if len(valid_values) > 0:
+            # Find most common value for this marker
             mode_value = stats.mode(valid_values, keepdims=True)[0][0]
+            # Replace missing values with the mode
             row[row == 9] = mode_value
 
     return data
@@ -82,10 +106,11 @@ def handle_missing_values(data):
 
 # SNPDataset
 class SNPDataset(torch.utils.data.Dataset):
-    def __init__(self, input_path=None):
+    def __init__(self, input_path=None, seq_length=None):
 
         self.input_path = input_path
-        self.data = load_data(self.input_path)
+        self.seq_length = seq_length
+        self.data = load_data(self.input_path, seq_length=self.seq_length)
         self.validate_data()
 
     def validate_data(self):
@@ -102,12 +127,13 @@ class SNPDataset(torch.utils.data.Dataset):
 
 # SNPDataModule
 class SNPDataModule(pl.LightningDataModule):
-    def __init__(self, input_path, batch_size=256, num_workers=1):
+    def __init__(self, input_path, batch_size=256, num_workers=1, seq_length=None):
         super().__init__()
         self.input_path = input_path
         self.batch_size = batch_size
         self.workers = num_workers
         self.fractions = [0.8, 0.1, 0.1]
+        self.seq_length = seq_length
 
     # Setup Data
     def setup(self, stage=None, fractions=[0.8, 0.1, 0.1]):
@@ -115,7 +141,7 @@ class SNPDataModule(pl.LightningDataModule):
         if sum(fractions) != 1.0:
             raise ValueError("Fractions must sum to 1.")
 
-        full_dataset = load_data(self.input_path)
+        full_dataset = load_data(self.input_path, seq_length=self.seq_length)
         n = len(full_dataset)
 
         # Calculate dataset sizes
@@ -158,7 +184,12 @@ class SNPDataModule(pl.LightningDataModule):
 
 class SNPDataModule_v2(pl.LightningDataModule):
     def __init__(
-        self, input_path, batch_size=256, num_workers=1, impute_strategy="mode"
+        self,
+        input_path,
+        batch_size=256,
+        num_workers=1,
+        impute_strategy="mode",
+        seq_length=None,
     ):
         """
         Args:
@@ -172,6 +203,7 @@ class SNPDataModule_v2(pl.LightningDataModule):
         self.batch_size = batch_size
         self.workers = num_workers
         self.impute_strategy = impute_strategy
+        self.seq_length = seq_length
         self.data_split = [128686, 16086, 16086]  # 80% train, 10% val, 10% test
 
     def preprocess(self, dataset):
@@ -203,7 +235,9 @@ class SNPDataModule_v2(pl.LightningDataModule):
 
     def setup(self, stage=None):
         """Loads and preprocesses dataset."""
-        full_dataset = load_data(self.path)  # Assuming this loads a TensorDataset
+        full_dataset = load_data(
+            self.path, seq_length=self.seq_length
+        )  # Load with specified sequence length
 
         # Split into train/val/test
         self.trainset, self.valset, self.testset = torch.utils.data.random_split(
@@ -289,19 +323,23 @@ def main():
 
     # Test Python Dataset
     print("\nTesting Python Dataset:")
-    dataset = load_data(input_path=args.input_path)
+    dataset = load_data(
+        input_path=args.input_path, seq_length=1000
+    )  # Test with 1000 markers
     print(f"Dataset length: {len(dataset)}")
     print(f"First example: {dataset[0].shape}")
 
     # Test PyTorch Dataset
     print("\nTesting PyTorch Dataset:")
-    snp_dataset = SNPDataset(args.input_path)
+    snp_dataset = SNPDataset(args.input_path, seq_length=1000)  # Test with 1000 markers
     print(f"Dataset length: {len(snp_dataset)}")
     print(f"First example: {snp_dataset[0].shape}")
 
     # Test Lightning DataModule
     print("\nTesting Lightning DataModule:")
-    data_module = SNPDataModule(args.input_path, batch_size=256, num_workers=1)
+    data_module = SNPDataModule(
+        args.input_path, batch_size=256, num_workers=1, seq_length=1000
+    )  # Test with 1000 markers
     data_module.setup(fractions=[0.8, 0.1, 0.1])
     print(f"Train batches: {len(data_module.train_dataloader())}")
     batch = next(iter(data_module.train_dataloader()))

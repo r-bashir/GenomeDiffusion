@@ -65,9 +65,15 @@ class NetworkBase(pl.LightningModule):
         """
         if "input_path" not in self.hparams:
             raise ValueError("input_path must be specified in hparams")
-        from diffusion import SNPDataset  # Import here to avoid circular imports
 
-        return SNPDataset(self.hparams["input_path"])
+        # Get sequence length from config
+        seq_length = self.hparams["data"].get("seq_length", None)
+
+        # Import here to avoid circular imports
+        from diffusion import SNPDataset
+
+        print(f"Creating dataset with sequence length: {seq_length}")
+        return SNPDataset(self.hparams["input_path"], seq_length=seq_length)
 
     def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
         """Prepare a batch for model input.

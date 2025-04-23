@@ -206,7 +206,6 @@ def main(args):
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
-        # precision="bf16-mixed",
         callbacks=callbacks,
         logger=logger,
         default_root_dir=config["output_path"],
@@ -227,11 +226,11 @@ def main(args):
 
         print("\nTo evaluate the model, execute:")
         print(
-            f"python test.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
+            f"python evaluate.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
         print("\nTo run inference and generate samples, execute:")
         print(
-            f"python inference.py --config {args.config} --checkpoint {trainer.checkpoint_callback.best_model_path}"
+            f"python inference.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")
