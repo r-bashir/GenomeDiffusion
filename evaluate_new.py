@@ -28,17 +28,11 @@ import numpy as np
 import torch
 
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.inference_utils import (
-    calculate_maf,
-    calculate_maf_stats,
-    plot_maf_distribution,
-    compute_genomic_metrics
-)
-from diffusion.evaluate_utils import (
-    plot_ld_decay,
-    run_pca_analysis,
-    calculate_genetic_diversity
-)
+from diffusion.evaluate_utils import (calculate_genetic_diversity,
+                                      plot_ld_decay, run_pca_analysis)
+from diffusion.inference_utils import (calculate_maf, calculate_maf_stats,
+                                       compute_genomic_metrics,
+                                       plot_maf_distribution)
 
 
 def parse_args():
@@ -89,7 +83,7 @@ def main():
         print(f"Model loaded successfully from checkpoint on {device}")
         print("Model config loaded from checkpoint:\n")
         print(config)
-        
+
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
@@ -130,13 +124,14 @@ def main():
         num_samples = args.num_samples or real_samples.shape[0]
         print(f"\nGenerating {num_samples} synthetic sequences...")
         gen_samples = model.generate_samples(
-            num_samples=num_samples, 
-            discretize=args.discretize
+            num_samples=num_samples, discretize=args.discretize
         )
 
         # Check for NaN values in generated samples
         if torch.isnan(gen_samples).any():
-            print("Warning: Generated samples contain NaN values. Replacing with zeros...")
+            print(
+                "Warning: Generated samples contain NaN values. Replacing with zeros..."
+            )
             gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
 
         # Save samples
@@ -145,87 +140,98 @@ def main():
         # Print statistics
         print(f"\nGenerated samples shape: {gen_samples.shape}")
         print(f"Generated samples unique values: {torch.unique(gen_samples)}")
-        
+
         # Initialize results dictionary
         results = {}
-        
+
         # 1. MAF Analysis
         print("\n1. Analyzing Minor Allele Frequency (MAF) distribution...")
         real_maf = calculate_maf(real_samples)
         gen_maf = calculate_maf(gen_samples)
-        
+
         # Plot MAF distributions and get correlation
         maf_corr = plot_maf_distribution(real_maf, gen_maf, output_dir)
-        
+
         # Store MAF statistics
         results["maf"] = {
             "real": calculate_maf_stats(real_maf),
             "generated": calculate_maf_stats(gen_maf),
             "correlation": float(maf_corr),
         }
-        
+
         # 2. Linkage Disequilibrium Analysis
         print("\n2. Analyzing Linkage Disequilibrium (LD) patterns...")
         ld_corr = plot_ld_decay(real_samples, gen_samples, output_dir)
-        
+
         results["ld"] = {
             "correlation": float(ld_corr) if not np.isnan(ld_corr) else None,
         }
-        
+
         # 3. PCA Analysis
         print("\n3. Running Principal Component Analysis (PCA)...")
         w_distance, component_distances = run_pca_analysis(
             real_samples, gen_samples, output_dir, n_components=5
         )
-        
+
         results["pca"] = {
             "wasserstein_distance": float(w_distance),
             "component_distances": [float(d) for d in component_distances],
         }
-        
+
         # 4. Genetic Diversity Metrics
         print("\n4. Calculating genetic diversity metrics...")
         real_diversity = calculate_genetic_diversity(real_samples)
         gen_diversity = calculate_genetic_diversity(gen_samples)
-        
+
         # Calculate relative differences
         diversity_diffs = {}
         for key in real_diversity:
             if real_diversity[key] != 0:
-                rel_diff = (gen_diversity[key] - real_diversity[key]) / real_diversity[key]
+                rel_diff = (gen_diversity[key] - real_diversity[key]) / real_diversity[
+                    key
+                ]
                 diversity_diffs[key] = float(rel_diff)
             else:
                 diversity_diffs[key] = None
-        
+
         results["genetic_diversity"] = {
             "real": real_diversity,
             "generated": gen_diversity,
             "relative_difference": diversity_diffs,
         }
-        
+
         # 5. Genomic Metrics (from inference_utils)
         print("\n5. Computing additional genomic metrics...")
         genomic_metrics = compute_genomic_metrics(
             real_samples.cpu(), gen_samples.cpu(), output_dir
         )
         results["genomic_metrics"] = genomic_metrics
-        
+
         # Save all results to JSON
         with open(output_dir / "evaluation_metrics.json", "w") as f:
             json.dump(results, f, indent=4)
-        
-        print(f"\nAll evaluation metrics saved to: {output_dir / 'evaluation_metrics.json'}")
-        
+
+        print(
+            f"\nAll evaluation metrics saved to: {output_dir / 'evaluation_metrics.json'}"
+        )
+
         # Print summary of key metrics
         print("\n=== EVALUATION SUMMARY ===")
         print(f"MAF Correlation: {maf_corr:.4f}")
-        print(f"LD Pattern Correlation: {ld_corr:.4f}" if not np.isnan(ld_corr) else "LD Pattern Correlation: N/A")
+        print(
+            f"LD Pattern Correlation: {ld_corr:.4f}"
+            if not np.isnan(ld_corr)
+            else "LD Pattern Correlation: N/A"
+        )
         print(f"PCA Distribution Distance: {w_distance:.4f}")
-        print(f"Heterozygosity Preservation: {diversity_diffs['expected_heterozygosity']:.2%}")
+        print(
+            f"Heterozygosity Preservation: {diversity_diffs['expected_heterozygosity']:.2%}"
+        )
         print("==========================")
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise RuntimeError(f"Evaluation failed: {e}")
 

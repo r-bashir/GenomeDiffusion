@@ -18,13 +18,15 @@ Generated outputs are saved in the 'inference' directory, including:
 """
 
 import argparse
-from pathlib import Path
 import json
-import torch
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
 import numpy as np
+import torch
+from matplotlib.colors import ListedColormap
 from sklearn.decomposition import PCA
+
 from diffusion.diffusion_model import DiffusionModel
 
 

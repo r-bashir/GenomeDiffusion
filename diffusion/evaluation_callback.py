@@ -9,7 +9,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 from pytorch_lightning.callbacks import Callback
-from sklearn.metrics import roc_curve, auc, confusion_matrix
+from sklearn.metrics import auc, confusion_matrix, roc_curve
 
 
 class EvaluationCallback(Callback):

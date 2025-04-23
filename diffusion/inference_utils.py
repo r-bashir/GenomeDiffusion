@@ -11,20 +11,21 @@ This module contains reusable functions for:
 """
 
 import json
-import numpy as np
+
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap
-from sklearn.decomposition import PCA
+import numpy as np
 import torch
+from matplotlib.colors import ListedColormap
 from scipy import stats
+from sklearn.decomposition import PCA
 
 
 def calculate_maf_stats(maf):
     """Calculate MAF statistics.
-    
+
     Args:
         maf: numpy array of MAF values
-        
+
     Returns:
         dict: Dictionary of MAF statistics
     """
@@ -32,7 +33,7 @@ def calculate_maf_stats(maf):
     mean_val = float(np.mean(maf))
     median_val = float(np.median(maf))
     std_val = float(np.std(maf))
-    
+
     return {"mean": mean_val, "median": median_val, "std": std_val}
 
 
@@ -43,7 +44,7 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
         samples: Tensor of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
         save_path: Path to save the MAF histogram plot
         bin_width: Width of histogram bins (default: 0.001 for fine-grained analysis)
-        
+
     Returns:
         numpy.ndarray: Array of MAF values
     """
@@ -171,7 +172,7 @@ def plot_sample_grid(samples, save_path, title, timesteps=None):
 
 def plot_comparison(real_samples, generated_samples, save_path):
     """Plot comparison between real and generated samples.
-    
+
     Args:
         real_samples: Tensor of real SNP data
         generated_samples: Tensor of generated SNP data
@@ -244,7 +245,9 @@ def plot_comparison(real_samples, generated_samples, save_path):
 
         # Plot value distributions
         axes[1, 1].hist(real.flatten(), bins=50, alpha=0.5, label="Real", density=True)
-        axes[1, 1].hist(gen.flatten(), bins=50, alpha=0.5, label="Generated", density=True)
+        axes[1, 1].hist(
+            gen.flatten(), bins=50, alpha=0.5, label="Generated", density=True
+        )
         axes[1, 1].set_title("Value Distribution")
         axes[1, 1].set_xlabel("Value")
         axes[1, 1].set_ylabel("Density")
@@ -306,20 +309,20 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
     try:
         # Combine data for PCA
         combined = np.vstack([real, gen])
-        
+
         # Fit PCA
         pca = PCA(n_components=2)
         pca_result = pca.fit_transform(combined)
-        
+
         # Split back into real and generated
-        real_pca = pca_result[:real.shape[0]]
-        gen_pca = pca_result[real.shape[0]:]
-        
+        real_pca = pca_result[: real.shape[0]]
+        gen_pca = pca_result[real.shape[0] :]
+
         # Plot PCA results
         plt.figure(figsize=(10, 8))
         plt.scatter(real_pca[:, 0], real_pca[:, 1], alpha=0.5, label="Real")
         plt.scatter(gen_pca[:, 0], gen_pca[:, 1], alpha=0.5, label="Generated")
-        
+
         # Add explained variance
         explained_var = pca.explained_variance_ratio_
         plt.title("PCA of Real and Generated SNP Data")
@@ -327,17 +330,17 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
         plt.ylabel(f"PC2 ({explained_var[1]:.2%} variance)")
         plt.legend()
         plt.grid(alpha=0.3)
-        
+
         plt.tight_layout()
         plt.savefig(output_dir / "pca_analysis.png", dpi=300)
         plt.close()
-        
+
         # Calculate distance between centroids
         real_centroid = np.mean(real_pca, axis=0)
         gen_centroid = np.mean(gen_pca, axis=0)
         centroid_distance = np.linalg.norm(real_centroid - gen_centroid)
         metrics["pca_centroid_distance"] = float(centroid_distance)
-        
+
     except Exception as e:
         print(f"Warning: PCA analysis failed: {e}")
         metrics["pca_centroid_distance"] = None
@@ -345,7 +348,7 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
     # 5. Plot MAF comparison scatter
     plt.figure(figsize=(10, 10))
     plt.scatter(real_maf, gen_maf, alpha=0.5, s=5)
-    plt.plot([0, 0.5], [0, 0.5], 'r--')  # Diagonal line
+    plt.plot([0, 0.5], [0, 0.5], "r--")  # Diagonal line
     plt.title(f"MAF Correlation (r = {maf_corr:.4f})")
     plt.xlabel("Real MAF")
     plt.ylabel("Generated MAF")
@@ -361,12 +364,12 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
 
 def visualize_reverse_diffusion(model, output_dir, step_size=100):
     """Visualize the reverse diffusion process.
-    
+
     Args:
         model: DiffusionModel instance
         output_dir: Directory to save visualization
         step_size: Step size for visualization (higher = fewer steps shown)
-        
+
     Returns:
         Path to saved visualization
     """
@@ -399,5 +402,5 @@ def visualize_reverse_diffusion(model, output_dir, step_size=100):
         "Reverse Diffusion Process",
         timesteps=timesteps,
     )
-    
+
     return plot_path

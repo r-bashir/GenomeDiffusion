@@ -18,7 +18,7 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 128       # Reduced from 128
+  embedding_dim: 32       # Reduced from 128
   dim_mults: [1, 2, 4, 8]  # Reduced from [1, 2, 4, 8]
   channels: 1
   with_time_emb: true
@@ -27,14 +27,14 @@ unet:
 
 # Dataset
 data:
-  seq_length: 160858         # Reduced from 160858
-  batch_size: 64
+  seq_length: 1000         # Reduced from 160858
+  batch_size: 32
   num_workers: 4
   datasplit: [1700, 200, 167]
 
 # Training
 training:
-  epochs: 50
+  epochs: 10
   early_stopping: false
   patience: 10
   save_top_k: 3
@@ -53,5 +53,5 @@ optimizer:
 # Scheduler
 scheduler:
   name: "cosine"
-  T_max: 50  # Same as max_epochs
+  T_max: 10  # Same as max_epochs
   eta_min: 1e-6

@@ -3,14 +3,15 @@
 
 """Diffusion model implementation for SNP data."""
 
-from typing import Dict
 import math
+from typing import Dict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .models import DDPM, UNet1D, UniformContinuousTimeSampler, SinusoidalTimeEmbeddings
+from .models import (DDPM, SinusoidalTimeEmbeddings, UNet1D,
+                     UniformContinuousTimeSampler)
 from .network_base import NetworkBase
 
 
@@ -58,17 +59,8 @@ class DeepMLP(nn.Module):
             self.time_dim = 0
             self.time_mlp = None
 
-        # Dynamically scale hidden dimensions based on sequence length
-        # For very long sequences, use smaller hidden dimensions to save memory
-        if seq_length <= 1000:
-            # Small sequence - can use larger hidden dims
-            hidden_dims = [512, 1024, 512, 256, 128]
-        elif seq_length <= 10000:
-            # Medium sequence - moderate hidden dims
-            hidden_dims = [256, 512, 256, 128, 64]
-        else:
-            # Long sequence - small hidden dims
-            hidden_dims = [128, 256, 128, 64, 32]
+        # Hidden dimensions
+        hidden_dims = [512, 1024, 512, 256, 128]
 
         print(f"Using hidden dimensions: {hidden_dims}")
 

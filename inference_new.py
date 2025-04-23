@@ -27,13 +27,11 @@ from pathlib import Path
 import torch
 
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.inference_utils import (
-    analyze_maf_distribution,
-    calculate_maf_stats,
-    compute_genomic_metrics,
-    plot_comparison,
-    visualize_reverse_diffusion
-)
+from diffusion.inference_utils import (analyze_maf_distribution,
+                                       calculate_maf_stats,
+                                       compute_genomic_metrics,
+                                       plot_comparison,
+                                       visualize_reverse_diffusion)
 
 
 def parse_args():
@@ -84,7 +82,7 @@ def main():
         print(f"Model loaded successfully from checkpoint on {device}")
         print("Model config loaded from checkpoint:\n")
         print(config)
-        
+
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
@@ -194,11 +192,7 @@ def main():
             print("\nGenome Diffusion Model Evaluation Metrics:")
             print("-" * 50)
             for k, v in metrics.items():
-                print(
-                    f"{k}: {v:.4f}"
-                    if isinstance(v, (float, int))
-                    else f"{k}: {v}"
-                )
+                print(f"{k}: {v:.4f}" if isinstance(v, (float, int)) else f"{k}: {v}")
             print("-" * 50)
 
             # 4. Generate reverse diffusion visualization
@@ -210,6 +204,7 @@ def main():
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         raise RuntimeError(f"Sample generation failed: {e}")
 
