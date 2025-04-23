@@ -388,18 +388,95 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
     return metrics
 
 
-def plot_maf_distribution(samples, save_path, bin_width=0.001):
-    """Alias for analyze_maf_distribution for backward compatibility.
+def plot_maf_distribution(real_maf, gen_maf, output_dir, bin_width=0.001):
+    """Plot and compare MAF distributions between real and generated data.
 
     Args:
-        samples: Tensor of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
-        save_path: Path to save the MAF histogram plot
+        real_maf: numpy array of MAF values from real data
+        gen_maf: numpy array of MAF values from generated data
+        output_dir: Directory to save the plots
         bin_width: Width of histogram bins (default: 0.001 for fine-grained analysis)
 
     Returns:
-        numpy.ndarray: Array of MAF values
+        float: Correlation coefficient between real and generated MAF
     """
-    return analyze_maf_distribution(samples, save_path, bin_width)
+    # Ensure output_dir is a Path object
+    if not isinstance(output_dir, Path):
+        output_dir = Path(output_dir)
+    
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Convert to numpy if tensors
+    if torch.is_tensor(real_maf):
+        real_maf = real_maf.cpu().numpy()
+    if torch.is_tensor(gen_maf):
+        gen_maf = gen_maf.cpu().numpy()
+    
+    # Plot real MAF distribution
+    plt.figure(figsize=(15, 8))
+    bins = np.arange(0, 0.5 + bin_width, bin_width)
+    plt.hist(real_maf, bins=bins, alpha=0.7, density=True, label='Real')
+    
+    # Add generated MAF distribution
+    plt.hist(gen_maf, bins=bins, alpha=0.7, density=True, label='Generated')
+    
+    # Calculate correlation
+    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+    
+    # Plot formatting
+    plt.title(f"Minor Allele Frequency Distribution Comparison (r = {maf_corr:.4f})")
+    plt.xlabel("MAF")
+    plt.ylabel("Density")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    # Add statistics text box
+    real_stats = calculate_maf_stats(real_maf)
+    gen_stats = calculate_maf_stats(gen_maf)
+    
+    stats_text = (
+        f"Real MAF Stats:\n"
+        f'Mean: {real_stats["mean"]:.4f}\n'
+        f'Median: {real_stats["median"]:.4f}\n'
+        f'Std: {real_stats["std"]:.4f}\n\n'
+        f"Generated MAF Stats:\n"
+        f'Mean: {gen_stats["mean"]:.4f}\n'
+        f'Median: {gen_stats["median"]:.4f}\n'
+        f'Std: {gen_stats["std"]:.4f}\n'
+        f"Correlation: {maf_corr:.4f}"
+    )
+    
+    plt.text(
+        0.95,
+        0.95,
+        stats_text,
+        transform=plt.gca().transAxes,
+        fontsize=10,
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / "maf_comparison.png", dpi=300)
+    plt.close()
+    
+    # Also create a scatter plot of real vs generated MAF
+    plt.figure(figsize=(10, 10))
+    plt.scatter(real_maf, gen_maf, alpha=0.5, s=5)
+    plt.plot([0, 0.5], [0, 0.5], "r--")  # Diagonal line
+    plt.title(f"MAF Correlation (r = {maf_corr:.4f})")
+    plt.xlabel("Real MAF")
+    plt.ylabel("Generated MAF")
+    plt.xlim(0, 0.5)
+    plt.ylim(0, 0.5)
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "maf_correlation.png", dpi=300)
+    plt.close()
+    
+    return maf_corr
 
 
 def visualize_reverse_diffusion(model, output_dir, step_size=100):
