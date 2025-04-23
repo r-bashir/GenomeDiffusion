@@ -19,52 +19,13 @@ Generated outputs are saved in the 'inference' directory, including:
 
 import argparse
 from pathlib import Path
-from typing import Dict
-import os
 import json
 import torch
-import yaml
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 import numpy as np
-import pytorch_lightning as pl
-import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from diffusion.diffusion_model import DiffusionModel
-
-
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Generate samples using trained SNP diffusion model"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help="Path to config file",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        required=True,
-        help="Path to model checkpoint",
-    )
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=None,
-        help="Number of samples to generate (overrides config)",
-    )
-
-    return parser.parse_args()
-
-
-def load_config(config_path: str) -> Dict:
-    """Load configuration from YAML file."""
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    return config
 
 
 def plot_sample_grid(samples, save_path, title, timesteps=None):
@@ -343,29 +304,52 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
     return metrics
 
 
-def main(args):
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Generate samples using trained SNP diffusion model"
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        required=True,
+        help="Path to model checkpoint",
+    )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=None,
+        help="Number of samples to generate (overrides config)",
+    )
+
+    return parser.parse_args()
+
+
+def main():
     """Main function."""
 
     # Parse arguments
     args = parse_args()
 
-    # Load configuration
-    # FIXME: Get config from checkpoint, loading fresh may cause mismatch errors.
-    config = load_config(args.config)
-
-    # Load model
     try:
         print("\nLoading model from checkpoint...")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Load the model from checkpoint
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location=device,
             strict=True,
-            config=config,
         )
-        model = model.to(device)
+
+        config = model.hparams  # model config used during training
+        model = model.to(device)  # move model to device
         model.eval()  # Set to evaluation mode
-        print(f"Model loaded successfully on {device}")
+
+        print(f"Model loaded successfully from checkpoint on {device}")
+        print("Model config loaded from checkpoint:\n")
+        print(config)
+        
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
@@ -397,8 +381,8 @@ def main(args):
             real_samples.append(batch)
     real_samples = torch.cat(real_samples, dim=0)
 
-    print(f"\nFull test dataset shape: {real_samples.shape}")
-    print(f"Real unique SNP values: {torch.unique(real_samples)}")
+    print(f"\nReal samples shape: {real_samples.shape}")
+    print(f"Real samples unique values: {torch.unique(real_samples)}")
 
     # Generate synthetic sequences
     try:
@@ -422,14 +406,9 @@ def main(args):
             torch.save(gen_samples, output_dir / "synthetic_sequences.pt")
 
             # Print statistics
-            print(f"\nSynthetic SNP shape: {gen_samples.shape}")
-            print(
-                f"Synthetic SNP unique values: {torch.sort(torch.unique(gen_samples))[0]}"
-            )
-            print(f"First 10 Synthetic SNP values: {gen_samples[:, :10]}")
-            print(
-                f"Synthetic SNP range: [{gen_samples.min():.3f}, {gen_samples.max():.3f}]"
-            )
+            print(f"\nGen samples shape: {gen_samples.shape}")
+            print(f"Gen samples unique values: {torch.unique(gen_samples)}")
+            print(f"First gen samples: {gen_samples[:, :1]}")
 
             # ----------------------------------------------------------------------
 
@@ -506,6 +485,6 @@ def main(args):
         raise RuntimeError(f"Sample generation failed: {e}")
 
 
+# Entry point
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()

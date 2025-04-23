@@ -20,28 +20,14 @@ import argparse
 from pathlib import Path
 import pytorch_lightning as pl
 import torch
-import yaml
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.evaluation_callback import EvaluationCallback
-
-
-def load_config(config_path):
-    """Load configuration from YAML file."""
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    return config
 
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Evaluate SNP diffusion model on test dataset"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help="Path to config file",
     )
     parser.add_argument(
         "--checkpoint",
@@ -58,22 +44,25 @@ def main():
     # Parse arguments
     args = parse_args()
 
-    # Load configuration
-    # FIXME: Get config from checkpoint, loading fresh may cause mismatch errors.
-    config = load_config(args.config)
-
-    # Load model
     try:
         print("\nLoading model from checkpoint...")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Load the model from checkpoint
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location=device,
             strict=True,
-            config=config,
         )
-        model.eval()
-        print(f"Model loaded successfully on {next(model.parameters()).device}")
+
+        config = model.hparams  # model config used during training
+        model = model.to(device)  # move model to device
+        model.eval()  # Set to evaluation mode
+
+        print(f"Model loaded successfully from checkpoint on {device}")
+        print("Model config loaded from checkpoint:\n")
+        print(config)
+        
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
@@ -113,5 +102,6 @@ def main():
         raise RuntimeError(f"Evaluation failed: {e}")
 
 
+# Entry point
 if __name__ == "__main__":
     main()

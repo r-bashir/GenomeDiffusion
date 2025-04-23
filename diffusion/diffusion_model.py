@@ -25,33 +25,33 @@ class DiffusionModel(NetworkBase):
     Inherits from NetworkBase to leverage PyTorch Lightning functionality.
     """
 
-    def __init__(self, config: Dict):
-        super().__init__(config)
+    def __init__(self, hparams: Dict):
+        super().__init__(hparams)
 
         # Set data shape
-        self._data_shape = (config["unet"]["channels"], config["data"]["seq_length"])
+        self._data_shape = (hparams["unet"]["channels"], hparams["data"]["seq_length"])
 
         # Continuous time sampler
         self.time_sampler = UniformContinuousTimeSampler(
-            tmin=config["time_sampler"]["tmin"], tmax=config["time_sampler"]["tmax"]
+            tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
 
         # DDPM: Forward diffusion process
         self.ddpm = DDPM(
-            num_diffusion_timesteps=config["diffusion"]["num_diffusion_timesteps"],
-            beta_start=config["diffusion"]["beta_start"],
-            beta_end=config["diffusion"]["beta_end"],
+            num_diffusion_timesteps=hparams["diffusion"]["num_diffusion_timesteps"],
+            beta_start=hparams["diffusion"]["beta_start"],
+            beta_end=hparams["diffusion"]["beta_end"],
         )
 
         # UNet: Noise predictor
         self.unet = UNet1D(
-            embedding_dim=config["unet"]["embedding_dim"],
-            dim_mults=config["unet"]["dim_mults"],
-            channels=config["unet"]["channels"],
-            with_time_emb=config["unet"]["with_time_emb"],
-            with_pos_emb=config["unet"].get("with_pos_emb", True),
-            resnet_block_groups=config["unet"]["resnet_block_groups"],
-            seq_length=config["data"]["seq_length"],
+            embedding_dim=hparams["unet"]["embedding_dim"],
+            dim_mults=hparams["unet"]["dim_mults"],
+            channels=hparams["unet"]["channels"],
+            with_time_emb=hparams["unet"]["with_time_emb"],
+            with_pos_emb=hparams["unet"].get("with_pos_emb", True),
+            resnet_block_groups=hparams["unet"]["resnet_block_groups"],
+            seq_length=hparams["data"]["seq_length"],
         )
 
         # Enable gradient checkpointing for memory efficiency
