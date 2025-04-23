@@ -344,58 +344,44 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
 
 
 def main(args):
-    """Main inference function."""
-    # Validate input files
-    if not os.path.exists(args.checkpoint):
-        raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
+    """Main function."""
+
+    # Parse arguments
+    args = parse_args()
 
     # Load configuration
+    # FIXME: Get config from checkpoint, loading fresh may cause mismatch errors.
     config = load_config(args.config)
+
+    # Load model
+    try:
+        print("\nLoading model from checkpoint...")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = DiffusionModel.load_from_checkpoint(
+            args.checkpoint,
+            map_location=device,
+            strict=True,
+            config=config,
+        )
+        model = model.to(device)
+        model.eval()  # Set to evaluation mode
+        print(f"Model loaded successfully on {device}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Setup output directory
     checkpoint_path = Path(args.checkpoint)
     if "checkpoints" in str(checkpoint_path):
-        base_dir = (
-            checkpoint_path.parent.parent
-        )  # Go up two levels: from checkpoint file to run directory
+        base_dir = checkpoint_path.parent.parent
     else:
         base_dir = checkpoint_path.parent
     base_dir.mkdir(parents=True, exist_ok=True)
 
-    # Create inference directory for generated samples and comparisons
     output_dir = base_dir / "inference"
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"\nInference results will be saved to: {output_dir}")
 
-    # Initialize model from checkpoint
-    try:
-        print("\nLoading model from checkpoint...")
-        model = DiffusionModel.load_from_checkpoint(
-            args.checkpoint,
-            map_location="cuda" if torch.cuda.is_available() else "cpu",
-            strict=True,
-            config=config,
-        )
-        model.eval()  # Set to evaluation mode
-        print(f"Model loaded successfully on {next(model.parameters()).device}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
-
-    # Initialize trainer
-    print("\nInitializing trainer...")
-    trainer = pl.Trainer(
-        accelerator="auto",
-        devices="auto",
-        # precision="bf16-mixed",
-        default_root_dir=str(output_dir),
-        enable_progress_bar=True,
-        enable_model_summary=True,
-    )
-
-    # Move model to the correct device
-    model = model.to(trainer.strategy.root_device)
-
-    # Load real SNP data from test split (ground truth)
+    # Load all real SNP data from test split (ground truth)
     print("\nLoading full test dataset...")
     model.setup("test")  # Ensure test dataset is initialized
     test_loader = model.test_dataloader()
@@ -414,48 +400,49 @@ def main(args):
     print(f"\nFull test dataset shape: {real_samples.shape}")
     print(f"Real unique SNP values: {torch.unique(real_samples)}")
 
-    # Generate synthetic SNP sequences through reverse diffusion
+    # Generate synthetic sequences
     try:
-        # print("\nGenerating synthetic SNP sequences via reverse diffusion...")
         with torch.no_grad():
-            # Match number of synthetic samples with real data
+
+            # Match to real sample shape
             num_samples = real_samples.shape[0]
             print(f"\nGenerating {num_samples} synthetic sequences...")
-
-            # Run reverse diffusion to generate synthetic SNP sequences
-            # Starting from random noise, gradually denoise to get SNP-like data
-            # Use discretize=True to ensure we get proper SNP values (0, 0.5, 1.0)
-            samples = model.generate_samples(num_samples=num_samples, discretize=True)
+            gen_samples = model.generate_samples(
+                num_samples=num_samples, discretize=False
+            )
 
             # Check for NaN values in generated samples
-            if torch.isnan(samples).any():
+            if torch.isnan(gen_samples).any():
                 print(
                     "Warning: Generated samples contain NaN values. Attempting to fix..."
                 )
-                samples = torch.nan_to_num(samples, nan=0.0)
+                # gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
 
-            # Save synthetic SNP sequences
-            samples_path = output_dir / "synthetic_snp_sequences.pt"
-            torch.save(samples.cpu(), samples_path)
-            print(f"\nSynthetic SNP data shape: {samples.shape}")
+            # Save samples
+            torch.save(gen_samples, output_dir / "synthetic_sequences.pt")
+
+            # Print statistics
+            print(f"\nSynthetic SNP shape: {gen_samples.shape}")
             print(
-                f"Synthetic SNP values (comparing to real 0, 0.5, 1.0):\n{torch.unique(samples)}"
+                f"Synthetic SNP unique values: {torch.sort(torch.unique(gen_samples))[0]}"
             )
+            print(f"First 10 Synthetic SNP values: {gen_samples[:, :10]}")
             print(
-                f"\nSynthetic SNP value range: [{samples.min().item():.3f}, {samples.max().item():.3f}]"
+                f"Synthetic SNP range: [{gen_samples.min():.3f}, {gen_samples.max():.3f}]"
             )
-            print(f"\nSamples saved to {samples_path}")
+
+            # ----------------------------------------------------------------------
 
             # Generate comparison plots
             print("\nGenerating comparison plots...")
             plot_path = output_dir / "sample_comparison.png"
-            plot_comparison(real_samples.cpu(), samples.cpu(), plot_path)
+            plot_comparison(real_samples.cpu(), gen_samples.cpu(), plot_path)
             print(f"Comparison plots saved to: {plot_path}")
 
             # Compute genomic metrics
             print("\nComputing genomic metrics...")
             metrics = compute_genomic_metrics(
-                real_samples.cpu(), samples.cpu(), output_dir
+                real_samples.cpu(), gen_samples.cpu(), output_dir
             )
 
             # Save metrics to JSON file

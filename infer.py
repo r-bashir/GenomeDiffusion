@@ -60,12 +60,12 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
 
     # Calculate allele frequencies
     freq = np.mean(samples, axis=0)
-    
+
     # Print frequency distribution details
     print(f"\nFrequency analysis for {save_path}:")
     print(f"Raw frequency range: [{freq.min():.3f}, {freq.max():.3f}]")
     print(f"Number of 0.5 frequencies: {np.sum(np.abs(freq - 0.5) < 0.001)}")
-    
+
     # Convert to minor allele frequency
     maf = np.minimum(freq, 1 - freq)
     print(f"MAF range: [{maf.min():.3f}, {maf.max():.3f}]")
@@ -224,30 +224,30 @@ def main():
 
     # Generate synthetic sequences
     try:
-        # Generate synthetic SNP sequences matching the full test set size
+        # Match to real sample shape
         num_samples = real_samples.shape[0]
         print(f"\nGenerating {num_samples} synthetic sequences...")
-        
-        # Generate raw samples first
-        raw_samples = model.generate_samples(num_samples=num_samples, discretize=False)
-        print("\nRaw model output statistics:")
-        print(f"Value range: [{raw_samples.min():.3f}, {raw_samples.max():.3f}]")
-        print(f"Values near 0.5: {torch.sum((raw_samples > 0.49) & (raw_samples < 0.51)).item()}")
-        
-        # Now generate discretized samples
-        samples = model.generate_samples(num_samples=num_samples, discretize=True)
+        gen_samples = model.generate_samples(num_samples=num_samples, discretize=False)
 
-        # Print statistics
-        print(f"\nSynthetic SNP data shape: {samples.shape}")
-        print("Synthetic SNP values (comparing to real 0, 0.5, 1.0):")
-        print(torch.sort(torch.unique(samples))[0])
-        print(
-            f"\nSynthetic SNP value range: [{samples.min():.3f}, {samples.max():.3f}]"
-        )
+        # Check for NaN values in generated samples
+        if torch.isnan(gen_samples).any():
+            print("Warning: Generated samples contain NaN values. Attempting to fix...")
+            # gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
 
         # Save samples
-        torch.save(samples, output_dir / "synthetic_sequences.pt")
-        print(f"\nSamples saved to {output_dir / 'synthetic_sequences.pt'}")
+        torch.save(gen_samples, output_dir / "synthetic_sequences.pt")
+
+        # Print statistics
+        print(f"\nSynthetic SNP shape: {gen_samples.shape}")
+        print(
+            f"Synthetic SNP unique values: {torch.sort(torch.unique(gen_samples))[0]}"
+        )
+        print(f"First 10 Synthetic SNP values: {gen_samples[:, :10]}")
+        print(
+            f"Synthetic SNP range: [{gen_samples.min():.3f}, {gen_samples.max():.3f}]"
+        )
+
+        # ----------------------------------------------------------------------
 
         # Analyze MAF distribution
         print("\nAnalyzing MAF distribution...")
@@ -255,7 +255,7 @@ def main():
             real_samples, output_dir / "real_maf_distribution.png"
         )
         gen_maf = analyze_maf_distribution(
-            samples, output_dir / "gen_maf_distribution.png"
+            gen_samples, output_dir / "gen_maf_distribution.png"
         )
 
         # Calculate MAF correlation

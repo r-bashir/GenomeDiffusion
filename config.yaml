@@ -27,14 +27,14 @@ unet:
 
 # Dataset
 data:
-  seq_length: 160858       # Reduced from 160858
+  seq_length: 1000         # Reduced from 160858
   batch_size: 64
   num_workers: 4
   datasplit: [1700, 200, 167]
 
 # Training
 training:
-  epochs: 10
+  epochs: 50
   early_stopping: false
   patience: 10
   save_top_k: 3
@@ -53,5 +53,5 @@ optimizer:
 # Scheduler
 scheduler:
   name: "cosine"
-  T_max: 100  # Same as max_epochs
+  T_max: 50  # Same as max_epochs
   eta_min: 1e-6
