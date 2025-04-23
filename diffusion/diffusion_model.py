@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .dense import SimpleDenseModel
 from .models import DDPM, UNet1D, UniformContinuousTimeSampler
 from .network_base import NetworkBase
 
@@ -25,23 +26,18 @@ class DiffusionModel(NetworkBase):
     """
 
     def __init__(self, config: Dict):
-        """Initialize the diffusion model with configuration.
-
-        Args:
-            config: Dictionary containing model configuration.
-        """
         super().__init__(config)
 
         # Set data shape
         self._data_shape = (config["unet"]["channels"], config["data"]["seq_length"])
 
         # Continuous time sampler
-        self._time_sampler = UniformContinuousTimeSampler(
+        self.time_sampler = UniformContinuousTimeSampler(
             tmin=config["time_sampler"]["tmin"], tmax=config["time_sampler"]["tmax"]
         )
 
         # DDPM: Forward diffusion process
-        self._forward_diffusion = DDPM(
+        self.ddpm = DDPM(
             num_diffusion_timesteps=config["diffusion"]["num_diffusion_timesteps"],
             beta_start=config["diffusion"]["beta_start"],
             beta_end=config["diffusion"]["beta_end"],
@@ -76,14 +72,14 @@ class DiffusionModel(NetworkBase):
             torch.Tensor: Predicted noise of shape [B, C, seq_len].
         """
         # Sample time and noise
-        t = self._time_sampler.sample(shape=(batch.shape[0],))
+        t = self.time_sampler.sample(shape=(batch.shape[0],))
 
         # Move time tensor to correct device
         t = t.to(batch.device)
         eps = torch.randn_like(batch)
 
         # Forward diffusion process
-        xt = self._forward_diffusion.sample(batch, t, eps)
+        xt = self.ddpm.sample(batch, t, eps)
 
         # Ensure input has correct shape (batch_size, 1, seq_len)
         if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
@@ -127,13 +123,13 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: MSE loss.
         """
-        # t = self._time_sampler.sample(shape=(batch.shape[0],))  # sample time
+        # t = self.time_sampler.sample(shape=(batch.shape[0],))   # sample time
         # eps = torch.randn_like(batch)                           # sample noise
-        # xt = self._forward_diffusion.sample(batch, t, eps)      # add noise
+        # xt = self.ddpm.sample(batch, t, eps)                    # add noise
         # pred_noise = self.unet(xt, t)                           # predict noise
         # loss = torch.mean((pred_noise - eps) ** 2)              # compute loss
 
-        # Sample true noise (sample noise same as in forward function)
+        # Sample true noise (its same as in forward function)
         eps = torch.randn_like(batch)
 
         # Get model predicted noise (sample time, sample noise, add & predict noise)
@@ -160,7 +156,7 @@ class DiffusionModel(NetworkBase):
         losses = []
         for t in timesteps:
             t = int(t.item()) * torch.ones((x0.shape[0],), dtype=torch.int32)
-            xt = self._forward_diffusion.sample(x0, t, eps)
+            xt = self.ddpm.sample(x0, t, eps)
             predicted_noise = self.predict_added_noise(xt, t)
             loss = F.mse_loss(predicted_noise, eps)
             losses.append(loss)
@@ -186,11 +182,9 @@ class DiffusionModel(NetworkBase):
         # Handle the case where t > 1 for all elements in batch
         is_t_greater_than_one = (t > 1).all()
         if is_t_greater_than_one:
-            sqrt_a_t = self._forward_diffusion.alpha(t) / self._forward_diffusion.alpha(
-                t - 1
-            )
+            sqrt_a_t = self.ddpm.alpha(t) / self.ddpm.alpha(t - 1)
         else:
-            sqrt_a_t = self._forward_diffusion.alpha(t)
+            sqrt_a_t = self.ddpm.alpha(t)
 
         # [NaN-FIX] Add numerical stability to prevent NaN values
         sqrt_a_t = sqrt_a_t.to(xt.device)
@@ -200,7 +194,7 @@ class DiffusionModel(NetworkBase):
         # [NaN-FIX] Add eps to denominators to prevent division by zero
         inv_sqrt_a_t = (1.0 / (sqrt_a_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
         beta_t = (1.0 - sqrt_a_t**2).to(xt.device)
-        sigma_t = self._forward_diffusion.sigma(t)
+        sigma_t = self.ddpm.sigma(t)
         inv_sigma_t = (1.0 / (sigma_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
 
         # Add proper broadcasting for all scalar tensors
@@ -264,9 +258,7 @@ class DiffusionModel(NetworkBase):
             print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
             # Reverse diffusion process
-            for t in reversed(
-                range(1, self._forward_diffusion._num_diffusion_timesteps + 1, 100)
-            ):
+            for t in reversed(range(1, self.ddpm._num_diffusion_timesteps + 1, 100)):
                 t_tensor = torch.full(
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )

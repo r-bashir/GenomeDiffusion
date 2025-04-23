@@ -27,14 +27,12 @@ class NetworkBase(pl.LightningModule):
     - generate_samples: Generates samples from the model
     """
 
-    def __init__(self, hparams: Dict):
-        """Initialize the network base.
-
-        Args:
-            hparams: Dictionary containing model hyperparameters.
-        """
+    def __init__(self, config: Dict):
         super().__init__()
-        self.save_hyperparameters(hparams)
+
+        # save hyperparameters
+        self.save_hyperparameters(config)
+
         self._train_dataset = None
         self._val_dataset = None
         self._test_dataset = None
@@ -52,7 +50,7 @@ class NetworkBase(pl.LightningModule):
         if not hasattr(self, "dataset") or self.dataset is None:
             # Load dataset - override this in subclasses if needed
             self.dataset = self._create_dataset()
-            self._datasplit = self.hparams["data"]["datasplit"]
+            self._datasplit = self.config["data"]["datasplit"]
             self._train_dataset, self._val_dataset, self._test_dataset = random_split(
                 self.dataset,
                 self._datasplit,
@@ -65,11 +63,11 @@ class NetworkBase(pl.LightningModule):
         Returns:
             Dataset: The created dataset.
         """
-        if "input_path" not in self.hparams:
-            raise ValueError("input_path must be specified in hparams")
+        if "input_path" not in self.config:
+            raise ValueError("input_path must be specified in config")
         from diffusion import SNPDataset  # Import here to avoid circular imports
 
-        return SNPDataset(self.hparams["input_path"])
+        return SNPDataset(self.config["input_path"])
 
     def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
         """Prepare a batch for model input.
@@ -91,9 +89,9 @@ class NetworkBase(pl.LightningModule):
         """Create and return the training dataloader."""
         return DataLoader(
             self._train_dataset,
-            batch_size=self.hparams["data"]["batch_size"],
+            batch_size=self.config["data"]["batch_size"],
             shuffle=True,
-            num_workers=self.hparams["data"]["num_workers"],
+            num_workers=self.config["data"]["num_workers"],
             pin_memory=True,
         )
 
@@ -101,9 +99,9 @@ class NetworkBase(pl.LightningModule):
         """Create and return the validation dataloader."""
         return DataLoader(
             self._val_dataset,
-            batch_size=self.hparams["data"]["batch_size"],
+            batch_size=self.config["data"]["batch_size"],
             shuffle=False,
-            num_workers=self.hparams["data"]["num_workers"],
+            num_workers=self.config["data"]["num_workers"],
             pin_memory=True,
         )
 
@@ -111,9 +109,9 @@ class NetworkBase(pl.LightningModule):
         """Create and return the test dataloader."""
         return DataLoader(
             self._test_dataset,
-            batch_size=self.hparams["data"]["batch_size"],
+            batch_size=self.config["data"]["batch_size"],
             shuffle=False,
-            num_workers=self.hparams["data"]["num_workers"],
+            num_workers=self.config["data"]["num_workers"],
             pin_memory=True,
         )
 
@@ -213,18 +211,18 @@ class NetworkBase(pl.LightningModule):
         """Configure optimizer and learning rate scheduler."""
         optimizer = torch.optim.AdamW(
             self.parameters(),
-            lr=float(self.hparams["optimizer"]["lr"]),
-            weight_decay=float(self.hparams["optimizer"]["weight_decay"]),
-            betas=tuple(float(x) for x in self.hparams["optimizer"]["betas"]),
-            eps=float(self.hparams["optimizer"]["eps"]),
-            amsgrad=bool(self.hparams["optimizer"]["amsgrad"]),
+            lr=float(self.config["optimizer"]["lr"]),
+            weight_decay=float(self.config["optimizer"]["weight_decay"]),
+            betas=tuple(float(x) for x in self.config["optimizer"]["betas"]),
+            eps=float(self.config["optimizer"]["eps"]),
+            amsgrad=bool(self.config["optimizer"]["amsgrad"]),
         )
 
         scheduler = {
             "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=self.hparams["scheduler"]["T_max"],
-                eta_min=float(self.hparams["scheduler"]["eta_min"]),
+                T_max=self.config["scheduler"]["T_max"],
+                eta_min=float(self.config["scheduler"]["eta_min"]),
             ),
             "monitor": "val_loss",
             "interval": "epoch",
@@ -242,16 +240,16 @@ class NetworkBase(pl.LightningModule):
         Args:
             optimizer: The optimizer being used.
         """
-        warmup_epochs = self.hparams["training"].get("warmup_epochs", 0)
+        warmup_epochs = self.config["training"].get("warmup_epochs", 0)
 
         # Warmup period
         if warmup_epochs and (self.trainer.current_epoch < warmup_epochs):
             lr_scale = min(1.0, float(self.trainer.current_epoch + 1) / warmup_epochs)
             for pg in optimizer.param_groups:
-                pg["lr"] = lr_scale * self.hparams["optimizer"]["lr"]
+                pg["lr"] = lr_scale * self.config["optimizer"]["lr"]
 
         # Enforce minimum learning rate
-        min_lr = self.hparams["optimizer"].get("min_lr", 0.0)
+        min_lr = self.config["optimizer"].get("min_lr", 0.0)
         for pg in optimizer.param_groups:
             pg["lr"] = max(pg["lr"], min_lr)
 
