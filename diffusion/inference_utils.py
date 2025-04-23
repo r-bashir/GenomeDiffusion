@@ -20,6 +20,32 @@ from scipy import stats
 from sklearn.decomposition import PCA
 
 
+def calculate_maf(samples):
+    """Calculate Minor Allele Frequency (MAF) for a batch of samples.
+
+    Args:
+        samples: Tensor of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
+
+    Returns:
+        numpy.ndarray: Array of MAF values
+    """
+    # Convert tensor to numpy array on CPU
+    if torch.is_tensor(samples):
+        samples = samples.cpu().numpy()
+
+    # Ensure 2D shape [batch_size, seq_len]
+    if len(samples.shape) == 3:
+        samples = samples.squeeze(1)
+
+    # Calculate allele frequencies
+    freq = np.mean(samples, axis=0)
+
+    # Convert to minor allele frequency
+    maf = np.minimum(freq, 1 - freq)
+    
+    return maf
+
+
 def calculate_maf_stats(maf):
     """Calculate MAF statistics.
 
@@ -360,6 +386,20 @@ def compute_genomic_metrics(real_samples, generated_samples, output_dir):
     plt.close()
 
     return metrics
+
+
+def plot_maf_distribution(samples, save_path, bin_width=0.001):
+    """Alias for analyze_maf_distribution for backward compatibility.
+
+    Args:
+        samples: Tensor of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
+        save_path: Path to save the MAF histogram plot
+        bin_width: Width of histogram bins (default: 0.001 for fine-grained analysis)
+
+    Returns:
+        numpy.ndarray: Array of MAF values
+    """
+    return analyze_maf_distribution(samples, save_path, bin_width)
 
 
 def visualize_reverse_diffusion(model, output_dir, step_size=100):
