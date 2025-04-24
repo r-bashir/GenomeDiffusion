@@ -10,8 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .models import (DDPM, SinusoidalTimeEmbeddings, UNet1D,
-                     UniformContinuousTimeSampler)
+from .models import DDPM, SinusoidalTimeEmbeddings, UNet1D, UniformContinuousTimeSampler
 from .network_base import NetworkBase
 
 
@@ -404,15 +403,28 @@ class DiffusionModel(NetworkBase):
             print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
             # Reverse diffusion process
-            for t in reversed(range(1, self.ddpm._num_diffusion_timesteps + 1, 100)):
+            # Use smaller step size (10 instead of 100) for more fine-grained denoising
+            step_size = 10
+
+            print(
+                f"Starting reverse diffusion from t={self.ddpm.tmax} to t={self.ddpm.tmin} with step size {step_size}"
+            )
+
+            for t in reversed(range(self.ddpm.tmin, self.ddpm.tmax + 1, step_size)):
                 t_tensor = torch.full(
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )
                 x = self._reverse_process_step(x, t_tensor)
 
                 # Print statistics every 100 steps
-                if t % 100 == 0:
+                if t % 100 == 0 or t == self.ddpm.tmin:
                     print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+
+                    # Print unique values to see if we're getting discrete distribution
+                    if t <= 100:  # Only in final stages
+                        unique_vals = torch.unique(x)
+                        if len(unique_vals) < 20:  # Only if there aren't too many
+                            print(f"Unique values at step {t}: {unique_vals}")
 
             # Clamp to valid range [0, 1]
             x = torch.clamp(x, 0, 1)
