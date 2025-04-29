@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import math
 import torch
 import torch.nn as nn
 
-from models import SinusoidalTimeEmbeddings
+from .models import SinusoidalTimeEmbeddings
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

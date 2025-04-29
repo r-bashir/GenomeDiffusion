@@ -28,7 +28,7 @@ import numpy as np
 import torch
 
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.evaluate_utils import (
+from diffusion.evaluation_utils import (
     calculate_genetic_diversity,
     plot_ld_decay,
     run_pca_analysis,
