@@ -236,13 +236,13 @@ def main():
     # --- Combined MAF comparison and summary ---
     print("\n=== MAF Comparison Summary ===")
     print(
-        f"Real:    #0.5 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
+        f"Real:          #0.5 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
     )
     print(
-        f"Generated:       #0.5 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
+        f"Generated:     #0.5 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
     )
     print(
-        f"Mid-diffusion:   #0.5 = {mid_diff_maf_stats['num_half_maf']}, MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
+        f"Mid-diffusion: #0.5 = {mid_diff_maf_stats['num_half_maf']}, MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
     )
 
     maf_stats_combined = {
