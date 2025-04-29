@@ -39,7 +39,7 @@ class DiffusionModel(NetworkBase):
 
         # DDPM: Forward diffusion process
         self.ddpm = DDPM(
-            diffusion_steps=hparams["diffusion"]["num_diffusion_timesteps"],
+            diffusion_steps=hparams["diffusion"]["diffusion_steps"],
             beta_start=hparams["diffusion"]["beta_start"],
             beta_end=hparams["diffusion"]["beta_end"],
         )

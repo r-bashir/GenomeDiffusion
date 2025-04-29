@@ -55,7 +55,7 @@ class MLP(nn.Module):
         self.seq_length = seq_length
         self.with_time_emb = with_time_emb
 
-        print(f"Initializing DeepMLP with sequence length: {seq_length}")
+        print(f"Initializing MLP with sequence length: {seq_length}")
 
         # Calculate input dimension (flattened sequence + time embedding)
         self.input_dim = channels * seq_length
