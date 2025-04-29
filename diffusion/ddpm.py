@@ -77,7 +77,6 @@ class DDPM:
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return np.clip(betas, 0, 0.999)
 
-    
     @property
     def tmin(self) -> int:
         """Minimum timestep value."""
@@ -94,8 +93,6 @@ class DDPM:
         # Append 1 at the beginning for convenient indexing
         alphas_bar = np.concatenate(([1.0], alphas_bar))
         return alphas_bar
-
-    
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -145,7 +142,7 @@ class DDPM:
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     ) -> torch.Tensor:
         """
-        Samples from the forward diffusion process q(xt | x0). It gives you the 
+        Samples from the forward diffusion process q(xt | x0). It gives you the
         noisy version xt from x0 and t, without looping through every step.
 
         Args:
@@ -165,23 +162,23 @@ class DDPM:
         sigma_values = sigma_values.to(x0.device)
 
         # Reshape alpha_t and sigma_t according to the input shape
-        if len(x0.shape) == 3:                     # [batch_size, channels, seq_len]
+        if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
             alpha_t = alpha_values.view(-1, 1, 1)
             sigma_t = sigma_values.view(-1, 1, 1)
-        else:                                      # [batch_size, seq_len]
+        else:  # [batch_size, seq_len]
             alpha_t = alpha_values.view(-1, 1)
             sigma_t = sigma_values.view(-1, 1)
 
         xt = alpha_t * x0 + sigma_t * eps
         return xt
-        
+
     def register_buffer(self, name, tensor):
         """
         Registers a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
         This is a simple implementation for a non-nn.Module class.
         """
         setattr(self, name, tensor)
-        
+
     def to(self, device):
         """
         Moves all tensors to the specified device.
@@ -196,6 +193,7 @@ def load_config(config_path):
     """Load configuration from yaml file."""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
+
 
 def main():
     print(f"Using device: {device}")
@@ -226,9 +224,7 @@ def main():
 
     # ------------------ Test DDPM
     print("\nTesting DDPM...")
-    forward_diffusion = DDPM(
-        diffusion_steps=1000, beta_start=0.0001, beta_end=0.02
-    )
+    forward_diffusion = DDPM(diffusion_steps=1000, beta_start=0.0001, beta_end=0.02)
 
     # Move forward diffusion tensors to device
     forward_diffusion._alphas = forward_diffusion._alphas.to(device)

@@ -8,6 +8,7 @@ from models import SinusoidalTimeEmbeddings
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
 # Time Embeddings
 class SinusoidalTimeEmbeddings(nn.Module):
     """Sinusoidal positional embedding (used for time steps in diffusion models)."""
@@ -24,7 +25,8 @@ class SinusoidalTimeEmbeddings(nn.Module):
         embeddings = time[:, None] * embeddings[None, :]
         embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
         return embeddings
-        
+
+
 # MLP
 class MLP(nn.Module):
     """Deep MLP for noise prediction in diffusion models.

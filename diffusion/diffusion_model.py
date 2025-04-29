@@ -14,6 +14,7 @@ from .network_base import NetworkBase
 from .models import DDPM, UNet1D, UniformContinuousTimeSampler
 from .mlp import MLP
 
+
 class DiffusionModel(NetworkBase):
     """Diffusion model with 1D Convolutional network for SNP data.
 

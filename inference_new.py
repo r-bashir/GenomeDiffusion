@@ -211,7 +211,7 @@ def main():
         mid_diff_samples,
         output_dir / "compare_midiff_samples.png",
     )
-    
+
     print("\nVisualizing mid-diff samples...")
     visualize_samples(
         real_samples,

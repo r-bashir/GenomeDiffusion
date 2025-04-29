@@ -62,7 +62,7 @@ class DDPM:
 
     def __init__(
         self,
-        num_diffusion_timesteps: int = 1000,
+        diffusion_steps: int = 1000,
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
     ):
@@ -70,21 +70,21 @@ class DDPM:
         Initializes the diffusion process.
 
         Args:
-            num_diffusion_timesteps (int): Number of diffusion steps.
+            diffusion_steps (int): Number of diffusion steps.
             beta_start (float): Initial beta value.
             beta_end (float): Final beta value.
         """
-        self._num_diffusion_timesteps = num_diffusion_timesteps
+        self._diffusion_steps = diffusion_steps
         self._beta_start = beta_start
         self._beta_end = beta_end
 
         # Use liner beta scheduler
         self._betas = np.linspace(
-            self._beta_start, self._beta_end, self._num_diffusion_timesteps
+            self._beta_start, self._beta_end, self._diffusion_steps
         )
 
         # Use cosine beta scheduler
-        self._betas = self._cosine_beta_schedule(self._num_diffusion_timesteps)
+        self._betas = self._cosine_beta_schedule(self._diffusion_steps)
         alphas_bar = self._get_alphas_bar()
 
         # Register tensors as buffers so they move with the model
@@ -113,13 +113,6 @@ class DDPM:
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return np.clip(betas, 0, 0.999)
 
-    def register_buffer(self, name, tensor):
-        """
-        Registers a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
-        This is a simple implementation for a non-nn.Module class.
-        """
-        setattr(self, name, tensor)
-
     @property
     def tmin(self) -> int:
         """Minimum timestep value."""
@@ -128,7 +121,7 @@ class DDPM:
     @property
     def tmax(self) -> int:
         """Maximum timestep value."""
-        return self._num_diffusion_timesteps
+        return self._diffusion_steps
 
     def _get_alphas_bar(self) -> np.ndarray:
         """Computes cumulative alpha values following the DDPM formula."""
@@ -136,15 +129,6 @@ class DDPM:
         # Append 1 at the beginning for convenient indexing
         alphas_bar = np.concatenate(([1.0], alphas_bar))
         return alphas_bar
-
-    def to(self, device):
-        """
-        Moves all tensors to the specified device.
-        This mimics the behavior of nn.Module.to() for compatibility with PyTorch Lightning.
-        """
-        self._alphas = self._alphas.to(device)
-        self._sigmas = self._sigmas.to(device)
-        return self
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """
@@ -157,7 +141,7 @@ class DDPM:
             torch.Tensor: Alpha values corresponding to timesteps.
         """
         # Ensure t is in the valid range
-        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
+        t = torch.clamp(t, min=1, max=self._diffusion_steps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
 
@@ -179,7 +163,7 @@ class DDPM:
             torch.Tensor: Sigma values corresponding to timesteps.
         """
         # Ensure t is in the valid range
-        t = torch.clamp(t, min=1, max=self._num_diffusion_timesteps)
+        t = torch.clamp(t, min=1, max=self._diffusion_steps)
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
 
@@ -194,8 +178,8 @@ class DDPM:
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     ) -> torch.Tensor:
         """
-        Samples from the forward diffusion process q(xt | x0). It gives you the noisy version xt
-        from x0 and timestep t, without looping through every step.
+        Samples from the forward diffusion process q(xt | x0). It gives you the
+        noisy version xt from x0 and t, without looping through every step.
 
         Args:
             x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).
@@ -215,14 +199,30 @@ class DDPM:
 
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
-            alpha_t = alpha_values.view(-1, 1, 1)  # Reshape for 3D tensor
+            alpha_t = alpha_values.view(-1, 1, 1)
             sigma_t = sigma_values.view(-1, 1, 1)
         else:  # [batch_size, seq_len]
-            alpha_t = alpha_values.view(-1, 1)  # Reshape for 2D tensor
+            alpha_t = alpha_values.view(-1, 1)
             sigma_t = sigma_values.view(-1, 1)
 
         xt = alpha_t * x0 + sigma_t * eps
         return xt
+
+    def register_buffer(self, name, tensor):
+        """
+        Registers a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
+        This is a simple implementation for a non-nn.Module class.
+        """
+        setattr(self, name, tensor)
+
+    def to(self, device):
+        """
+        Moves all tensors to the specified device.
+        This mimics the behavior of nn.Module.to() for compatibility with PyTorch Lightning.
+        """
+        self._alphas = self._alphas.to(device)
+        self._sigmas = self._sigmas.to(device)
+        return self
 
 
 # Time Embeddings
