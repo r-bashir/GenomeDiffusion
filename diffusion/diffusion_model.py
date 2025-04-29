@@ -44,8 +44,8 @@ class DiffusionModel(NetworkBase):
             beta_end=hparams["diffusion"]["beta_end"],
         )
 
-        # Replace UNet with DeepMLP for noise prediction
-        self.unet = MLP(
+        # Replace UNet1D with MLP for noise prediction
+        self.unet = UNet1D(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
