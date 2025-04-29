@@ -194,7 +194,8 @@ class DDPM:
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     ) -> torch.Tensor:
         """
-        Samples from the forward diffusion process q(xt | x0).
+        Samples from the forward diffusion process q(xt | x0). It gives you the noisy version xt
+        from x0 and timestep t, without looping through every step.
 
         Args:
             x0 (torch.Tensor): Original clean input (batch_size, [channels,] seq_len).

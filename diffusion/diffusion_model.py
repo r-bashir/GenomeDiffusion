@@ -381,7 +381,7 @@ class DiffusionModel(NetworkBase):
         return result
 
     def denoise_batch(
-        self, batch: torch.Tensor, discretize: bool = False
+        self, batch: torch.Tensor, denoise_step: int = 10, discretize: bool = False
     ) -> torch.Tensor:
         """Run the reverse diffusion process to generate denoised samples.
 
@@ -391,6 +391,8 @@ class DiffusionModel(NetworkBase):
         Args:
             batch: Input batch of shape [B, C, seq_len], used for shape and device reference.
             discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
+            denoise_step: Number of timesteps to skip in reverse diffusion (default: 10). Smaller values
+                         give more fine-grained denoising but take longer.
 
         Returns:
             torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
@@ -400,17 +402,14 @@ class DiffusionModel(NetworkBase):
             x = torch.randn_like(batch)
 
             # Print initial noise statistics
-            print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+            # print(f"Initial noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
             # Reverse diffusion process
-            # Use smaller step size (10 instead of 100) for more fine-grained denoising
-            step_size = 10
-
             print(
-                f"Starting reverse diffusion from t={self.ddpm.tmax} to t={self.ddpm.tmin} with step size {step_size}"
+                f"Starting reverse diffusion from t={self.ddpm.tmax} to t={self.ddpm.tmin} with step {denoise_step}"
             )
 
-            for t in reversed(range(self.ddpm.tmin, self.ddpm.tmax + 1, step_size)):
+            for t in reversed(range(self.ddpm.tmin, self.ddpm.tmax + 1, denoise_step)):
                 t_tensor = torch.full(
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )
@@ -418,7 +417,7 @@ class DiffusionModel(NetworkBase):
 
                 # Print statistics every 100 steps
                 if t % 100 == 0 or t == self.ddpm.tmin:
-                    print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+                    # print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
                     # Print unique values to see if we're getting discrete distribution
                     if t <= 100:  # Only in final stages
@@ -434,16 +433,17 @@ class DiffusionModel(NetworkBase):
                 # Round to nearest genotype (0, 0.5, 1.0)
                 x = torch.round(x * 2) / 2
 
-            print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
+            # print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
             return x
 
     def generate_samples(
-        self, num_samples: int = 10, discretize: bool = False
+        self, num_samples: int = 10, denoise_step: int = 10, discretize: bool = False
     ) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
 
         Args:
             num_samples: Number of samples to generate.
+            denoise_step: Number of timesteps to skip in reverse diffusion (default: 10).
             discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
 
         Returns:
@@ -453,4 +453,6 @@ class DiffusionModel(NetworkBase):
         dummy_batch = torch.zeros((num_samples,) + self._data_shape, device=self.device)
 
         # Use the improved denoise_batch method
-        return self.denoise_batch(dummy_batch, discretize=discretize)
+        return self.denoise_batch(
+            dummy_batch, denoise_step=denoise_step, discretize=discretize
+        )

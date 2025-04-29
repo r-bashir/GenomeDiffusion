@@ -28,11 +28,17 @@ import numpy as np
 import torch
 
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.evaluate_utils import (calculate_genetic_diversity,
-                                      plot_ld_decay, run_pca_analysis)
-from diffusion.inference_utils import (calculate_maf, calculate_maf_stats,
-                                       compute_genomic_metrics,
-                                       plot_maf_distribution)
+from diffusion.evaluate_utils import (
+    calculate_genetic_diversity,
+    plot_ld_decay,
+    run_pca_analysis,
+)
+from diffusion.inference_utils import (
+    calculate_maf,
+    calculate_maf_stats,
+    compute_genomic_metrics,
+    plot_maf_distribution,
+)
 
 
 def parse_args():

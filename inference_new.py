@@ -27,11 +27,15 @@ from pathlib import Path
 import torch
 
 from diffusion.diffusion_model import DiffusionModel
-from diffusion.inference_utils import (analyze_maf_distribution,
-                                       calculate_maf_stats,
-                                       compute_genomic_metrics,
-                                       plot_comparison,
-                                       visualize_reverse_diffusion)
+from diffusion.inference_utils import (
+    compare_samples,
+    visualize_samples,
+    calculate_maf_stats,
+    analyze_maf_distribution,
+    compare_maf_distributions,
+    generate_mid_noise_samples,
+    visualize_mid_noise_diffusion,
+)
 
 
 def parse_args():
@@ -61,9 +65,11 @@ def parse_args():
 
 def main():
     """Main function."""
-    # Parse arguments
+
+    # Parse Arguments
     args = parse_args()
 
+    # === Prepare Environment ===
     try:
         print("\nLoading model from checkpoint...")
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -108,107 +114,148 @@ def main():
     print("Loading all test batches...")
     with torch.no_grad():
         for batch in test_loader:
-            # Move batch to same device as model
-            if isinstance(batch, torch.Tensor):
-                batch = batch.to(device)
+            # Move batch to device and add channel dimension
+            batch = batch.to(device).unsqueeze(1)
             real_samples.append(batch)
     real_samples = torch.cat(real_samples, dim=0)
 
     print(f"\nReal samples shape: {real_samples.shape}")
     print(f"Real samples unique values: {torch.unique(real_samples)}")
 
-    # Generate synthetic sequences
-    try:
-        with torch.no_grad():
-            # Match to real sample shape if not specified
-            num_samples = args.num_samples or real_samples.shape[0]
-            print(f"\nGenerating {num_samples} synthetic sequences...")
-            gen_samples = model.generate_samples(
-                num_samples=num_samples, discretize=args.discretize
-            )
+    # Sample Generation
+    num_samples = args.num_samples or real_samples.shape[0]
+    print(f"Generating {num_samples} synthetic sequences from full noise...")
+    with torch.no_grad():
+        gen_samples = model.generate_samples(
+            num_samples=num_samples, denoise_step=10, discretize=args.discretize
+        )
 
-            # Check for NaN values in generated samples
-            if torch.isnan(gen_samples).any():
-                print(
-                    "Warning: Generated samples contain NaN values. Attempting to fix..."
-                )
-                gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
+        # Check for NaN values in generated samples
+        if torch.isnan(gen_samples).any():
+            print("Warning: Generated samples contain NaN values. Attempting to fix...")
+            gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
 
-            # Save samples
-            torch.save(gen_samples, output_dir / "synthetic_sequences.pt")
+        # Save samples
+        torch.save(gen_samples, output_dir / "generated_samples.pt")
 
-            # Print statistics
-            print(f"\nGen samples shape: {gen_samples.shape}")
-            print(f"Gen samples unique values: {torch.unique(gen_samples)}")
-            print(f"First gen samples: {gen_samples[:, :1]}")
+        # Print statistics
+        print(f"Generated samples shape: {gen_samples.shape}")
+        print(f"Generated samples unique values: {torch.unique(gen_samples)}")
 
-            # ----------------------------------------------------------------------
+    # === Perform Inference ===
 
-            # 1. Analyze MAF distribution
-            print("\n1. Analyzing MAF distribution...")
-            real_maf = analyze_maf_distribution(
-                real_samples, output_dir / "real_maf_distribution.png"
-            )
-            gen_maf = analyze_maf_distribution(
-                gen_samples, output_dir / "gen_maf_distribution.png"
-            )
+    # 1. Sample Analysis
+    print("\n1. Performing Sample Analysis...")
+    compare_samples(
+        real_samples,
+        gen_samples,
+        output_dir / "compare_samples.png",
+    )
+    visualize_samples(
+        real_samples,
+        gen_samples,
+        output_dir / "visualize_samples.png",
+        max_seq_len=1000,
+    )
 
-            # Calculate MAF correlation
-            maf_corr = torch.corrcoef(
-                torch.stack([torch.tensor(real_maf), torch.tensor(gen_maf)])
-            )[0, 1]
-            print(f"\nMAF correlation between real and generated data: {maf_corr:.4f}")
+    # 2. MAF Analysis
+    print("\n2. Performing MAF Analysis...")
 
-            # Save MAF statistics
-            maf_stats = {
-                "real": calculate_maf_stats(real_maf),
-                "generated": calculate_maf_stats(gen_maf),
-                "correlation": float(maf_corr),
-            }
+    # Analyze real data MAF
+    real_maf, _ = analyze_maf_distribution(
+        real_samples,
+        output_dir / "maf_real_distribution.png",
+    )
 
-            with open(output_dir / "maf_statistics.json", "w") as f:
-                json.dump(maf_stats, f, indent=4)
-                print(f"MAF statistics saved to: {output_dir / 'maf_statistics.json'}")
+    # Analyze generated data MAF
+    gen_maf, _ = analyze_maf_distribution(
+        gen_samples,
+        output_dir / "maf_gen_distribution.png",
+    )
 
-            # 2. Generate comparison plots
-            print("\n2. Generating comparison plots...")
-            plot_path = output_dir / "sample_comparison.png"
-            plot_comparison(real_samples.cpu(), gen_samples.cpu(), plot_path)
-            print(f"Comparison plots saved to: {plot_path}")
+    # Calculate MAF stats for real and generated data
+    real_maf_stats = calculate_maf_stats(real_maf)
+    gen_maf_stats = calculate_maf_stats(gen_maf)
 
-            # 3. Compute genomic metrics
-            print("\n3. Computing genomic metrics...")
-            metrics = compute_genomic_metrics(
-                real_samples.cpu(), gen_samples.cpu(), output_dir
-            )
+    # Compare MAF distributions and get correlation
+    maf_corr = compare_maf_distributions(real_maf, gen_maf, output_dir)
+    print(f"MAF correlation between real and generated data: {maf_corr:.4f}")
 
-            # Save metrics to JSON file
-            metrics_path = output_dir / "genomic_metrics.json"
-            with open(metrics_path, "w") as f:
-                json.dump(metrics, f, indent=4)
-            print(f"Genomic metrics saved to: {metrics_path}")
+    # Save MAF statistics
+    maf_stats = {
+        "real": real_maf_stats,
+        "generated": gen_maf_stats,
+        "correlation": float(maf_corr),
+    }
 
-            # Print summary of metrics
-            print("\nGenome Diffusion Model Evaluation Metrics:")
-            print("-" * 50)
-            for k, v in metrics.items():
-                print(f"{k}: {v:.4f}" if isinstance(v, (float, int)) else f"{k}: {v}")
-            print("-" * 50)
+    with open(output_dir / "maf_statistics.json", "w") as f:
+        json.dump(maf_stats, f, indent=4)
+        print(f"MAF statistics saved to: {output_dir / 'maf_statistics.json'}")
 
-            # 4. Generate reverse diffusion visualization
-            print("\n4. Generating reverse diffusion visualization...")
-            plot_path = visualize_reverse_diffusion(model, output_dir)
-            print(f"Reverse diffusion visualization saved to: {plot_path}")
+    # 4. Mid-Diffusion Analysis (single call, clean comparison)
+    print("\n4. Analyzing Mid-Diffusion (t=500) Generated Samples...")
 
-            print("\nAll inference tasks completed successfully!")
+    # Generate mid-diffusion samples (t=500)
+    mid_diff_samples = generate_mid_noise_samples(
+        model,
+        num_samples=num_samples,
+        mid_timestep=500,  # Middle of diffusion process
+        denoise_step=10,  # Choose denoise step
+        discretize=args.discretize,
+    )
 
-    except Exception as e:
-        import traceback
+    # Visualize mid-diffusion samples
+    print("\nVisualizing samples at mid-diffusion (t=500)...")
+    compare_samples(
+        real_samples,
+        mid_diff_samples,
+        output_dir / "compare_midiff_samples.png",
+    )
 
-        traceback.print_exc()
-        raise RuntimeError(f"Sample generation failed: {e}")
+    visualize_samples(
+        real_samples,
+        mid_diff_samples,
+        output_dir / "visualize_midiff_samples.png",
+        max_seq_len=1000,
+    )
+
+    # Calculate MAF stats for mid-diffusion samples
+    print("\nCalculating MAF statistics for mid-diffusion samples...")
+    mid_diff_maf_stats = calculate_maf_stats(mid_diff_samples)
+    print("\nFrequency analysis for mid-diffusion samples:")
+    print(
+        f"Raw frequency range: [{mid_diff_maf_stats['min_freq']:.3f}, {mid_diff_maf_stats['max_freq']:.3f}]"
+    )
+    print(f"Number of 0.5 frequencies: {mid_diff_maf_stats['num_half_freq']}")
+    print(
+        f"MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
+    )
+    print(f"Number of MAF = 0.5: {mid_diff_maf_stats['num_half_maf']}")
+
+    # --- Combined MAF comparison and summary ---
+    print("\n=== MAF Comparison Summary ===")
+    print(
+        f"Real:    #0.5 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
+    )
+    print(
+        f"Generated:       #0.5 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
+    )
+    print(
+        f"Mid-diffusion:   #0.5 = {mid_diff_maf_stats['num_half_maf']}, MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
+    )
+
+    maf_stats_combined = {
+        "real": real_maf_stats,
+        "generated": gen_maf_stats,
+        "mid_diffusion": mid_diff_maf_stats,
+        "correlation": float(maf_corr),
+    }
+    with open(output_dir / "maf_statistics.json", "w") as f:
+        json.dump(maf_stats_combined, f, indent=4)
+        print(f"MAF statistics saved to: {output_dir / 'maf_statistics.json'}")
+
+    print("\nAll inference tasks completed successfully!")
 
 
-# Entry point
 if __name__ == "__main__":
     main()

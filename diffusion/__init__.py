@@ -3,8 +3,12 @@
 
 from .dataset import SNPDataset
 from .diffusion_model import DiffusionModel
-from .models import (DDPM, UNet1D, UniformContinuousTimeSampler,
-                     UniformDiscreteTimeSampler)
+from .models import (
+    DDPM,
+    UNet1D,
+    UniformContinuousTimeSampler,
+    UniformDiscreteTimeSampler,
+)
 
 __all__ = [
     "SNPDataset",
