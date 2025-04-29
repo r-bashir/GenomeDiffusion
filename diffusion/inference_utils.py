@@ -952,4 +952,3 @@ def generate_mid_noise_samples(
         # print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
     return x
-

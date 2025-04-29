@@ -10,9 +10,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .network_base import NetworkBase
-from .models import DDPM, UNet1D, UniformContinuousTimeSampler
+from .ddpm import DDPM
 from .mlp import MLP
+from .models import UniformContinuousTimeSampler
+from .network_base import NetworkBase
+from .unet import UNet1D
 
 
 class DiffusionModel(NetworkBase):
@@ -44,7 +46,7 @@ class DiffusionModel(NetworkBase):
             beta_end=hparams["diffusion"]["beta_end"],
         )
 
-        # Replace UNet1D with MLP for noise prediction
+        # UNet1D or MLP for noise prediction
         self.unet = UNet1D(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],

@@ -28,12 +28,12 @@ import torch
 
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.inference_utils import (
-    compare_samples,
-    visualize_samples,
-    calculate_maf_stats,
     analyze_maf_distribution,
+    calculate_maf_stats,
     compare_maf_distributions,
+    compare_samples,
     generate_mid_noise_samples,
+    visualize_samples,
 )
 
 
