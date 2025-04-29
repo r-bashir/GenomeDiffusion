@@ -14,7 +14,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 from sklearn.decomposition import PCA
 
@@ -954,58 +953,3 @@ def generate_mid_noise_samples(
 
     return x
 
-
-def visualize_mid_noise_diffusion(
-    samples, output_path, num_examples=4, title="Mid-Noise Generated Samples"
-):
-    """Visualize samples generated from mid-noise level.
-
-    This function creates a grid visualization of samples generated from a mid-noise level,
-    helping to understand the quality and characteristics of mid-noise generation.
-
-    Args:
-        samples: Tensor of generated samples from mid-noise [batch_size, channels, seq_len]
-        output_path: Path to save the visualization
-        num_examples: Number of examples to show in visualization (default: 4)
-        title: Title for the visualization plot (default: "Mid-Noise Generated Samples")
-
-    Returns:
-        Path: Path to the saved visualization file
-    """
-    output_path = Path(output_path)
-
-    # Ensure we have enough samples
-    if samples.size(0) < num_examples:
-        raise ValueError(
-            f"Not enough samples ({samples.size(0)}) for visualization (need {num_examples})"
-        )
-
-    # Create figure with subplots in a grid
-    fig, axes = plt.subplots(2, num_examples // 2, figsize=(15, 8), squeeze=False)
-    fig.suptitle(title, fontsize=14)
-
-    # Plot each example
-    for idx in range(num_examples):
-        row, col = idx // (num_examples // 2), idx % (num_examples // 2)
-        ax = axes[row, col]
-
-        # Get sample and convert to numpy
-        sample = samples[idx].squeeze().cpu().numpy()
-
-        # Create heatmap
-        sns.heatmap(
-            sample.reshape(1, -1),
-            ax=ax,
-            cmap="viridis",
-            cbar=False,
-            xticklabels=False,
-            yticklabels=False,
-        )
-        ax.set_title(f"Sample {idx+1}")
-
-    # Save and close
-    plt.tight_layout()
-    plt.savefig(output_path)
-    plt.close()
-
-    return output_path
