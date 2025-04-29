@@ -205,13 +205,14 @@ def main():
     )
 
     # Visualize mid-diffusion samples
-    print("\nVisualizing samples at mid-diffusion (t=500)...")
+    print("\nComparing mid-diff samples...")
     compare_samples(
         real_samples,
         mid_diff_samples,
         output_dir / "compare_midiff_samples.png",
     )
-
+    
+    print("\nVisualizing mid-diff samples...")
     visualize_samples(
         real_samples,
         mid_diff_samples,

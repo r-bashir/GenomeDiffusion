@@ -234,6 +234,7 @@ def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10
     plt.tight_layout()
     plt.savefig(save_path, dpi=300)
     plt.close()
+    print(f"Genotype visualization plot saved to: {save_path}")
 
 
 # === MAF Analysis Functions ===
