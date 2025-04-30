@@ -221,14 +221,22 @@ def main(args):
         )
         print("Training completed successfully")
 
-        print("\nTo evaluate the model, execute:")
+        print("\nTo run evaluation and inference locally, execute:")
         print(
             f"python evaluate.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
-        print("\nTo run inference and generate samples, execute:")
         print(
             f"python inference.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
+        
+        print("\nTo run evaluation and inference on cluster, execute:")
+        print(
+            f"./evaluate.py {trainer.checkpoint_callback.best_model_path}"
+        )
+        print(
+            f"./inference.sh {trainer.checkpoint_callback.best_model_path}"
+        )
+        
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")
 
