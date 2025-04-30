@@ -14,6 +14,48 @@ from scipy import stats
 
 
 # load dataset
+def load_data_old(input_path=None, seq_length=None):
+    """
+    Load data and process it.
+
+    Args:
+        input_path: Path to the parquet file containing SNP data
+        seq_length: Number of SNP markers to include (None for all markers)
+
+    Returns:
+        torch.FloatTensor: Processed data with shape (n_samples, seq_length)
+    """
+    # Read data
+    try:
+        # The parquet data is stored in shape (n_markers, n_samples).
+        # We need to transpose it to get shape as (n_samples, n_markers)
+        data = pd.read_parquet(input_path).to_numpy()
+    except Exception as e:
+        raise ValueError(f"Error loading data: {e}")
+
+    # Handle NaNs
+    data = handle_missing_values(data)
+
+    # Normalize Data
+    data = normalize_data(data)
+
+    # Augment Data (replace 50% data with 0.5)
+    # data = data_augmentation(data)
+
+    # Transpose to get (n_samples, n_markers)
+    data = data.T
+
+    # Slice to seq_length if specified
+    if seq_length is not None:
+        print(f"Loading data with {seq_length} markers (out of {data.shape[1]})")
+        data = data[:, :seq_length]
+    else:
+        print(f"Loading full dataset with {data.shape[1]} markers")
+
+    # Convert to Float Tensor
+    return torch.FloatTensor(data)
+
+
 def load_data(input_path=None, seq_length=None):
     """
     Load data and process it.
@@ -51,6 +93,15 @@ def load_data(input_path=None, seq_length=None):
         data = data[:, :seq_length]
     else:
         print(f"Loading full dataset with {data.shape[1]} markers")
+
+    # Create position-dependent pattern in the first 100 SNPs
+    if seq_length is not None and seq_length >= 100:
+        # Set first 25 SNPs to 0.0
+        data[:, :25] = 0.0
+        # Set next 50 SNPs to 0.5
+        data[:, 25:75] = 0.5
+        # Set next 25 SNPs to 1.0
+        data[:, 75:100] = 1.0
 
     # Convert to Float Tensor
     return torch.FloatTensor(data)
