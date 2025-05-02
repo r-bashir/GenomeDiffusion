@@ -82,7 +82,7 @@ def load_data(input_path=None, seq_length=None):
     data = normalize_data(data)
 
     # Augment Data
-    # data = data_augmentation(data)
+    # data = augment_data(data)
 
     # Transpose to get (n_samples, n_markers)
     data = data.T
@@ -103,11 +103,34 @@ def load_data(input_path=None, seq_length=None):
         # Set next 25 SNPs to 1.0
         data[:, 75:100] = 1.0
 
+    # Scale Data by a Factor
+    data = scale_data(data, factor=0.5)
+
     # Convert to Float Tensor
     return torch.FloatTensor(data)
 
+def handle_missing_values(data):
+    """Handles missing values in the dataset per SNP marker.
 
-def data_augmentation(data):
+    At this point in the data pipeline, the data has shape (n_markers, n_samples),
+    where each row represents a single marker across all samples.
+    For each marker, we find the most frequent non-missing value and replace
+    any missing values (9) with that value.
+    """
+
+    # Loop over each SNP/marker (rows in the current orientation)
+    for i in range(data.shape[0]):
+        row = data[i]  # All samples for this marker
+        valid_values = row[row != 9]  # Filter out missing values
+        if len(valid_values) > 0:
+            # Find most common value for this marker
+            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
+            # Replace missing values with the mode
+            row[row == 9] = mode_value
+
+    return data
+
+def augment_data(data):
     """Augment data by changing the values of certain markers"""
 
     # Replace 50% of data values with 0.5
@@ -133,26 +156,19 @@ def normalize_data(data):
     return data
 
 
-def handle_missing_values(data):
-    """Handles missing values in the dataset per SNP marker.
-
-    At this point in the data pipeline, the data has shape (n_markers, n_samples),
-    where each row represents a single marker across all samples.
-    For each marker, we find the most frequent non-missing value and replace
-    any missing values (9) with that value.
+def scale_data(data, factor=0.5):
     """
+    Scale SNP/marker data by 0.5 to shift peaks for trimodal distribution.
+    After normalization, this maps peaks from [0.0, 0.5, 1.0] to [0.0, 0.25, 0.5].
+    Args:
+        data (np.ndarray or torch.Tensor): Normalized data (values in [0.0, 0.5, 1.0])
+    Returns:
+        Scaled data (same type as input)
+    """
+    return data * factor
 
-    # Loop over each SNP/marker (rows in the current orientation)
-    for i in range(data.shape[0]):
-        row = data[i]  # All samples for this marker
-        valid_values = row[row != 9]  # Filter out missing values
-        if len(valid_values) > 0:
-            # Find most common value for this marker
-            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
-            # Replace missing values with the mode
-            row[row == 9] = mode_value
 
-    return data
+
 
 
 # SNPDataset
