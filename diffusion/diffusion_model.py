@@ -185,7 +185,7 @@ class DiffusionModel(NetworkBase):
 
         return torch.stack(losses)
 
-    def _reverse_process_step(self, xt: torch.Tensor, t: int) -> torch.Tensor:
+    def reverse_denoising(self, xt: torch.Tensor, t: int) -> torch.Tensor:
         """Reverse diffusion step to estimate x_{t-1} given x_t.
 
         Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred),
@@ -291,7 +291,7 @@ class DiffusionModel(NetworkBase):
                 t_tensor = torch.full(
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )
-                x = self._reverse_process_step(x, t_tensor)
+                x = self.reverse_denoising(x, t_tensor)
 
                 # Print statistics every 100 steps
                 if t % 100 == 0 or t == self.ddpm.tmin:
@@ -303,13 +303,18 @@ class DiffusionModel(NetworkBase):
                         if len(unique_vals) < 20:  # Only if there aren't too many
                             print(f"Unique values at step {t}: {unique_vals}")
 
-            # Clamp to valid range [0, 1]
-            x = torch.clamp(x, 0, 1)
+            # Always clamp to valid data range
+            x = torch.clamp(x, 0, 1)  # Use (0, 0.5) if your data is in [0, 0.5]
+            # x = torch.clamp(x, 0, 0.5)  # Uncomment if using [0, 0.5] scaling
 
-            # Discretize to SNP values if requested
+            # Discretize to SNP values if requested (external control)
             if discretize:
-                # Round to nearest genotype (0, 0.5, 1.0)
+                # For 0.0, 0.5, 1.0:
                 x = torch.round(x * 2) / 2
+                
+                # For 0.0, 0.25, 0.5 (if that's your scaling):
+                # x = torch.round(x * 4) / 4
+                # x = torch.clamp(x, 0, 0.5)
 
             # print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
             return x

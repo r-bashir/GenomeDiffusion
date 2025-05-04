@@ -53,7 +53,9 @@ def load_data_old(input_path=None, seq_length=None):
         print(f"Loading full dataset with {data.shape[1]} markers")
 
     # Convert to Float Tensor
-    return torch.FloatTensor(data)
+    data = torch.FloatTensor(data) # [n_samples, seq_len]
+    # data = data.unsqueeze(1) # [n_samples, 1, seq_len]
+    return data
 
 
 def load_data(input_path=None, seq_length=None):

@@ -803,7 +803,7 @@ def generate_samples(
                 continue
 
             t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-            x = model._reverse_process_step(x, t_tensor)
+            x = model.reverse_denoising(x, t_tensor)
             x = torch.clamp(x, -5.0, 5.0)
 
             if t % collect_interval == 0:
@@ -815,7 +815,7 @@ def generate_samples(
 
         # Final step
         t_tensor = torch.zeros((x.size(0),), device=x.device, dtype=torch.long)
-        x = model._reverse_process_step(x, t_tensor)
+        x = model.reverse_denoising(x, t_tensor)
         x = torch.clamp(x, 0, 1)
         reverse_samples.append(x.clone())
         timesteps.append(0)
@@ -935,7 +935,7 @@ def generate_mid_noise_samples(
         # Perform reverse diffusion from mid_timestep to 0
         for t in reversed(range(model.ddpm.tmin, mid_timestep + 1, denoise_step)):
             t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-            x = model._reverse_process_step(x, t_tensor)
+            x = model.reverse_denoising(x, t_tensor)
 
             # Print statistics every 100 steps
             if t % 100 == 0 or t == model.ddpm.tmin:
