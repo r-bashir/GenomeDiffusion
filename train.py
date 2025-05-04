@@ -175,8 +175,12 @@ def setup_callbacks(config: Dict) -> List:
     return callbacks
 
 
-def main(args):
+def main():
     """Main training function."""
+
+    # Parse arguments
+    args = parse_args()
+
     # Load configuration
     config = load_config(args.config)
 
@@ -242,5 +246,4 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main()
