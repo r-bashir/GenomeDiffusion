@@ -181,10 +181,12 @@ def main():
 
     # 2. Sample Analysis (Mid-denoised,T=500)
     print("\n2. Performing Sample Analysis (Mid-denoised,T=500)...")
+
+    T=500
     gen_samples_mid = generate_samples_mid_noise(
         model,
         num_samples=num_samples,
-        mid_timestep=500,  # Middle of diffusion process
+        mid_timestep=T,  # Middle of diffusion process
         denoise_step=10,  # Choose denoise step
         discretize=args.discretize,
     )
@@ -192,13 +194,13 @@ def main():
     compare_samples(
         real_samples,
         gen_samples_mid,
-        output_dir / "compare_samples_mid.png",
+        output_dir / f"compare_samples_t{T}.png",
         genotype_values=[0.0, 0.25, 0.5],
     )
     visualize_samples(
         real_samples,
         gen_samples_mid,
-        output_dir / "visualize_samples_mid.png",
+        output_dir / f"visualize_samples_t{T}.png",
         max_seq_len=1000,
         genotype_values=[0.0, 0.25, 0.5],
     )

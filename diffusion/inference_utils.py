@@ -799,8 +799,8 @@ def generate_samples_mid_noise(
                 # print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
                 pass
 
-        # Clamp to valid range [0, 1]
-        x = torch.clamp(x, 0, 1)
+        # Clamp to valid range [0, 0.5] for scaled data
+        x = torch.clamp(x, 0, 0.5)
 
         # Discretize if requested
         if discretize:
@@ -865,7 +865,7 @@ def visualize_reverse_denoising(
         (x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long
     )
     x = model.reverse_denoising(x, t_tensor)
-    x = torch.clamp(x, 0, 1)
+    x = torch.clamp(x, 0, 0.5)  # Clamp to [0, 0.5] for scaled data
     reverse_samples.append(x.clone())
     timesteps.append(model.ddpm.tmin)
 

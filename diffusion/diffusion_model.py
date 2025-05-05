@@ -260,7 +260,11 @@ class DiffusionModel(NetworkBase):
         return result
 
     def denoise_batch(
-        self, batch: torch.Tensor, denoise_step: int = 10, discretize: bool = False, seed: int = 42
+        self,
+        batch: torch.Tensor,
+        denoise_step: int = 10,
+        discretize: bool = False,
+        seed: int = 42,
     ) -> torch.Tensor:
         """Run the reverse diffusion process to generate denoised samples.
 
@@ -279,7 +283,7 @@ class DiffusionModel(NetworkBase):
         with torch.no_grad():
             # Set the seed for reproducibility
             set_seed(seed)
-                    
+
             # Start from pure noise (or optionally from batch if you want conditional denoising)
             x = torch.randn_like(batch)
 
@@ -298,14 +302,14 @@ class DiffusionModel(NetworkBase):
                 x = self.reverse_denoising(x, t_tensor)
 
             # Always clamp to valid data range
-            x = torch.clamp(x, 0, 1)  # Use (0, 0.5) if your data is in [0, 0.5]
-            # x = torch.clamp(x, 0, 0.5)  # Uncomment if using [0, 0.5] scaling
+            # x = torch.clamp(x, 0, 1)  # Use (0, 0.5) if your data is in [0, 0.5]
+            x = torch.clamp(x, 0, 0.5)  # Uncomment if using [0, 0.5] scaling
 
             # Discretize to SNP values if requested (external control)
             if discretize:
                 # For 0.0, 0.5, 1.0:
                 x = torch.round(x * 2) / 2
-                
+
                 # For 0.0, 0.25, 0.5 (if that's your scaling):
                 # x = torch.round(x * 4) / 4
                 # x = torch.clamp(x, 0, 0.5)
@@ -314,7 +318,11 @@ class DiffusionModel(NetworkBase):
             return x
 
     def generate_samples(
-        self, num_samples: int = 10, denoise_step: int = 10, discretize: bool = False, seed: int = 42
+        self,
+        num_samples: int = 10,
+        denoise_step: int = 10,
+        discretize: bool = False,
+        seed: int = 42,
     ) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
 
