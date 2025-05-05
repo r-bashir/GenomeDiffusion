@@ -52,9 +52,11 @@ def load_data_old(input_path=None, seq_length=None):
     else:
         print(f"Loading full dataset with {data.shape[1]} markers")
 
+    # Scale Data by a Factor
+    # data = scale_data(data, factor=0.5)
+
     # Convert to Float Tensor
-    data = torch.FloatTensor(data) # [n_samples, seq_len]
-    # data = data.unsqueeze(1) # [n_samples, 1, seq_len]
+    data = torch.FloatTensor(data)  # [n_samples, seq_len]
     return data
 
 
@@ -111,6 +113,7 @@ def load_data(input_path=None, seq_length=None):
     # Convert to Float Tensor
     return torch.FloatTensor(data)
 
+
 def handle_missing_values(data):
     """Handles missing values in the dataset per SNP marker.
 
@@ -131,6 +134,7 @@ def handle_missing_values(data):
             row[row == 9] = mode_value
 
     return data
+
 
 def augment_data(data):
     """Augment data by changing the values of certain markers"""
@@ -168,9 +172,6 @@ def scale_data(data, factor=0.5):
         Scaled data (same type as input)
     """
     return data * factor
-
-
-
 
 
 # SNPDataset

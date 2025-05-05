@@ -3,14 +3,15 @@
 
 """Utility functions for the diffusion model."""
 
-import torch
-import numpy as np
 import random
+
+import numpy as np
+import torch
 
 
 def set_seed(seed=42):
     """Set random seed for reproducibility across all libraries.
-    
+
     Args:
         seed (int, optional): Random seed to use. Defaults to 42.
     """

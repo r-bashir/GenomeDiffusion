@@ -25,7 +25,7 @@ import json
 from pathlib import Path
 
 import torch
-from diffusion.utils import set_seed
+
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.inference_utils import (
     analyze_maf_distribution,
@@ -33,9 +33,10 @@ from diffusion.inference_utils import (
     compare_maf_distributions,
     compare_samples,
     generate_samples_mid_noise,
-    visualize_samples,
     visualize_reverse_denoising,
+    visualize_samples,
 )
+from diffusion.utils import set_seed
 
 
 def parse_args():
@@ -149,17 +150,34 @@ def main():
 
     # 1. Sample Analysis (Fully Denoised, T=0)
     print("\n1. Performing Sample Analysis (Fully Denoised, T=0)...")
+    # For scaled genotype values (0.0, 0.25, 0.5)
     compare_samples(
         real_samples,
         gen_samples,
         output_dir / "compare_samples.png",
+        genotype_values=[0.0, 0.25, 0.5],
     )
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # compare_samples(
+    #     real_samples,
+    #     gen_samples,
+    #     output_dir / "compare_samples.png",
+    # )
+    # For scaled genotype values (0.0, 0.25, 0.5)
     visualize_samples(
         real_samples,
         gen_samples,
         output_dir / "visualize_samples.png",
         max_seq_len=1000,
+        genotype_values=[0.0, 0.25, 0.5],
     )
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # visualize_samples(
+    #     real_samples,
+    #     gen_samples,
+    #     output_dir / "visualize_samples.png",
+    #     max_seq_len=1000,
+    # )
 
     # 2. Sample Analysis (Mid-denoised,T=500)
     print("\n2. Performing Sample Analysis (Mid-denoised,T=500)...")
@@ -175,12 +193,14 @@ def main():
         real_samples,
         gen_samples_mid,
         output_dir / "compare_samples_mid.png",
+        genotype_values=[0.0, 0.25, 0.5],
     )
     visualize_samples(
         real_samples,
         gen_samples_mid,
         output_dir / "visualize_samples_mid.png",
         max_seq_len=1000,
+        genotype_values=[0.0, 0.25, 0.5],
     )
 
     # 3. Visualize Reverse Denoising
@@ -193,29 +213,51 @@ def main():
         num_samples=1,
         save_prefix="viz_",
         discretize=False,
+        seed=42,
     )
 
     # 4. MAF Analysis (Fully Denoised, T=0)
     print("\n4. Performing MAF Analysis (Fully Denoised, T=0)...")
 
-    # Analyze real data MAF
+    # Analyze real data MAF (scaled genotype values)
     real_maf, _ = analyze_maf_distribution(
         real_samples,
         output_dir / "maf_real_distribution.png",
+        genotype_values=[0.0, 0.25, 0.5],
+        max_value=0.5,
     )
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # real_maf, _ = analyze_maf_distribution(
+    #     real_samples,
+    #     output_dir / "maf_real_distribution.png",
+    # )
 
-    # Analyze generated data MAF
+    # Analyze generated data MAF (scaled genotype values)
     gen_maf, _ = analyze_maf_distribution(
         gen_samples,
         output_dir / "maf_gen_distribution.png",
+        genotype_values=[0.0, 0.25, 0.5],
+        max_value=0.5,
     )
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # gen_maf, _ = analyze_maf_distribution(
+    #     gen_samples,
+    #     output_dir / "maf_gen_distribution.png",
+    # )
 
-    # Calculate MAF stats for real and generated data
-    real_maf_stats = calculate_maf_stats(real_maf)
-    gen_maf_stats = calculate_maf_stats(gen_maf)
+    # Calculate MAF stats for real and generated data (scaled genotype values)
+    real_maf_stats = calculate_maf_stats(real_maf, genotype_values=[0.0, 0.25, 0.5])
+    gen_maf_stats = calculate_maf_stats(gen_maf, genotype_values=[0.0, 0.25, 0.5])
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # real_maf_stats = calculate_maf_stats(real_maf)
+    # gen_maf_stats = calculate_maf_stats(gen_maf)
 
-    # Compare MAF distributions and get correlation
-    maf_corr = compare_maf_distributions(real_maf, gen_maf, output_dir)
+    # Compare MAF distributions and get correlation (scaled genotype values)
+    maf_corr = compare_maf_distributions(
+        real_maf, gen_maf, output_dir, genotype_values=[0.0, 0.25, 0.5], max_value=0.5
+    )
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # maf_corr = compare_maf_distributions(real_maf, gen_maf, output_dir)
     print(f"MAF correlation between real and generated data: {maf_corr:.4f}")
 
     # Save MAF statistics
@@ -232,27 +274,29 @@ def main():
     # 5. MAF Analysis (Mid-denoised, T=500)
     print("\n5. Performing MAF Analysis (Mid-denoised, T=500)...")
 
-    maf_stats_mid = calculate_maf_stats(gen_samples_mid)
+    maf_stats_mid = calculate_maf_stats(
+        gen_samples_mid, genotype_values=[0.0, 0.25, 0.5]
+    )
     print("\nFrequency analysis for mid-diffusion samples:")
     print(
         f"Raw frequency range: [{maf_stats_mid['min_freq']:.3f}, {maf_stats_mid['max_freq']:.3f}]"
     )
-    print(f"Number of 0.5 frequencies: {maf_stats_mid['num_half_freq']}")
+    print(f"Number of 0.25 frequencies: {maf_stats_mid['num_half_freq']}")
     print(
         f"MAF range: [{maf_stats_mid['min_maf']:.3f}, {maf_stats_mid['max_maf']:.3f}]"
     )
-    print(f"Number of MAF = 0.5: {maf_stats_mid['num_half_maf']}")
+    print(f"Number of MAF = 0.25: {maf_stats_mid['num_half_maf']}")
 
     # 6. Combined MAF comparison and summary
     print("\n6. MAF Comparison Summary")
     print(
-        f"Real:          #0.5 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
+        f"Real:          #0.25 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
     )
     print(
-        f"Generated:     #0.5 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
+        f"Generated:     #0.25 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
     )
     print(
-        f"Mid-diffusion: #0.5 = {maf_stats_mid['num_half_maf']}, MAF range: [{maf_stats_mid['min_maf']:.3f}, {maf_stats_mid['max_maf']:.3f}]"
+        f"Mid-diffusion: #0.25 = {maf_stats_mid['num_half_maf']}, MAF range: [{maf_stats_mid['min_maf']:.3f}, {maf_stats_mid['max_maf']:.3f}]"
     )
 
     maf_stats_combined = {

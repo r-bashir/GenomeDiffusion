@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+
 from .utils import set_seed
 
 # === Helper Functions ===
@@ -49,30 +50,43 @@ def validate_samples(real_samples, generated_samples, flatten=False):
     return real, gen
 
 
-def count_genotype_values(arr):
+def count_genotype_values(arr, genotype_values=[0.0, 0.5, 1.0]):
     """
-    Count occurrences of 0.0, 0.5, and 1.0 in arr (with float tolerance).
-    Returns tuple (count_0, count_05, count_1)
+    Count occurrences of each genotype value in arr (with float tolerance).
+
+    Args:
+        arr: Array-like object containing genotype values
+        genotype_values: List of expected genotype values, default [0.0, 0.25, 0.5]
+                         (scaled from original [0.0, 0.5, 1.0])
+
+    Returns:
+        tuple: Counts for each genotype value in the order provided
     """
     arr = np.asarray(arr)
-    count_0 = np.sum(np.isclose(arr, 0.0, atol=1e-3))
-    count_05 = np.sum(np.isclose(arr, 0.5, atol=1e-3))
-    count_1 = np.sum(np.isclose(arr, 1.0, atol=1e-3))
-    return int(count_0), int(count_05), int(count_1)
+    counts = []
+
+    for value in genotype_values:
+        count = np.sum(np.isclose(arr, value, atol=1e-3))
+        counts.append(int(count))
+
+    return tuple(counts)
 
 
 # === Sample Analysis ===
 
 
-def compare_samples(real_samples, generated_samples, save_path):
+def compare_samples(
+    real_samples, generated_samples, save_path, genotype_values=[0.0, 0.5, 1.0]
+):
     """
-    Compare and plot the genotype distributions (counts of 0, 0.5, 1.0) for
-    real and generated samples. Prints stats and saves a bar plot to save_path.
+    Compare and plot the genotype distributions for real and generated samples.
+    Prints stats and saves a bar plot to save_path.
 
     Args:
         real_samples (Tensor): Real SNP data [batch_size, channels, seq_len]
         generated_samples (Tensor): Generated SNP data [batch_size, channels, seq_len]
         save_path (str): Path to save the plot
+        genotype_values (list): Expected genotype values, default [0.0, 0.25, 0.5]
 
     Returns:
         None
@@ -84,18 +98,16 @@ def compare_samples(real_samples, generated_samples, save_path):
     )
 
     # Count genotype values
-    real_0, real_05, real_1 = count_genotype_values(real_flat)
-    gen_0, gen_05, gen_1 = count_genotype_values(gen_flat)
+    real_counts = count_genotype_values(real_flat, genotype_values)
+    gen_counts = count_genotype_values(gen_flat, genotype_values)
 
     # Print stats
     print("Real samples:")
-    print(f"  0.0:   {real_0}")
-    print(f"  0.5:   {real_05}")
-    print(f"  1.0:   {real_1}")
+    for i, value in enumerate(genotype_values):
+        print(f"  {value:.2f}:   {real_counts[i]}")
     print("Generated samples:")
-    print(f"  0.0:   {gen_0}")
-    print(f"  0.5:   {gen_05}")
-    print(f"  1.0:   {gen_1}")
+    for i, value in enumerate(genotype_values):
+        print(f"  {value:.2f}:   {gen_counts[i]}")
 
     # Create figure with subplots
     fig, axes = plt.subplots(1, 2, figsize=(15, 6))
@@ -110,9 +122,7 @@ def compare_samples(real_samples, generated_samples, save_path):
     axes[0].legend()
 
     # Bar plot
-    labels = ["0.0", "0.5", "1.0"]
-    real_counts = [real_0, real_05, real_1]
-    gen_counts = [gen_0, gen_05, gen_1]
+    labels = [f"{value:.2f}" for value in genotype_values]
 
     x = np.arange(len(labels))
     width = 0.35
@@ -145,7 +155,13 @@ def compare_samples(real_samples, generated_samples, save_path):
     print(f"Genotype distribution plot saved to: {save_path}")
 
 
-def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10000):
+def visualize_samples(
+    real_samples,
+    generated_samples,
+    save_path,
+    max_seq_len=10000,
+    genotype_values=[0.0, 0.5, 1.0],
+):
     """Plot comparison between real and generated samples.
 
     Creates a 2x2 grid showing:
@@ -158,6 +174,7 @@ def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10
         generated_samples (Tensor): Generated SNP data [batch_size, channels, seq_len]
         save_path (str): Path to save the plot
         max_seq_len (int, optional): Max sequence length to plot in upper plots. Default is 10000.
+        genotype_values (list): Expected genotype values, default [0.0, 0.25, 0.5]
 
     Returns:
         None
@@ -193,13 +210,17 @@ def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10
     # cmap = ListedColormap(["#1f77b4", "#2ca02c", "#d62728"])
     cmap = plt.cm.viridis
 
+    # Set min/max values based on genotype values
+    vmin = min(genotype_values)
+    vmax = max(genotype_values)
+
     # Bottom left: Real data heatmap (first channel, first 100 positions)
     im_real = axes[1, 0].imshow(
         real[0].reshape(1, -1)[:, :first_100],
         aspect="auto",
         cmap=cmap,
-        vmin=0.0,
-        vmax=1.0,
+        vmin=vmin,
+        vmax=vmax,
     )
     axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
     axes[1, 0].set_yticks([])
@@ -217,8 +238,8 @@ def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10
         gen[0].reshape(1, -1)[:, :first_100],
         aspect="auto",
         cmap=cmap,
-        vmin=0.0,
-        vmax=1.0,
+        vmin=vmin,
+        vmax=vmax,
     )
     axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
     axes[1, 1].set_yticks([])
@@ -243,15 +264,16 @@ def visualize_samples(real_samples, generated_samples, save_path, max_seq_len=10
 # less common allele at a specific position in the genome.
 
 
-def calculate_maf(samples):
+def calculate_maf(samples, max_value=1.0):
     """Calculate Minor Allele Frequency (MAF) for a batch of samples.
 
     This is the core function for MAF calculation. It processes the input data to extract
     both raw allele frequencies and their corresponding MAF values. For SNP data, MAF is
-    calculated as min(freq, 1-freq) where freq is the mean value across samples at each position.
+    calculated as min(freq, max_value-freq) where freq is the mean value across samples at each position.
 
     Args:
         samples: Input samples tensor of shape [batch_size, channels, seq_len]
+        max_value: Maximum possible value for genotypes (default: 0.5 for scaled data)
 
     Returns:
         tuple: (maf, freq) where:
@@ -270,12 +292,12 @@ def calculate_maf(samples):
     freq = torch.mean(samples, dim=0).squeeze()
 
     # Convert to minor allele frequency
-    maf = torch.minimum(freq, 1 - freq)
+    maf = torch.minimum(freq, max_value - freq)
 
     return maf, freq
 
 
-def calculate_maf_stats(maf):
+def calculate_maf_stats(maf, genotype_values=[0.0, 0.5, 1.0]):
     """Calculate basic statistical measures for MAF values.
 
     This function computes summary statistics (mean, median, standard deviation)
@@ -284,6 +306,7 @@ def calculate_maf_stats(maf):
 
     Args:
         maf: Array/Tensor of MAF values
+        genotype_values: List of expected genotype values, default [0.0, 0.25, 0.5]
 
     Returns:
         dict: Dictionary containing:
@@ -292,10 +315,10 @@ def calculate_maf_stats(maf):
             - std: Standard deviation of MAF values
             - min_maf: Minimum MAF value
             - max_maf: Maximum MAF value
-            - num_half_maf: Number of MAF values equal to 0.5
+            - num_half_maf: Number of MAF values equal to middle genotype value
             - min_freq: Minimum frequency value (same as min_maf)
             - max_freq: Maximum frequency value (same as max_maf)
-            - num_half_freq: Number of frequency values equal to 0.5 (same as num_half_maf)
+            - num_half_freq: Number of frequency values equal to middle genotype value
     """
     # Convert to tensor if numpy
     if not torch.is_tensor(maf):
@@ -305,8 +328,12 @@ def calculate_maf_stats(maf):
     min_val = float(torch.min(maf).item())
     max_val = float(torch.max(maf).item())
 
-    # Count 0.5 values with tolerance
-    num_half = int(torch.sum((maf - 0.5).abs() < 0.001).item())
+    # Count middle genotype values with tolerance
+    # Use the middle value from genotype_values (typically 0.25 for scaled data)
+    middle_value = genotype_values[len(genotype_values) // 2]
+    half_count = torch.sum(
+        torch.isclose(maf, torch.tensor(middle_value), atol=1e-3)
+    ).item()
 
     return {
         "mean": float(torch.mean(maf).item()),
@@ -314,19 +341,21 @@ def calculate_maf_stats(maf):
         "std": float(torch.std(maf).item()),
         "min_maf": min_val,
         "max_maf": max_val,
-        "num_half_maf": num_half,
+        "num_half_maf": int(half_count),
         "min_freq": min_val,  # For backward compatibility
         "max_freq": max_val,  # For backward compatibility
-        "num_half_freq": num_half,  # For backward compatibility
+        "num_half_freq": int(half_count),  # For backward compatibility
     }
 
 
-def analyze_maf_distribution(samples, save_path, bin_width=0.001):
+def analyze_maf_distribution(
+    samples, save_path, bin_width=0.001, genotype_values=[0.0, 0.5, 1.0], max_value=1.0
+):
     """Analyze and visualize the Minor Allele Frequency (MAF) distribution for a dataset.
 
     This function calculates MAF values, prints summary statistics, and creates a
     histogram visualization of the MAF distribution. It also analyzes the expected
-    peak spacing based on the number of samples and presence of heterozygous (0.5) values.
+    peak spacing based on the number of samples and presence of heterozygous values.
 
     The visualization shows the theoretical peaks that should appear in the MAF distribution
     based on population genetics principles, which is useful for assessing the quality of
@@ -336,6 +365,8 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
         samples: Tensor of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
         save_path: Path to save the MAF histogram plot
         bin_width: Width of histogram bins (default: 0.001)
+        genotype_values: List of expected genotype values, default [0.0, 0.25, 0.5]
+        max_value: Maximum possible value for genotypes (default: 0.5 for scaled data)
 
     Returns:
         tuple: (maf, freq) where:
@@ -343,7 +374,7 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
             - freq: numpy.ndarray of raw allele frequencies
     """
     # Calculate MAF and raw frequencies using the dedicated function
-    maf, freq = calculate_maf(samples)
+    maf, freq = calculate_maf(samples, max_value=max_value)
 
     # Convert samples to numpy for shape information (needed for peak spacing calculation)
     # We need to do this here since we need the original sample shape, not the processed MAF
@@ -417,8 +448,8 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
             maf_np = maf
         peak_counts[i] = np.sum((maf_np >= peak_range[0]) & (maf_np < peak_range[1]))
 
-    # Add statistics text box
-    stats = calculate_maf_stats(maf)
+    # Calculate MAF statistics
+    stats = calculate_maf_stats(maf, genotype_values=genotype_values)
     # Convert peak values to a list of floats
     peak_indices = np.argsort(peak_counts)[-3:][::-1]
     peak_values = [float((i + 1) * peak_spacing) for i in peak_indices]
@@ -449,22 +480,31 @@ def analyze_maf_distribution(samples, save_path, bin_width=0.001):
     return maf, freq
 
 
-def compare_maf_distributions(real_maf, gen_maf, output_dir, bin_width=0.001):
+def compare_maf_distributions(
+    real_maf,
+    gen_maf,
+    output_dir,
+    bin_width=0.001,
+    genotype_values=[0.0, 0.5, 1.0],
+    max_value=1.0,
+):
     """Plot and compare MAF distributions between real and generated genomic data.
 
     This function creates two key visualizations:
     1. A histogram comparing the MAF distributions of real and generated data
     2. A scatter plot showing the correlation between real and generated MAF values
 
-    These visualizations help assess how well the generated data captures the
-    allele frequency patterns present in the real data, which is a critical metric
-    for evaluating synthetic genomic data quality.
+    These visualizations are important for assessing how well the generated data
+    captures the allele frequency patterns of the real data, which is a key metric
+    in genomic data generation.
 
     Args:
-        real_maf: numpy array of MAF values from real data
-        gen_maf: numpy array of MAF values from generated data
-        output_dir: Directory to save the plots
-        bin_width: Width of histogram bins (default: 0.001 for fine-grained analysis)
+        real_maf: MAF values for real data
+        gen_maf: MAF values for generated data
+        output_dir: Directory to save output plots
+        bin_width: Width of histogram bins (default: 0.001)
+        genotype_values: List of expected genotype values, default [0.0, 0.25, 0.5]
+        max_value: Maximum possible value for genotypes (default: 0.5 for scaled data)
 
     Returns:
         float: Correlation coefficient between real and generated MAF
@@ -680,7 +720,11 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
 
     # Plot each sample
     for i in range(n_samples):
-        axes[i].imshow(samples[i, 0, :].detach().cpu().numpy().reshape(1, -1), aspect="auto", cmap="viridis")
+        axes[i].imshow(
+            samples[i, 0, :].detach().cpu().numpy().reshape(1, -1),
+            aspect="auto",
+            cmap="viridis",
+        )
         if timesteps is not None:
             axes[i].set_title(f"t = {timesteps[i]}")
         else:
@@ -796,10 +840,12 @@ def visualize_reverse_denoising(
     batch_shape = (num_samples,) + model._data_shape
     # Set the seed for reproducibility
     set_seed(seed)
-    
+
     # Start from pure noise at the given timestep
     x = torch.randn(batch_shape, device=model.device)
-    t = torch.full((num_samples,), start_timestep, device=model.device, dtype=torch.long)
+    t = torch.full(
+        (num_samples,), start_timestep, device=model.device, dtype=torch.long
+    )
     x = model.ddpm.sample(torch.zeros_like(x), t, x)
 
     reverse_samples = [x.clone()]
@@ -815,7 +861,9 @@ def visualize_reverse_denoising(
         timesteps.append(t_val)
 
     # Final step (fully denoised)
-    t_tensor = torch.full((x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long)
+    t_tensor = torch.full(
+        (x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long
+    )
     x = model.reverse_denoising(x, t_tensor)
     x = torch.clamp(x, 0, 1)
     reverse_samples.append(x.clone())

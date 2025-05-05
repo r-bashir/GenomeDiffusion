@@ -232,15 +232,11 @@ def main():
         print(
             f"python inference.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
-        
+
         print("\nTo run evaluation and inference on cluster, execute:")
-        print(
-            f"./evaluate.py {trainer.checkpoint_callback.best_model_path}"
-        )
-        print(
-            f"./inference.sh {trainer.checkpoint_callback.best_model_path}"
-        )
-        
+        print(f"./evaluate.py {trainer.checkpoint_callback.best_model_path}")
+        print(f"./inference.sh {trainer.checkpoint_callback.best_model_path}")
+
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")
 
