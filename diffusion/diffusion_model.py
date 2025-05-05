@@ -15,6 +15,7 @@ from .mlp import MLP
 from .models import UniformContinuousTimeSampler
 from .network_base import NetworkBase
 from .unet import UNet1D
+from .utils import set_seed
 
 
 class DiffusionModel(NetworkBase):
@@ -259,7 +260,7 @@ class DiffusionModel(NetworkBase):
         return result
 
     def denoise_batch(
-        self, batch: torch.Tensor, denoise_step: int = 10, discretize: bool = False
+        self, batch: torch.Tensor, denoise_step: int = 10, discretize: bool = False, seed: int = 42
     ) -> torch.Tensor:
         """Run the reverse diffusion process to generate denoised samples.
 
@@ -276,6 +277,9 @@ class DiffusionModel(NetworkBase):
             torch.Tensor: Denoised (reconstructed) output of shape [B, C, seq_len].
         """
         with torch.no_grad():
+            # Set the seed for reproducibility
+            set_seed(seed)
+                    
             # Start from pure noise (or optionally from batch if you want conditional denoising)
             x = torch.randn_like(batch)
 
@@ -292,16 +296,6 @@ class DiffusionModel(NetworkBase):
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )
                 x = self.reverse_denoising(x, t_tensor)
-
-                # Print statistics every 100 steps
-                if t % 100 == 0 or t == self.ddpm.tmin:
-                    # print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-
-                    # Print unique values to see if we're getting discrete distribution
-                    if t <= 100:  # Only in final stages
-                        unique_vals = torch.unique(x)
-                        if len(unique_vals) < 20:  # Only if there aren't too many
-                            print(f"Unique values at step {t}: {unique_vals}")
 
             # Always clamp to valid data range
             x = torch.clamp(x, 0, 1)  # Use (0, 0.5) if your data is in [0, 0.5]
@@ -320,7 +314,7 @@ class DiffusionModel(NetworkBase):
             return x
 
     def generate_samples(
-        self, num_samples: int = 10, denoise_step: int = 10, discretize: bool = False
+        self, num_samples: int = 10, denoise_step: int = 10, discretize: bool = False, seed: int = 42
     ) -> torch.Tensor:
         """Generate samples from the learned reverse diffusion process.
 
@@ -328,14 +322,18 @@ class DiffusionModel(NetworkBase):
             num_samples: Number of samples to generate.
             denoise_step: Number of timesteps to skip in reverse diffusion (default: 10).
             discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
+            seed: Optional seed for reproducible sample generation.
 
         Returns:
             torch.Tensor: Generated samples.
         """
+        # Set the seed for reproducibility
+        set_seed(seed)
+
         # Create a dummy batch with the right shape for denoise_batch
         dummy_batch = torch.zeros((num_samples,) + self._data_shape, device=self.device)
 
         # Use the improved denoise_batch method
         return self.denoise_batch(
-            dummy_batch, denoise_step=denoise_step, discretize=discretize
+            dummy_batch, denoise_step=denoise_step, discretize=discretize, seed=seed
         )

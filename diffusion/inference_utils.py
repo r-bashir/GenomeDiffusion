@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+from .utils import set_seed
 
 # === Helper Functions ===
 
@@ -679,7 +680,7 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
 
     # Plot each sample
     for i in range(n_samples):
-        axes[i].imshow(samples[i, 0, :].reshape(1, -1), aspect="auto", cmap="viridis")
+        axes[i].imshow(samples[i, 0, :].detach().cpu().numpy().reshape(1, -1), aspect="auto", cmap="viridis")
         if timesteps is not None:
             axes[i].set_title(f"t = {timesteps[i]}")
         else:
@@ -691,197 +692,13 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
     plt.close()
 
 
-def generate_samples(
-    model,
-    num_samples=1,
-    start_timestep=None,
-    output_dir=None,
-    step_size=None,
-    discretize=False,
-    save_prefix="",
-    collect_interval=100,
-    verbose=True,
-):
-    """Generate samples from the diffusion model with flexible starting timestep.
-
-    This unified function handles both full-noise (t=1000) and mid-noise generation,
-    as well as visualization of the reverse diffusion process. It leverages the
-    DiffusionModel's built-in generate_samples method for basic sample generation.
-
-    Args:
-        model: DiffusionModel instance
-        num_samples: Number of samples to generate (default: 1)
-        start_timestep: Timestep to start reverse diffusion from (default: model.ddpm.tmax)
-        output_dir: Directory to save outputs (default: None, no saving)
-        step_size: Step size for reverse diffusion (default: 10 for mid-noise, 100 for full-noise)
-        discretize: Whether to discretize final output to 0, 0.5, 1.0 values (default: False)
-        save_prefix: Prefix for saved files (default: "", empty string)
-        collect_interval: Interval for collecting samples for visualization (default: 100)
-        verbose: Whether to print progress information (default: True)
-
-    Returns:
-        tuple: (samples, plot_path) where:
-            - samples: Generated samples tensor
-            - plot_path: Path to visualization plot (None if output_dir is None)
-
-    Raises:
-        ValueError: If num_samples < 1 or if output_dir is provided but not a directory
-        ValueError: If start_timestep is provided but >= model.ddpm.tmax
-    """
-    # Input validation
-    if num_samples < 1:
-        raise ValueError(f"num_samples must be >= 1, got {num_samples}")
-
-    if output_dir is not None:
-        output_dir = Path(output_dir)
-        if not output_dir.is_dir():
-            raise ValueError(f"output_dir must be a directory, got {output_dir}")
-
-    if start_timestep is not None and start_timestep >= model.ddpm.tmax:
-        raise ValueError(
-            f"start_timestep ({start_timestep}) must be less than tmax ({model.ddpm.tmax})"
-        )
-
-    # Set defaults based on whether we're doing mid-noise or full-noise generation
-    is_mid_noise = start_timestep is not None and start_timestep < model.ddpm.tmax
-
-    if start_timestep is None:
-        # For full-noise generation, use DiffusionModel's generate_samples
-        samples = model.generate_samples(num_samples=num_samples, discretize=discretize)
-        if verbose:
-            print(f"Generated {num_samples} samples from full noise")
-            print(
-                f"Sample stats - mean: {samples.mean():.4f}, std: {samples.std():.4f}"
-            )
-
-        # Save samples if output directory is provided
-        if output_dir:
-            sample_path = output_dir / f"{save_prefix}generated_samples.pt"
-            torch.save(samples, sample_path)
-            if verbose:
-                print(f"Samples saved to: {sample_path}")
-
-        # No visualization for basic sample generation
-        return samples, None
-
-    # For mid-noise generation, we need to do the process step by step
-    if step_size is None:
-        step_size = 10 if is_mid_noise else 100
-
-    if verbose:
-        print(
-            f"\nGenerating {num_samples} samples from mid-noise (t={start_timestep})..."
-        )
-
-    with torch.no_grad():
-        # Create initial noisy samples
-        batch_shape = (num_samples,) + model._data_shape
-        x0 = torch.rand(batch_shape, device=model.device)
-        eps = torch.randn_like(x0)
-        t = torch.full(
-            (num_samples,), start_timestep, device=model.device, dtype=torch.long
-        )
-        x = model.ddpm.sample(x0, t, eps)
-
-        if verbose:
-            print(f"Mid-noise stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-
-        # Save mid-noise samples if requested
-        if output_dir:
-            torch.save(x, output_dir / f"{save_prefix}mid_noise_samples.pt")
-
-        # Store samples for visualization
-        reverse_samples = [x.clone()]
-        timesteps = [start_timestep]
-
-        if verbose:
-            print(f"Starting reverse diffusion from t={start_timestep} to t=0")
-
-        # Reverse diffusion process
-        for t in reversed(range(0, start_timestep + 1, step_size)):
-            if t == 0:
-                continue
-
-            t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-            x = model.reverse_denoising(x, t_tensor)
-            x = torch.clamp(x, -5.0, 5.0)
-
-            if t % collect_interval == 0:
-                reverse_samples.append(x.clone())
-                timesteps.append(t)
-
-                if verbose:
-                    print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
-
-        # Final step
-        t_tensor = torch.zeros((x.size(0),), device=x.device, dtype=torch.long)
-        x = model.reverse_denoising(x, t_tensor)
-        x = torch.clamp(x, 0, 1)
-        reverse_samples.append(x.clone())
-        timesteps.append(0)
-
-        # Discretize if requested
-        if discretize:
-            x = torch.round(x * 2) / 2  # Round to nearest 0, 0.5, or 1.0
-
-        # Save final samples
-        if output_dir:
-            sample_path = output_dir / f"{save_prefix}mid_noise_generated_samples.pt"
-            torch.save(x, sample_path)
-            if verbose:
-                print(f"Samples saved to: {sample_path}")
-
-        # Create visualization
-        plot_path = None
-        if output_dir:
-            reverse_samples_tensor = torch.stack(reverse_samples)
-            filename = f"{save_prefix}{'mid_noise_' if is_mid_noise else ''}reverse_diffusion.png"
-            plot_path = output_dir / filename
-            visualize_diffusion(
-                reverse_samples_tensor.cpu(),
-                plot_path,
-                f"Reverse Diffusion Process (t={start_timestep} to t=0)",
-                timesteps=timesteps,
-            )
-            if verbose:
-                print(f"Visualization saved to: {plot_path}")
-
-        return x, plot_path
-
-
-def visualize_reverse_diffusion(model, output_dir, step_size=100):
-    """Visualize the reverse diffusion process from full noise.
-
-    Args:
-        model: DiffusionModel instance
-        output_dir: Directory to save visualization
-        step_size: Step size for visualization (higher = fewer steps shown)
-
-    Returns:
-        Path to saved visualization
-    """
-    # Use the unified generate_samples function with full-noise settings
-    _, plot_path = generate_samples(
-        model=model,
-        num_samples=1,  # Just one sample for visualization
-        start_timestep=None,  # Use default (full noise)
-        output_dir=output_dir,
-        step_size=step_size,
-        discretize=False,
-        save_prefix="viz_full_noise_",  # Add prefix to avoid overwriting other files
-        collect_interval=step_size,  # Match the step_size for visualization
-        verbose=False,  # Reduce output verbosity for visualization
-    )
-    return plot_path
-
-
 # === Mid-Noise Diffusion Functions ===
 # These functions handle the generation and visualization of samples starting from
 # mid-noise levels (t < tmax). This allows testing model behavior with less noisy
 # starting points and can be useful for analyzing the denoising process.
 
 
-def generate_mid_noise_samples(
+def generate_samples_mid_noise(
     model, num_samples, mid_timestep=500, denoise_step=10, discretize=False, seed=42
 ):
     """Generate samples starting from a mid-noise level.
@@ -908,15 +725,11 @@ def generate_mid_noise_samples(
     with torch.no_grad():
         # Create noise tensor for the specified timestep
         # Set random seed for reproducible noise initialization
-        if seed is not None:
-            torch.manual_seed(seed)
+        set_seed(seed)
 
         # Initialize noise tensor
         x = torch.randn_like(dummy_batch)
 
-        # Reset random seed to avoid affecting other random operations
-        if seed is not None:
-            torch.manual_seed(torch.seed())
         t = torch.full(
             (num_samples,), mid_timestep, device=model.device, dtype=torch.long
         )
@@ -952,3 +765,73 @@ def generate_mid_noise_samples(
         # print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
     return x
+
+
+# === Visualize Reverse Denoising ===
+def visualize_reverse_denoising(
+    model,
+    output_dir,
+    start_timestep=None,  # None means full noise
+    step_size=100,
+    num_samples=1,
+    save_prefix="viz_",
+    discretize=False,
+    seed=42,
+):
+    """
+    Visualize the reverse denoising process from any starting timestep.
+    Args:
+        model: DiffusionModel instance
+        output_dir: Directory to save visualization
+        start_timestep: Timestep to start from (None for full noise)
+        step_size: Step size for visualization (higher = fewer steps shown)
+        num_samples: Number of samples to visualize (default: 1)
+        save_prefix: Prefix for saved plot filename
+        discretize: Whether to discretize final output
+    """
+
+    if start_timestep is None:
+        start_timestep = model.ddpm.tmax
+
+    batch_shape = (num_samples,) + model._data_shape
+    # Set the seed for reproducibility
+    set_seed(seed)
+    
+    # Start from pure noise at the given timestep
+    x = torch.randn(batch_shape, device=model.device)
+    t = torch.full((num_samples,), start_timestep, device=model.device, dtype=torch.long)
+    x = model.ddpm.sample(torch.zeros_like(x), t, x)
+
+    reverse_samples = [x.clone()]
+    timesteps = [start_timestep]
+
+    for t_val in reversed(range(model.ddpm.tmin, start_timestep + 1, step_size)):
+        if t_val == model.ddpm.tmin:
+            continue
+        t_tensor = torch.full((x.size(0),), t_val, device=x.device, dtype=torch.long)
+        x = model.reverse_denoising(x, t_tensor)
+        x = torch.clamp(x, -5.0, 5.0)
+        reverse_samples.append(x.clone())
+        timesteps.append(t_val)
+
+    # Final step (fully denoised)
+    t_tensor = torch.full((x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long)
+    x = model.reverse_denoising(x, t_tensor)
+    x = torch.clamp(x, 0, 1)
+    reverse_samples.append(x.clone())
+    timesteps.append(model.ddpm.tmin)
+
+    if discretize:
+        x = torch.round(x * 2) / 2
+
+    reverse_samples_tensor = torch.stack(reverse_samples)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = output_dir / f"{save_prefix}reverse_denoising_t{start_timestep}.png"
+    visualize_diffusion(
+        reverse_samples_tensor.cpu(),
+        plot_path,
+        f"Reverse Diffusion Process (t={start_timestep} to t={model.ddpm.tmin})",
+        timesteps=timesteps,
+    )
+    print(f"Visualization saved to: {plot_path}")

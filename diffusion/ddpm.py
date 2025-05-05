@@ -311,7 +311,7 @@ def main():
         snr_mid = (x_mid.var() / (x_mid - x0_single).var()).item()
         snr_end = (x_end.var() / (x_end - x0_single).var()).item()
 
-    print(f"SNR at t=0: {snr_start:.4f}")
+    print(f"SNR at t={forward_diffusion.tmin}: {snr_start:.4f}")
     print(f"SNR at t=500: {snr_mid:.4f}")
     print(f"SNR at t=999: {snr_end:.4f}")
 

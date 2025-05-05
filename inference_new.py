@@ -25,15 +25,16 @@ import json
 from pathlib import Path
 
 import torch
-
+from diffusion.utils import set_seed
 from diffusion.diffusion_model import DiffusionModel
 from diffusion.inference_utils import (
     analyze_maf_distribution,
     calculate_maf_stats,
     compare_maf_distributions,
     compare_samples,
-    generate_mid_noise_samples,
+    generate_samples_mid_noise,
     visualize_samples,
+    visualize_reverse_denoising,
 )
 
 
@@ -64,6 +65,9 @@ def parse_args():
 
 def main():
     """Main function."""
+
+    # Set global seed for reproducibility
+    set_seed(42)
 
     # Parse Arguments
     args = parse_args()
@@ -108,7 +112,7 @@ def main():
     model.setup("test")  # Ensure test dataset is initialized
     test_loader = model.test_dataloader()
 
-    # Collect all test samples
+    # Real samples
     real_samples = []
     print("Loading all test batches...")
     with torch.no_grad():
@@ -121,7 +125,7 @@ def main():
     print(f"\nReal samples shape: {real_samples.shape}")
     print(f"Real samples unique values: {torch.unique(real_samples)}")
 
-    # Sample Generation
+    # Generated samples
     num_samples = args.num_samples or real_samples.shape[0]
     print(f"Generating {num_samples} synthetic sequences from full noise...")
     with torch.no_grad():
@@ -143,8 +147,8 @@ def main():
 
     # === Perform Inference ===
 
-    # 1. Sample Analysis
-    print("\n1. Performing Sample Analysis...")
+    # 1. Sample Analysis (Fully Denoised, T=0)
+    print("\n1. Performing Sample Analysis (Fully Denoised, T=0)...")
     compare_samples(
         real_samples,
         gen_samples,
@@ -157,8 +161,42 @@ def main():
         max_seq_len=1000,
     )
 
-    # 2. MAF Analysis
-    print("\n2. Performing MAF Analysis...")
+    # 2. Sample Analysis (Mid-denoised,T=500)
+    print("\n2. Performing Sample Analysis (Mid-denoised,T=500)...")
+    gen_samples_mid = generate_samples_mid_noise(
+        model,
+        num_samples=num_samples,
+        mid_timestep=500,  # Middle of diffusion process
+        denoise_step=10,  # Choose denoise step
+        discretize=args.discretize,
+    )
+
+    compare_samples(
+        real_samples,
+        gen_samples_mid,
+        output_dir / "compare_samples_mid.png",
+    )
+    visualize_samples(
+        real_samples,
+        gen_samples_mid,
+        output_dir / "visualize_samples_mid.png",
+        max_seq_len=1000,
+    )
+
+    # 3. Visualize Reverse Denoising
+    print("\n3. Visualizing Reverse Denoising...")
+    visualize_reverse_denoising(
+        model,
+        output_dir,
+        start_timestep=100,  # None means full noise
+        step_size=100,
+        num_samples=1,
+        save_prefix="viz_",
+        discretize=False,
+    )
+
+    # 4. MAF Analysis (Fully Denoised, T=0)
+    print("\n4. Performing MAF Analysis (Fully Denoised, T=0)...")
 
     # Analyze real data MAF
     real_maf, _ = analyze_maf_distribution(
@@ -191,49 +229,22 @@ def main():
         json.dump(maf_stats, f, indent=4)
         print(f"MAF statistics saved to: {output_dir / 'maf_statistics.json'}")
 
-    # 4. Mid-Diffusion Analysis (single call, clean comparison)
-    print("\n4. Analyzing Mid-Diffusion (t=500) Generated Samples...")
+    # 5. MAF Analysis (Mid-denoised, T=500)
+    print("\n5. Performing MAF Analysis (Mid-denoised, T=500)...")
 
-    # Generate mid-diffusion samples (t=500)
-    mid_diff_samples = generate_mid_noise_samples(
-        model,
-        num_samples=num_samples,
-        mid_timestep=500,  # Middle of diffusion process
-        denoise_step=10,  # Choose denoise step
-        discretize=args.discretize,
-    )
-
-    # Visualize mid-diffusion samples
-    print("\nComparing mid-diff samples...")
-    compare_samples(
-        real_samples,
-        mid_diff_samples,
-        output_dir / "compare_midiff_samples.png",
-    )
-
-    print("\nVisualizing mid-diff samples...")
-    visualize_samples(
-        real_samples,
-        mid_diff_samples,
-        output_dir / "visualize_midiff_samples.png",
-        max_seq_len=1000,
-    )
-
-    # Calculate MAF stats for mid-diffusion samples
-    print("\nCalculating MAF statistics for mid-diffusion samples...")
-    mid_diff_maf_stats = calculate_maf_stats(mid_diff_samples)
+    maf_stats_mid = calculate_maf_stats(gen_samples_mid)
     print("\nFrequency analysis for mid-diffusion samples:")
     print(
-        f"Raw frequency range: [{mid_diff_maf_stats['min_freq']:.3f}, {mid_diff_maf_stats['max_freq']:.3f}]"
+        f"Raw frequency range: [{maf_stats_mid['min_freq']:.3f}, {maf_stats_mid['max_freq']:.3f}]"
     )
-    print(f"Number of 0.5 frequencies: {mid_diff_maf_stats['num_half_freq']}")
+    print(f"Number of 0.5 frequencies: {maf_stats_mid['num_half_freq']}")
     print(
-        f"MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
+        f"MAF range: [{maf_stats_mid['min_maf']:.3f}, {maf_stats_mid['max_maf']:.3f}]"
     )
-    print(f"Number of MAF = 0.5: {mid_diff_maf_stats['num_half_maf']}")
+    print(f"Number of MAF = 0.5: {maf_stats_mid['num_half_maf']}")
 
-    # --- Combined MAF comparison and summary ---
-    print("\n=== MAF Comparison Summary ===")
+    # 6. Combined MAF comparison and summary
+    print("\n6. MAF Comparison Summary")
     print(
         f"Real:          #0.5 = {real_maf_stats['num_half_maf']}, MAF range: [{real_maf_stats['min_maf']:.3f}, {real_maf_stats['max_maf']:.3f}]"
     )
@@ -241,13 +252,13 @@ def main():
         f"Generated:     #0.5 = {gen_maf_stats['num_half_maf']}, MAF range: [{gen_maf_stats['min_maf']:.3f}, {gen_maf_stats['max_maf']:.3f}]"
     )
     print(
-        f"Mid-diffusion: #0.5 = {mid_diff_maf_stats['num_half_maf']}, MAF range: [{mid_diff_maf_stats['min_maf']:.3f}, {mid_diff_maf_stats['max_maf']:.3f}]"
+        f"Mid-diffusion: #0.5 = {maf_stats_mid['num_half_maf']}, MAF range: [{maf_stats_mid['min_maf']:.3f}, {maf_stats_mid['max_maf']:.3f}]"
     )
 
     maf_stats_combined = {
         "real": real_maf_stats,
         "generated": gen_maf_stats,
-        "mid_diffusion": mid_diff_maf_stats,
+        "mid_diffusion": maf_stats_mid,
         "correlation": float(maf_corr),
     }
     with open(output_dir / "maf_statistics.json", "w") as f:
