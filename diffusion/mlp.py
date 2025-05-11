@@ -154,3 +154,15 @@ class MLP(nn.Module):
 
         # Reshape back to original dimensions
         return output.view(batch_size, channels, seq_len)
+
+
+def zero_out_model_parameters(model):
+    """
+    Sets all weights and biases of nn.Linear layers in the model to zero.
+    This makes the model predict zeros for any input.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            nn.init.constant_(module.weight, 0.0)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.0)
