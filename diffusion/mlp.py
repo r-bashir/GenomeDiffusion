@@ -75,8 +75,8 @@ class MLP(nn.Module):
             self.time_mlp = None
 
         # Hidden dimensions
-        # hidden_dims = [512, 1024, 512, 256, 128]
-        hidden_dims = [1024]  # singl layer
+        hidden_dims = [512, 1024, 512, 256, 128]
+        # hidden_dims = [1024]  # singl layer
 
         print(f"Using hidden dimensions: {hidden_dims}")
 

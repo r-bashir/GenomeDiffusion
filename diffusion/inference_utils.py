@@ -742,7 +742,7 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
 # starting points and can be useful for analyzing the denoising process.
 
 
-def generate_samples_mid_noise(
+def generate_samples_mid_step(
     model, num_samples, mid_timestep=500, denoise_step=10, discretize=False, seed=42
 ):
     """Generate samples starting from a mid-noise level.

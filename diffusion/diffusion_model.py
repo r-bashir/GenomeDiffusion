@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .ddpm import DDPM
-from .mlp import MLP
+from .mlp import MLP, zero_out_model_parameters
 from .models import UniformContinuousTimeSampler
 from .network_base import NetworkBase
 from .unet import UNet1D
@@ -58,6 +58,9 @@ class DiffusionModel(NetworkBase):
             seq_length=hparams["data"]["seq_length"],
         )
 
+        # Zero noise model
+        # zero_out_model_parameters(self.unet)
+
         # Enable gradient checkpointing for memory efficiency
         if hasattr(self.unet, "gradient_checkpointing_enable"):
             self.unet.gradient_checkpointing_enable()
@@ -76,42 +79,6 @@ class DiffusionModel(NetworkBase):
         """
         # Predict noise
         return self.predict_added_noise(x, t)
-
-    def diffuse_and_predict(self, batch: torch.Tensor) -> tuple:
-        """Apply forward diffusion and predict noise.
-
-        This method handles the complete process of:
-        1. Sampling timesteps
-        2. Sampling noise
-        3. Adding noise to the input (forward diffusion)
-        4. Predicting the noise
-
-        Args:
-            batch: Clean input batch of shape [B, C, seq_len].
-
-        Returns:
-            tuple: (predicted_noise, true_noise, timesteps, noisy_input)
-        """
-        # Sample time and noise
-        t = self.time_sampler.sample(shape=(batch.shape[0],))
-
-        # Move time tensor to correct device
-        t = t.to(batch.device)
-        eps = torch.randn_like(batch)
-
-        # Forward diffusion process
-        xt = self.ddpm.sample(batch, t, eps)
-
-        # Ensure input has correct shape (batch_size, 1, seq_len)
-        if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
-            xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-        elif xt.shape[1] != 1:  # If incorrect number of channels
-            xt = xt[:, :1, :]  # Force to 1 channel
-
-        # Predict noise added during forward diffusion
-        pred_eps = self.predict_added_noise(xt, t)
-
-        return pred_eps, eps, t, xt
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """Predict the noise that was added during forward diffusion.
@@ -134,6 +101,44 @@ class DiffusionModel(NetworkBase):
 
         # print(f"Noise prediction output shape: {pred_noise.shape}")
         return pred_noise
+
+    def diffuse_and_predict(self, batch: torch.Tensor) -> tuple:
+        """Apply forward diffusion and predict noise.
+
+        This method handles the complete process of:
+        1. Sampling timesteps
+        2. Sampling noise
+        3. Adding noise to the input (forward diffusion)
+        4. Predicting the noise
+
+        Args:
+            batch: Clean input batch of shape [B, C, seq_len].
+
+        Returns:
+            tuple: (predicted_noise, true_noise, timesteps, noisy_input)
+        """
+        # Sample time and noise
+        t = self.time_sampler.sample(shape=(batch.shape[0],))
+
+        # Move time tensor to correct device
+        t = t.to(batch.device)
+
+        # Gaussian noise
+        eps = torch.randn_like(batch)
+
+        # Forward diffusion process
+        xt = self.ddpm.sample(batch, t, eps)
+
+        # Ensure input has correct shape (batch_size, 1, seq_len)
+        if len(xt.shape) == 2:  # If shape is (batch_size, seq_len)
+            xt = xt.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
+        elif xt.shape[1] != 1:  # If incorrect number of channels
+            xt = xt[:, :1, :]  # Force to 1 channel
+
+        # Predict noise added during forward diffusion
+        pred_eps = self.predict_added_noise(xt, t)
+
+        return pred_eps, eps, t, xt
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """Compute MSE between true noise and predicted noise.
@@ -203,22 +208,47 @@ class DiffusionModel(NetworkBase):
         # Get predicted noise using the forward method
         eps_pred = self.forward(xt, t)
 
-        # Handle the case where t > 1 for all elements in batch
+        # Handle different timesteps in the reverse process
+        # For t>1: Calculate sqrt(alpha_t/alpha_{t-1})
+        # For t=1: Use sqrt(alpha_1) directly
         is_t_greater_than_one = (t > 1).all()
+
         if is_t_greater_than_one:
-            sqrt_a_t = self.ddpm.alpha(t) / self.ddpm.alpha(t - 1)
+            # t>1 case (going from t to t-1)
+            # We need sqrt(alpha_t/alpha_{t-1}) for the mean calculation
+            alpha_t = self.ddpm.alpha(t)
+            alpha_prev = self.ddpm.alpha(t - 1)
+            sqrt_a_t = torch.sqrt(alpha_t / alpha_prev)
         else:
-            sqrt_a_t = self.ddpm.alpha(t)
+            # t=1 case (going from t=1 to t=0)
+            # We use sqrt(alpha_1) directly
+            sqrt_a_t = torch.sqrt(self.ddpm.alpha(t))
 
         # [NaN-FIX] Add numerical stability to prevent NaN values
         sqrt_a_t = sqrt_a_t.to(xt.device)
         eps = 1e-12  # [NaN-FIX] Small constant for numerical stability
 
-        # Perform the denoising step to take the snp from t to t-1
+        # Handle the case where t > 1 for all elements in batch
         # [NaN-FIX] Add eps to denominators to prevent division by zero
         inv_sqrt_a_t = (1.0 / (sqrt_a_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
+
+        # For t=2->t=1: beta_t should be (1-alpha_2/alpha_1)
+        # For t=1->t=0: beta_t should be (1-alpha_1)
         beta_t = (1.0 - sqrt_a_t**2).to(xt.device)
-        sigma_t = self.ddpm.sigma(t)
+
+        # Get the correct sigma based on timestep
+        # For t>1, we need sigma_{t-1}
+        # For t=1, we need sigma_0 (which is 0 since x_0 has no noise)
+        if is_t_greater_than_one:
+            # t>1 case
+            t_prev = t - 1
+            # Clamp to valid range
+            t_prev = torch.clamp(t_prev, min=1, max=self.ddpm._diffusion_steps)
+            sigma_t = self.ddpm.sigma(t_prev)  # Use sigma_{t-1}
+        else:
+            # t=1 -> t=0 case
+            # sigma_0 = 0 (no noise at t=0)
+            sigma_t = torch.zeros_like(beta_t)
         inv_sigma_t = (1.0 / (sigma_t + eps)).to(xt.device)  # [NaN-FIX] Added eps
 
         # Add proper broadcasting for all scalar tensors
@@ -226,13 +256,36 @@ class DiffusionModel(NetworkBase):
         beta_t = beta_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
         inv_sigma_t = inv_sigma_t.view(-1, 1, 1)  # Shape: [batch_size, 1, 1]
 
-        # [NaN-FIX] Calculate mean with gradient clipping to prevent extreme values
-        # mean = inv_sqrt_a_t * (xt - beta_t * inv_sigma_t * eps_pred)
-        noise_pred_term = beta_t * inv_sigma_t * eps_pred
-        noise_pred_term = torch.clamp(
-            noise_pred_term, -100, 100
-        )  # [NaN-FIX] Prevent extreme values
-        mean = inv_sqrt_a_t * (xt - noise_pred_term)
+        # Calculate mean based on timestep
+        if is_t_greater_than_one:
+            # For t>1, use a more stable approach with predicted x0
+            # First, get predicted x0 from the noise prediction
+            t_idx = (t - 1).long().cpu().numpy()[0]  # Convert to index
+            # Safely get alpha_bar_t (with bounds checking)
+            t_idx = min(t_idx, len(self.ddpm._alphas_bar_t) - 1)
+            alpha_bar_t = self.ddpm._alphas_bar_t[t_idx].to(xt.device)
+            sqrt_alpha_bar_t = torch.sqrt(alpha_bar_t).view(-1, 1, 1)
+
+            # Calculate predicted x0
+            x0_pred = (
+                xt - self.ddpm.sigma(t).view(-1, 1, 1) * eps_pred
+            ) / sqrt_alpha_bar_t
+
+            # Clamp x0_pred to reasonable values
+            x0_pred = torch.clamp(x0_pred, -1.0, 1.0)
+
+            # Get previous timestep's alpha_bar (with bounds checking)
+            prev_idx = max(0, t_idx - 1)  # Ensure index is valid
+            alpha_bar_prev = self.ddpm._alphas_bar_t[prev_idx].to(xt.device)
+            sqrt_alpha_bar_prev = torch.sqrt(alpha_bar_prev).view(-1, 1, 1)
+
+            # Calculate mean with proper scaling
+            mean = sqrt_alpha_bar_prev * x0_pred
+        else:
+            # For t=1->t=0, simplify to avoid division by zero
+            # Since sigma_0 = 0, we can't use the standard formula
+            # Instead, use a direct formula: mean = (xt - beta_t * eps_pred) / sqrt_a_t
+            mean = inv_sqrt_a_t * (xt - beta_t * eps_pred)
 
         # [NaN-FIX] Replace any non-finite values with zeros
         mean = torch.where(torch.isfinite(mean), mean, torch.zeros_like(mean))

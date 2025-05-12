@@ -32,7 +32,7 @@ from diffusion.inference_utils import (
     calculate_maf_stats,
     compare_maf_distributions,
     compare_samples,
-    generate_samples_mid_noise,
+    generate_samples_mid_step,
     visualize_reverse_denoising,
     visualize_samples,
 )
@@ -150,6 +150,15 @@ def main():
 
     # 1. Sample Analysis (Fully Denoised, T=0)
     print("\n1. Performing Sample Analysis (Fully Denoised, T=0)...")
+
+    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
+    # compare_samples(
+    #     real_samples,
+    #     gen_samples,
+    #     output_dir / "compare_samples.png",
+    #     genotype_values=[0.0, 0.5, 1.0],
+    # )
+
     # For scaled genotype values (0.0, 0.25, 0.5)
     compare_samples(
         real_samples,
@@ -157,12 +166,16 @@ def main():
         output_dir / "compare_samples.png",
         genotype_values=[0.0, 0.25, 0.5],
     )
+
     # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # compare_samples(
+    # visualize_samples(
     #     real_samples,
     #     gen_samples,
-    #     output_dir / "compare_samples.png",
+    #     output_dir / "visualize_samples.png",
+    #     max_seq_len=1000,
+    #     genotype_values=[0.0, 0.5, 1.0],
     # )
+
     # For scaled genotype values (0.0, 0.25, 0.5)
     visualize_samples(
         real_samples,
@@ -171,19 +184,12 @@ def main():
         max_seq_len=1000,
         genotype_values=[0.0, 0.25, 0.5],
     )
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # visualize_samples(
-    #     real_samples,
-    #     gen_samples,
-    #     output_dir / "visualize_samples.png",
-    #     max_seq_len=1000,
-    # )
 
     # 2. Sample Analysis (Mid-denoised,T=500)
     print("\n2. Performing Sample Analysis (Mid-denoised,T=500)...")
 
-    T=500
-    gen_samples_mid = generate_samples_mid_noise(
+    T = 500
+    gen_samples_mid = generate_samples_mid_step(
         model,
         num_samples=num_samples,
         mid_timestep=T,  # Middle of diffusion process

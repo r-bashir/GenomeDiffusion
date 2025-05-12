@@ -3,10 +3,12 @@
 
 import numpy as np
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import yaml
+import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Global device variable for consistent handling
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class DDPM:
@@ -42,22 +44,25 @@ class DDPM:
         self._beta_start = beta_start
         self._beta_end = beta_end
 
-        # Use liner beta scheduler
-        self._betas = np.linspace(
-            self._beta_start, self._beta_end, self._diffusion_steps
-        )
+        # Calculate beta schedule using cosine schedule
+        betas_np = self._cosine_beta_schedule(self._diffusion_steps)
 
-        # Use cosine beta scheduler
-        self._betas = self._cosine_beta_schedule(self._diffusion_steps)
-        alphas_bar = self._get_alphas_bar()
+        # Calculate alphas and cumulative alphas
+        alphas_np = 1.0 - betas_np
+        alphas_bar_np = self._get_alphas_bar(betas_np)
 
-        # Register tensors as buffers so they move with the model
+        # Calculate sigmas
+        sigmas_np = np.sqrt(1.0 - alphas_bar_np)
+
+        # Convert to tensors and register as buffers
+        self.register_buffer("_betas_t", torch.tensor(betas_np, dtype=torch.float32))
+        self.register_buffer("_alphas_t", torch.tensor(alphas_np, dtype=torch.float32))
         self.register_buffer(
-            "_alphas", torch.tensor(np.sqrt(alphas_bar), dtype=torch.float32)
+            "_alphas_bar_t", torch.tensor(alphas_bar_np, dtype=torch.float32)
         )
-        self.register_buffer(
-            "_sigmas", torch.tensor(np.sqrt(1 - alphas_bar), dtype=torch.float32)
-        )
+        self.register_buffer("_sigmas_t", torch.tensor(sigmas_np, dtype=torch.float32))
+
+    # Removed redundant _register_buffers method as we now register buffers in __init__
 
     @staticmethod
     def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> np.ndarray:
@@ -77,21 +82,24 @@ class DDPM:
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
         return np.clip(betas, 0, 0.999)
 
-    @property
-    def tmin(self) -> int:
-        """Minimum timestep value."""
-        return 1
+    def _get_alphas_bar(self, betas: np.ndarray) -> np.ndarray:
+        """Computes cumulative alpha values following the DDPM formula.
 
-    @property
-    def tmax(self) -> int:
-        """Maximum timestep value."""
-        return self._diffusion_steps
+        Args:
+            betas: Beta values for the noise schedule
 
-    def _get_alphas_bar(self) -> np.ndarray:
-        """Computes cumulative alpha values following the DDPM formula."""
-        alphas_bar = np.cumprod(1.0 - self._betas)
-        # Append 1 at the beginning for convenient indexing
+        Returns:
+            np.ndarray: Cumulative product of alphas with 1.0 prepended
+        """
+        # Calculate alphas = 1 - betas
+        alphas = 1.0 - betas
+
+        # Calculate cumulative product of alphas
+        alphas_bar = np.cumprod(alphas)
+
+        # Append 1 at the beginning for convenient indexing (t=0 has no noise)
         alphas_bar = np.concatenate(([1.0], alphas_bar))
+
         return alphas_bar
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
@@ -109,16 +117,17 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
 
-        # Ensure idx is on the same device as _alphas
-        if idx.device != self._alphas.device:
-            idx = idx.to(self._alphas.device)
+        # Ensure idx is on the same device as alphas
+        if idx.device != self._alphas_t.device:
+            idx = idx.to(self._alphas_t.device)
 
         # Return values on the correct device
-        return self._alphas[idx]
+        return self._alphas_t[idx]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         """
         Retrieves sigma(t) for the given time indices.
+        This is the standard deviation of the forward process noise.
 
         Args:
             t (torch.Tensor): Timesteps (batch_size,).
@@ -131,12 +140,12 @@ class DDPM:
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
 
-        # Ensure idx is on the same device as _sigmas
-        if idx.device != self._sigmas.device:
-            idx = idx.to(self._sigmas.device)
+        # Ensure idx is on the same device as sigmas
+        if idx.device != self._sigmas_t.device:
+            idx = idx.to(self._sigmas_t.device)
 
-        # Return values on the correct device
-        return self._sigmas[idx]
+        # Return pre-computed sigma values on the correct device
+        return self._sigmas_t[idx]
 
     def sample(
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
@@ -154,21 +163,18 @@ class DDPM:
             torch.Tensor: Noisy sample xt.
         """
         # Get alpha and sigma values for the timesteps
-        alpha_values = self.alpha(t)
-        sigma_values = self.sigma(t)
-
-        # Move alpha and sigma to the same device as x0
-        alpha_values = alpha_values.to(x0.device)
-        sigma_values = sigma_values.to(x0.device)
+        alpha_t = self.alpha(t)
+        sigma_t = self.sigma(t)
 
         # Reshape alpha_t and sigma_t according to the input shape
         if len(x0.shape) == 3:  # [batch_size, channels, seq_len]
-            alpha_t = alpha_values.view(-1, 1, 1)
-            sigma_t = sigma_values.view(-1, 1, 1)
+            alpha_t = alpha_t.view(-1, 1, 1)
+            sigma_t = sigma_t.view(-1, 1, 1)
         else:  # [batch_size, seq_len]
-            alpha_t = alpha_values.view(-1, 1)
-            sigma_t = sigma_values.view(-1, 1)
+            alpha_t = alpha_t.view(-1, 1)
+            sigma_t = sigma_t.view(-1, 1)
 
+        # Both alpha_t and sigma_t are already on the correct device from alpha() and sigma()
         xt = alpha_t * x0 + sigma_t * eps
         return xt
 
@@ -183,10 +189,48 @@ class DDPM:
         """
         Moves all tensors to the specified device.
         This mimics the behavior of nn.Module.to() for compatibility with PyTorch Lightning.
+
+        Args:
+            device: The device to move tensors to
+
+        Returns:
+            self: Returns self for method chaining
         """
-        self._alphas = self._alphas.to(device)
-        self._sigmas = self._sigmas.to(device)
+        self._betas_t = self._betas_t.to(device)
+        self._alphas_t = self._alphas_t.to(device)
+        self._alphas_bar_t = self._alphas_bar_t.to(device)
+        self._sigmas_t = self._sigmas_t.to(device)
         return self
+
+    @property
+    def tmin(self) -> int:
+        """Minimum timestep value."""
+        return 1
+
+    @property
+    def tmax(self) -> int:
+        """Maximum timestep value."""
+        return self._diffusion_steps
+
+    @property
+    def betas(self):
+        """Get beta values for noise schedule."""
+        return self._betas_t
+
+    @property
+    def alphas(self):
+        """Get alpha values (1 - beta)."""
+        return self._alphas_t
+
+    @property
+    def alphas_bar(self):
+        """Get cumulative product of alphas."""
+        return self._alphas_bar_t
+
+    @property
+    def sigmas(self):
+        """Get sigma values (sqrt(1 - alphas_bar))."""
+        return self._sigmas_t
 
 
 def load_config(config_path):
@@ -196,124 +240,134 @@ def load_config(config_path):
 
 
 def main():
-    print(f"Using device: {device}")
+    try:
+        print(f"Using device: {DEVICE}")
 
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+        # Set random seed for reproducibility
+        torch.manual_seed(42)
 
-    # Load config
-    config = load_config("config.yaml")
-    input_path = config.get("input_path")
-    print("\nInitializing dataset...")
+        # Load config
+        config = load_config("../config.yaml")
+        print("\nInitializing dataset...")
 
-    # Initialize dataset
-    dataset = SNPDataset(input_path)
+        # Initialize dataset
+        dataset = SNPDataset(
+            input_path=config.get("input_path"),
+            seq_length=config.get("data").get("seq_length"),
+        )
 
-    # Initialize dataloader
-    train_loader = DataLoader(
-        dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
-    )
+        # Initialize dataloader
+        train_loader = DataLoader(
+            dataset,
+            batch_size=config.get("batch_size"),
+            shuffle=True,
+            num_workers=config.get("num_workers"),
+            pin_memory=True,
+        )
 
-    # Get batch
-    batch = next(iter(train_loader))  # Shape: [B, seq_len]
-    print(f"Batch shape [B, seq_len]: {batch.shape}")
+        # Get batch
+        batch = next(iter(train_loader))  # Shape: [B, seq_len]
+        batch = batch.unsqueeze(1).to(DEVICE)  # [B, 1, seq_len]
 
-    # Prepare input (ensure [B, C, L] format for both models)
-    batch = batch.unsqueeze(1).to(device)  # [B, 1, seq_len]
-    print(f"Batch shape [B, C, seq_len]: {batch.shape}")
+        # ------------------ Test DDPM
+        print("\nTesting DDPM...")
+        forward_diffusion = DDPM(
+            diffusion_steps=config.get("diffusion").get("diffusion_steps"),
+            beta_start=config.get("diffusion").get("beta_start"),
+            beta_end=config.get("diffusion").get("beta_end"),
+        )
 
-    # ------------------ Test DDPM
-    print("\nTesting DDPM...")
-    forward_diffusion = DDPM(diffusion_steps=1000, beta_start=0.0001, beta_end=0.02)
+        # Move forward diffusion tensors to device
+        forward_diffusion.to(DEVICE)
 
-    # Move forward diffusion tensors to device
-    forward_diffusion._alphas = forward_diffusion._alphas.to(device)
-    forward_diffusion._sigmas = forward_diffusion._sigmas.to(device)
+        # Test different timesteps
+        timesteps = [0, 250, 500, 750, 999]
 
-    # Test different timesteps
-    timesteps = [0, 250, 500, 750, 999]
+        # 1. Test with single sample for visualization
+        x0_single = batch[0:1]  # Take first sample [1, seq_len]
 
-    # 1. Test with single sample for visualization
-    x0_single = batch[0:1].to(device)  # Take first sample [1, seq_len]
-    print(f"1. Single sample shape: {x0_single.shape}")
+        # Create figure for visualization
+        plt.figure(figsize=(15, 5))
 
-    # Create figure for visualization
-    plt.figure(figsize=(15, 5))
+        for i, t in enumerate(timesteps):
+            # Sample noise
+            eps = torch.randn_like(x0_single).to(DEVICE)
+            t_tensor = torch.tensor([t], device=DEVICE)
 
-    for i, t in enumerate(timesteps):
+            # Apply forward diffusion
+            xt = forward_diffusion.sample(x0_single, t_tensor, eps)
+
+            print(f"\nt_tensor.shape: {t_tensor.shape}")
+            print(f"eps.shape: {eps.shape}")
+            print(f"xt.shape: {xt.shape}")
+
+            # Plot results - move to CPU for plotting if needed
+            xt_cpu = xt.cpu() if DEVICE.type == "cuda" else xt
+            plt.subplot(1, len(timesteps), i + 1)
+            plt.plot(
+                xt_cpu[0, 0].detach().numpy(), linewidth=1, color="blue", alpha=0.8
+            )
+            plt.title(f"t={t}")
+
+        plt.tight_layout()
+        plt.savefig("ddpm_timesteps.png")
+        plt.close()
+
+        # 2. Test with full batch and different timesteps
+        print("\n2. Testing with full batch...")
+
+        # Assign different timesteps to each batch element
+        batch_size = batch.shape[0]
+        # TODO: use a time sampler instead of linspace
+        varied_timesteps = torch.linspace(0, 999, batch_size).long().to(DEVICE)
+        print(f"Varied timesteps shape: {varied_timesteps.shape}")
+
         # Sample noise
-        eps = torch.randn_like(x0_single)
-        t_tensor = torch.tensor([t], device=device)
+        eps = torch.randn_like(batch).to(DEVICE)
 
         # Apply forward diffusion
-        xt = forward_diffusion.sample(x0_single, t_tensor, eps)
+        xt_batch = forward_diffusion.sample(batch, varied_timesteps, eps)
+        print(f"Output batch shape: {xt_batch.shape}")
 
-        print(f"\nt_tensor.shape: {t_tensor.shape}")
-        print(f"eps.shape: {eps.shape}")
-        print(f"xt.shape: {xt.shape}")
+        # 3. Validate noise levels
+        print("\n3. Validating noise levels:")
+        t_start = torch.tensor([0], device=DEVICE)
+        t_mid = torch.tensor([500], device=DEVICE)
+        t_end = torch.tensor([999], device=DEVICE)
 
-        # Plot results
-        plt.subplot(1, len(timesteps), i + 1)
-        plt.plot(xt[0, 0].cpu().detach().numpy(), linewidth=1, color="blue", alpha=0.8)
-        plt.title(f"t={t}")
+        # Use same noise for fair comparison
+        same_noise = torch.randn_like(x0_single).to(DEVICE)
 
-    plt.tight_layout()
-    plt.savefig("ddpm_timesteps.png")
-    plt.close()
+        # Get samples at different timesteps
+        x_start = forward_diffusion.sample(x0_single, t_start, same_noise)
+        x_mid = forward_diffusion.sample(x0_single, t_mid, same_noise)
+        x_end = forward_diffusion.sample(x0_single, t_end, same_noise)
 
-    # 2. Test with full batch and different timesteps
-    print("\n2. Testing with full batch...")
-    batch = batch.to(device)
+        # Calculate signal-to-noise ratio
+        # For 3D tensors, calculate variance along the sequence dimension
+        if len(x_start.shape) == 3:
+            # Calculate variance along the sequence dimension (dim=2)
+            snr_start = (
+                x_start.var(dim=2).mean() / (x_start - x0_single).var(dim=2).mean()
+            ).item()
+            snr_mid = (
+                x_mid.var(dim=2).mean() / (x_mid - x0_single).var(dim=2).mean()
+            ).item()
+            snr_end = (
+                x_end.var(dim=2).mean() / (x_end - x0_single).var(dim=2).mean()
+            ).item()
+        else:
+            # Original calculation for 2D tensors
+            snr_start = (x_start.var() / (x_start - x0_single).var()).item()
+            snr_mid = (x_mid.var() / (x_mid - x0_single).var()).item()
+            snr_end = (x_end.var() / (x_end - x0_single).var()).item()
 
-    # Assign different timesteps to each batch element
-    batch_size = batch.shape[0]
-    # TODO: use a time sampler instead of linspace
-    varied_timesteps = torch.linspace(0, 999, batch_size).long().to(device)
-    print(f"Varied timesteps shape: {varied_timesteps.shape}")
+        print(f"SNR at t={forward_diffusion.tmin}: {snr_start:.4f}")
+        print(f"SNR at t=500: {snr_mid:.4f}")
+        print(f"SNR at t=999: {snr_end:.4f}")
 
-    # Sample noise
-    eps = torch.randn_like(batch)
-
-    # Apply forward diffusion
-    xt_batch = forward_diffusion.sample(batch, varied_timesteps, eps)
-    print(f"Output batch shape: {xt_batch.shape}")
-
-    # 3. Validate noise levels
-    print("\n3. Validating noise levels:")
-    t_start = torch.tensor([0], device=device)
-    t_mid = torch.tensor([500], device=device)
-    t_end = torch.tensor([999], device=device)
-
-    # Use same noise for fair comparison
-    same_noise = torch.randn_like(x0_single)
-
-    # Get samples at different timesteps
-    x_start = forward_diffusion.sample(x0_single, t_start, same_noise)
-    x_mid = forward_diffusion.sample(x0_single, t_mid, same_noise)
-    x_end = forward_diffusion.sample(x0_single, t_end, same_noise)
-
-    # Calculate signal-to-noise ratio
-    # For 3D tensors, calculate variance along the sequence dimension
-    if len(x_start.shape) == 3:
-        # Calculate variance along the sequence dimension (dim=2)
-        snr_start = (
-            x_start.var(dim=2).mean() / (x_start - x0_single).var(dim=2).mean()
-        ).item()
-        snr_mid = (
-            x_mid.var(dim=2).mean() / (x_mid - x0_single).var(dim=2).mean()
-        ).item()
-        snr_end = (
-            x_end.var(dim=2).mean() / (x_end - x0_single).var(dim=2).mean()
-        ).item()
-    else:
-        # Original calculation for 2D tensors
-        snr_start = (x_start.var() / (x_start - x0_single).var()).item()
-        snr_mid = (x_mid.var() / (x_mid - x0_single).var()).item()
-        snr_end = (x_end.var() / (x_end - x0_single).var()).item()
-
-    print(f"SNR at t={forward_diffusion.tmin}: {snr_start:.4f}")
-    print(f"SNR at t=500: {snr_mid:.4f}")
-    print(f"SNR at t=999: {snr_end:.4f}")
+    except Exception as e:
+        print(f"Error in main(): {e}")
 
 
 if __name__ == "__main__":
