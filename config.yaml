@@ -22,12 +22,12 @@ unet:
   dim_mults: [1, 2, 4, 8]  # Reduced from [1, 2, 4, 8]
   channels: 1
   with_time_emb: true
-  with_pos_emb: false
+  with_pos_emb: true
   resnet_block_groups: 8
 
 # Dataset
 data:
-  seq_length: 160858      # Reduced from 160858
+  seq_length: 100         # Reduced from 160858
   batch_size: 64          # Reduced from 64
   num_workers: 4
   datasplit: [1700, 200, 167]
