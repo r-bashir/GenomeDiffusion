@@ -137,6 +137,7 @@ class DDPM:
         """
         # Ensure t is in the valid range
         t = torch.clamp(t, min=1, max=self._diffusion_steps)
+
         # Convert to indices (0-indexed)
         idx = (t - 1).long()
 

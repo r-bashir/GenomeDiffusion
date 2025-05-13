@@ -361,11 +361,11 @@ class DiffusionModel(NetworkBase):
             # Discretize to SNP values if requested (external control)
             if discretize:
                 # For 0.0, 0.5, 1.0:
-                x = torch.round(x * 2) / 2
+                # x = torch.round(x * 2) / 2
 
                 # For 0.0, 0.25, 0.5 (if that's your scaling):
-                # x = torch.round(x * 4) / 4
-                # x = torch.clamp(x, 0, 0.5)
+                x = torch.round(x * 4) / 4
+                x = torch.clamp(x, 0, 0.5)
 
             # print(f"Final sample stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
             return x
