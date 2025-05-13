@@ -1,11 +1,19 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+"""
+Test script for diffusion model parameters and behavior.
+
+This script analyzes the diffusion process parameters at different timesteps
+and visualizes how data transforms during forward and reverse diffusion.
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
 import math
+import yaml
 from torch.utils.data import DataLoader
 
 from diffusion import DiffusionModel, SNPDataset
@@ -75,77 +83,126 @@ def plot_diffusion_process(
     plt.close()
 
 
-def test_zero_noise_prediction(
-    model: DiffusionModel, x0: torch.Tensor, timestep: int = 2, plot=True
-):
-    """Test the behavior of zero-noise prediction model.
-
-    Since the model is initialized to predict zero noise, we expect:
-    1. predicted_noise ≈ 0
-    2. x_t to be noisy version of x0
-    3. x_t_minus_1 to be closer to the mean of the forward process
+def display_diffusion_parameters(model, timestep):
+    """Display diffusion process parameters for a specific timestep.
 
     Args:
-        model: The diffusion model (initialized with zero weights)
+        model: The diffusion model
+        timestep: Timestep to display parameters for
+    """
+    # Get parameters directly
+    alpha_t = model.ddpm._alphas_t[timestep - 1].item()
+    alpha_bar_t = model.ddpm._alphas_bar_t[timestep].item()
+    sigma_t = model.ddpm._sigmas_t[timestep].item()
+    beta_t = 1.0 - alpha_t
+
+    # Print formatted parameters
+    print(f"\n--- Diffusion Parameters at t={timestep} ---")
+    print(f"β_{timestep} = {beta_t:.6f}")
+    print(f"α_{timestep} = {alpha_t:.6f}")
+    print(f"α̅_{timestep} = {alpha_bar_t:.6f}")
+    print(f"σ_{timestep} = {sigma_t:.6f}")
+    print(f"√α_{timestep} = {alpha_t**0.5:.6f}")
+    print(f"√(1-α̅_{timestep}) = {(1-alpha_bar_t)**0.5:.6f}")
+    print(
+        f"Forward diffusion equation: x_{timestep} = {alpha_t**0.5:.3f}·x₀ + {sigma_t:.3f}·ε"
+    )
+
+    return alpha_t, alpha_bar_t, sigma_t, beta_t
+
+
+def run_diffusion_step(model, x0, timestep):
+    """Run a single step of forward and reverse diffusion.
+
+    Args:
+        model: The diffusion model
+        x0: Input data [B, C, seq_len]
+        timestep: Timestep to test at
+
+    Returns:
+        tuple: (x0, noise, xt, predicted_noise, x_t_minus_1, metrics)
+    """
+    with torch.no_grad():
+        # Create timestep tensor
+        t = torch.full((x0.shape[0],), timestep, dtype=torch.long, device=x0.device)
+
+        # Sample random noise
+        noise = torch.randn_like(x0)
+
+        # 1. Forward diffusion: Add noise to input
+        xt = model.ddpm.sample(x0, t, noise)
+
+        # 2. Model prediction (should be ≈ 0 for zero-initialized model)
+        predicted_noise = model.predict_added_noise(xt, t)
+
+        # 3. Reverse process using predicted noise
+        x_t_minus_1 = model.reverse_denoising(xt, t)
+
+        # Compute metrics
+        metrics = {
+            "noise_mse": F.mse_loss(predicted_noise, noise).item(),
+            "pred_noise_magnitude": torch.mean(torch.abs(predicted_noise)).item(),
+            "x0_diff": F.mse_loss(x_t_minus_1, x0).item(),
+        }
+
+        return x0, noise, xt, predicted_noise, x_t_minus_1, metrics
+
+
+def print_diffusion_results(
+    x0, noise, xt, predicted_noise, x_t_minus_1, metrics, timestep
+):
+    """Print the results of a diffusion step.
+
+    Args:
+        x0, noise, xt, predicted_noise, x_t_minus_1: Tensors from diffusion process
+        metrics: Dictionary of computed metrics
+        timestep: Current timestep
+    """
+    # Print signal analysis
+    print(f"\nSignal Analysis:")
+    print(f"1. Original x0 (first 30):\n{x0[0,0,:30].cpu().numpy()}")
+    print(f"2. Added noise (first 30):\n{noise[0,0,:30].cpu().numpy()}")
+    print(f"3. Noisy xt (first 30):\n{xt[0,0,:30].cpu().numpy()}")
+    print(f"4. Predicted noise (first 30):\n{predicted_noise[0,0,:30].cpu().numpy()}")
+    print(f"5. Denoised output (first 30):\n{x_t_minus_1[0,0,:30].cpu().numpy()}")
+
+    # Print metrics
+    print("\nMetrics:")
+    print(f"- Average predicted noise magnitude: {metrics['pred_noise_magnitude']:.6f}")
+    print(f"- True vs Predicted noise MSE: {metrics['noise_mse']:.6f}")
+    print(f"- Original vs Denoised MSE: {metrics['x0_diff']:.6f}")
+
+
+def test_diffusion_at_timestep(
+    model, x0, timestep, plot=True, save_plot=True
+):  # plot/save_plot args retained for compatibility, always True in main()
+    """Test the diffusion process at a specific timestep.
+
+    Args:
+        model: The diffusion model
         x0: Input data [B, C, seq_len]
         timestep: Timestep to test at
         plot: Whether to plot the results
+        save_plot: Whether to save the plot to a file (if plot=True)
     """
-    with torch.no_grad():
-        # 1. Forward process: Add noise to input
-        noise = torch.randn_like(x0)
-        t = torch.full((x0.shape[0],), timestep, dtype=torch.long, device=x0.device)
-        x_t = model.ddpm.sample(x0, t, noise)
+    # 1. Display parameters
+    display_diffusion_parameters(model, timestep)
 
-        # 2. Model prediction (should be ≈ 0)
-        predicted_noise = model.predict_added_noise(x_t, t)
+    # 2. Run diffusion
+    results = run_diffusion_step(model, x0, timestep)
+    x0, noise, xt, predicted_noise, x_t_minus_1, metrics = results
 
-        # 3. Reverse process using predicted noise
-        x_t_minus_1 = model.reverse_denoising(x_t, t)
+    # 3. Print results
+    print_diffusion_results(
+        x0, noise, xt, predicted_noise, x_t_minus_1, metrics, timestep
+    )
 
-        # Compute metrics
-        noise_mse = F.mse_loss(predicted_noise, noise)
-        pred_noise_magnitude = torch.mean(torch.abs(predicted_noise)).item()
-        x0_diff = F.mse_loss(x_t_minus_1, x0)
-
-        # Print analysis
-        # Get noise schedule parameters for display
-        alpha_t = model.ddpm.alpha(t)
-        # Calculate sigma directly to ensure it matches the formula
-        # For timestep t, we need alphas_bar at index t
-        alpha_bar_t = model.ddpm._alphas_bar_t[timestep].to(t.device)
-        sigma_t = torch.sqrt(1.0 - alpha_bar_t)
-
-        print(f"\nZero Noise Model Analysis at t={timestep}:")
-        print(f"Noise Schedule Parameters:")
-        print(f"- α_t: {alpha_t[0].item():.6f}")
-        print(f"- σ_t: {sigma_t.item():.6f}")
-        print(f"\nSignal Analysis:")
-        print(f"1. Original x0 (first 10):\n{x0[0,0,:10].cpu().numpy()}")
-        print(f"2. Added noise (first 10):\n{noise[0,0,:10].cpu().numpy()}")
-        print(f"3. Noisy x_t (first 10):\n{x_t[0,0,:10].cpu().numpy()}")
-        print(
-            f"4. Predicted noise (should be ≈ 0):\n{predicted_noise[0,0,:10].cpu().numpy()}"
+    # 4. Plot if requested
+    if plot:
+        save_path = f"diffusion_t{timestep}.png" if save_plot else None
+        plot_diffusion_process(
+            x0, noise, xt, predicted_noise, x_t_minus_1, timestep, save_path=save_path
         )
-        print(f"5. Denoised output (first 10):\n{x_t_minus_1[0,0,:10].cpu().numpy()}")
-        print("\nMetrics:")
-        print(
-            f"- Average predicted noise magnitude: {pred_noise_magnitude:.6f} (should be ≈ 0)"
-        )
-        print(f"- True vs Predicted noise MSE: {noise_mse.item():.6f}")
-        print(f"- Original vs Denoised MSE: {x0_diff.item():.6f}")
-
-        # Plot results
-        if plot:
-            plot_diffusion_process(
-                x0,
-                noise,
-                x_t,
-                predicted_noise,
-                x_t_minus_1,
-                timestep,
-                save_path=f"zero_noise_t{timestep}.png",
-            )
 
 
 def load_config(config_path):
@@ -157,56 +214,46 @@ def load_config(config_path):
 
 
 def main():
-    # Setup
+    """Main function to test diffusion model parameters and behavior."""
+    # Set random seed for reproducibility
     torch.manual_seed(42)
+
+    # Load configuration
     config = load_config("config.yaml")
 
-    # Modify config for minimum diffusion steps and proper dimensions
-    config["diffusion"]["diffusion_steps"] = 2  # This means t ∈ [1,2]
-    print("\nTesting minimum-step diffusion (t ∈ [1,2])")
-    print("Expected behavior:")
-    print("1. t=1: First noise addition step")
-    print("2. t=2: Maximum noise step")
-    print("3. Predicted noise should be ≈ 0 (zero weights)")
+    # Set diffusion steps
+    print("\nTesting Diffusion Process")
+    print("======================")
+    print(f"Diffusion steps: {config['diffusion']['diffusion_steps']}")
+    print(f"Schedule type: {config['diffusion']['schedule_type']}")
+    print(f"Device: {device}")
 
-    # Load data
+    # Load dataset
+    print("\nLoading dataset...")
     dataset = SNPDataset(
         config.get("input_path"), seq_length=config.get("data").get("seq_length")
     )
+
+    # Create data loader and get a batch
     loader = DataLoader(
         dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
     )
     x0 = next(iter(loader)).unsqueeze(1).to(device)  # shape=[B, C, seq_len]
 
-    # Initialize model with 2-step diffusion
+    # Initialize model
+    print("Initializing model...")
     model = DiffusionModel(hparams=config)
     model.eval()
 
-    print("\nTesting both possible timesteps:")
-    # Test both possible timesteps
-    for t in [1, 2]:  # Only valid timesteps for 2-step diffusion
-        print(f"\n--- Timestep {t} ---")
-        test_zero_noise_prediction(model, x0, timestep=t, plot=True)
+    # Define timesteps to test
+    # Early (1, 2), middle (250, 500), and late (750, 999, 1000) timesteps
+    timesteps_to_test = [1, 2, 250, 500, 750, 999, 1000]
+    print(f"\nAnalyzing diffusion process at timesteps: {timesteps_to_test}")
 
-        # Show beta and alpha values for this step
-        t_tensor = torch.tensor([t], dtype=torch.long, device=device)
-        # Use methods instead of properties
-        alpha_t = model.ddpm.alpha(t_tensor).item()
-
-        # Calculate sigma directly from alphas_bar
-        # For t=1, we need sqrt(1-alpha_bar_1)
-        # For t=2, we need sqrt(1-alpha_bar_2)
-        alpha_bar_t = model.ddpm._alphas_bar_t[t].item()
-        sigma_t = math.sqrt(1.0 - alpha_bar_t)
-
-        beta_t = 1.0 - alpha_t  # Beta = 1 - alpha
-        print(f"\nDiffusion parameters at t={t}:")
-        print(f"β_{t} = {beta_t:.6f}")
-        print(f"α_{t} = {alpha_t:.6f}")
-        print(f"σ_{t} = {sigma_t:.6f}  # Should equal √(1-α_{t})")
-        print(f"√α_{t} = {alpha_t**0.5:.6f}")
-        print(f"√(1-α_{t}) = {(1-alpha_t)**0.5:.6f}")
-        print(f"x_{t} = {alpha_t**0.5:.3f}·x₀ + {sigma_t:.3f}·ε")
+    # Always plot and save for all timesteps
+    print("\nPlotting and saving results for all timesteps...")
+    for t in timesteps_to_test:
+        test_diffusion_at_timestep(model, x0, timestep=t, plot=True, save_plot=True)
 
 
 if __name__ == "__main__":
