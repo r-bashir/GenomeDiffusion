@@ -45,6 +45,7 @@ class DiffusionModel(NetworkBase):
             diffusion_steps=hparams["diffusion"]["diffusion_steps"],
             beta_start=hparams["diffusion"]["beta_start"],
             beta_end=hparams["diffusion"]["beta_end"],
+            schedule_type=hparams["diffusion"]["schedule_type"],
         )
 
         # UNet1D or MLP for noise prediction
