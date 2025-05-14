@@ -265,6 +265,10 @@ class DDPM:
             alpha_t = alpha_t.view(-1, 1)
             sigma_t = sigma_t.view(-1, 1)
 
+        # Move alpha_t and sigma_t to the same device as x0 to ensure device consistency
+        alpha_t = alpha_t.to(x0.device)
+        sigma_t = sigma_t.to(x0.device)
+
         # Both alpha_t and sigma_t are already on the correct device from alpha() and sigma()
         xt = alpha_t * x0 + sigma_t * eps
         return xt
