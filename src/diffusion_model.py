@@ -49,7 +49,7 @@ class DiffusionModel(NetworkBase):
         )
 
         # UNet1D or MLP for noise prediction
-        self.unet = MLP(
+        self.unet = UNet1D(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
