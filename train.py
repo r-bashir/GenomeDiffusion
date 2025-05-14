@@ -23,8 +23,8 @@ from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
 
-from diffusion import DiffusionModel
-from diffusion.evaluation_callback import EvaluationCallback
+from src import DiffusionModel
+from src.evaluation_callback import EvaluationCallback
 
 
 def parse_args():

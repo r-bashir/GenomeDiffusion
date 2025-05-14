@@ -70,7 +70,7 @@ class NetworkBase(pl.LightningModule):
         seq_length = self.hparams["data"].get("seq_length", None)
 
         # Import here to avoid circular imports
-        from diffusion import SNPDataset
+        from src import SNPDataset
 
         print(f"Creating dataset with sequence length: {seq_length}")
         return SNPDataset(self.hparams["input_path"], seq_length=seq_length)

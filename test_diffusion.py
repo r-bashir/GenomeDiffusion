@@ -16,7 +16,7 @@ import math
 import yaml
 from torch.utils.data import DataLoader
 
-from diffusion import DiffusionModel, SNPDataset
+from src import DiffusionModel, SNPDataset
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
