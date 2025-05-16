@@ -2,7 +2,7 @@
 
 # Paths and variables
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
-PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
+PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
 # Set default checkpoint path, but allow override from command line
@@ -26,7 +26,7 @@ apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
-    $CONTAINER bash -c "cd /workspace && python evaluate_new.py --checkpoint $CHECKPOINT_DIR" || {
+    $CONTAINER bash -c "cd /workspace && python evaluate.py --checkpoint $CHECKPOINT_DIR" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }

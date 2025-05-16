@@ -2,7 +2,7 @@
 
 # Paths and variables
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
-PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenomeDiffusion
+PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
 # WandB API Key
