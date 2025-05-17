@@ -33,7 +33,7 @@ from src.inference_utils import (
     compare_maf_distributions,
     compare_samples,
     generate_samples_mid_step,
-    visualize_reverse_denoising,
+    visualize_reverse_diffusion,
     visualize_samples,
 )
 from src.utils import set_seed
@@ -131,7 +131,7 @@ def main():
     print(f"Generating {num_samples} synthetic sequences from full noise...")
     with torch.no_grad():
         gen_samples = model.generate_samples(
-            num_samples=num_samples, denoise_step=10, discretize=args.discretize
+            num_samples=num_samples, denoise_step=1, discretize=args.discretize
         )
 
         # Check for NaN values in generated samples
@@ -151,38 +151,21 @@ def main():
     # 1. Sample Analysis (Fully Denoised, T=0)
     print("\n1. Performing Sample Analysis (Fully Denoised, T=0)...")
 
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # compare_samples(
-    #     real_samples,
-    #     gen_samples,
-    #     output_dir / "compare_samples.png",
-    #     genotype_values=[0.0, 0.5, 1.0],
-    # )
-
-    # For scaled genotype values (0.0, 0.25, 0.5)
+    # Compare samples
     compare_samples(
         real_samples,
         gen_samples,
         output_dir / "compare_samples.png",
-        genotype_values=[0.0, 0.25, 0.5],
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
     )
 
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # visualize_samples(
-    #     real_samples,
-    #     gen_samples,
-    #     output_dir / "visualize_samples.png",
-    #     max_seq_len=1000,
-    #     genotype_values=[0.0, 0.5, 1.0],
-    # )
-
-    # For scaled genotype values (0.0, 0.25, 0.5)
+    # Visualize samples
     visualize_samples(
         real_samples,
         gen_samples,
         output_dir / "visualize_samples.png",
         max_seq_len=1000,
-        genotype_values=[0.0, 0.25, 0.5],
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
     )
 
     # 2. Sample Analysis (Mid-denoised,T=500)
@@ -193,7 +176,7 @@ def main():
         model,
         num_samples=num_samples,
         mid_timestep=T,  # Middle of diffusion process
-        denoise_step=10,  # Choose denoise step
+        denoise_step=1,  # Choose denoise step
         discretize=args.discretize,
     )
 
@@ -203,6 +186,7 @@ def main():
         output_dir / f"compare_samples_t{T}.png",
         genotype_values=[0.0, 0.25, 0.5],
     )
+
     visualize_samples(
         real_samples,
         gen_samples_mid,
@@ -211,9 +195,9 @@ def main():
         genotype_values=[0.0, 0.25, 0.5],
     )
 
-    # 3. Visualize Reverse Denoising
-    print("\n3. Visualizing Reverse Denoising...")
-    visualize_reverse_denoising(
+    # 3. Visualize Reverse Diffusion
+    print("\n3. Visualizing Reverse Diffusion...")
+    visualize_reverse_diffusion(
         model,
         output_dir,
         start_timestep=100,  # None means full noise
@@ -227,45 +211,42 @@ def main():
     # 4. MAF Analysis (Fully Denoised, T=0)
     print("\n4. Performing MAF Analysis (Fully Denoised, T=0)...")
 
-    # Analyze real data MAF (scaled genotype values)
+    # Analyze real data MAF
     real_maf, _ = analyze_maf_distribution(
         real_samples,
         output_dir / "maf_real_distribution.png",
-        genotype_values=[0.0, 0.25, 0.5],
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
         max_value=0.5,
     )
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # real_maf, _ = analyze_maf_distribution(
-    #     real_samples,
-    #     output_dir / "maf_real_distribution.png",
-    # )
 
-    # Analyze generated data MAF (scaled genotype values)
+    # Analyze generated data MAF
     gen_maf, _ = analyze_maf_distribution(
         gen_samples,
         output_dir / "maf_gen_distribution.png",
-        genotype_values=[0.0, 0.25, 0.5],
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
         max_value=0.5,
     )
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # gen_maf, _ = analyze_maf_distribution(
-    #     gen_samples,
-    #     output_dir / "maf_gen_distribution.png",
-    # )
 
     # Calculate MAF stats for real and generated data (scaled genotype values)
-    real_maf_stats = calculate_maf_stats(real_maf, genotype_values=[0.0, 0.25, 0.5])
-    gen_maf_stats = calculate_maf_stats(gen_maf, genotype_values=[0.0, 0.25, 0.5])
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # real_maf_stats = calculate_maf_stats(real_maf)
-    # gen_maf_stats = calculate_maf_stats(gen_maf)
+    real_maf_stats = calculate_maf_stats(
+        real_maf,
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
+    )
+
+    gen_maf_stats = calculate_maf_stats(
+        gen_maf,
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
+    )
 
     # Compare MAF distributions and get correlation (scaled genotype values)
     maf_corr = compare_maf_distributions(
-        real_maf, gen_maf, output_dir, genotype_values=[0.0, 0.25, 0.5], max_value=0.5
+        real_maf,
+        gen_maf,
+        output_dir,
+        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
+        max_value=0.5,
     )
-    # For original genotype values (0.0, 0.5, 1.0), uncomment below:
-    # maf_corr = compare_maf_distributions(real_maf, gen_maf, output_dir)
+
     print(f"MAF correlation between real and generated data: {maf_corr:.4f}")
 
     # Save MAF statistics

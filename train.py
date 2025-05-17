@@ -234,7 +234,7 @@ def main():
         )
 
         print("\nTo run evaluation and inference on cluster, execute:")
-        print(f"./evaluate.py {trainer.checkpoint_callback.best_model_path}")
+        print(f"./evaluate.sh {trainer.checkpoint_callback.best_model_path}")
         print(f"./inference.sh {trainer.checkpoint_callback.best_model_path}")
 
     except Exception as e:

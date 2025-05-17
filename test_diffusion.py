@@ -136,7 +136,7 @@ def run_diffusion_step(model, x0, timestep):
         predicted_noise = model.predict_added_noise(xt, t)
 
         # 3. Reverse process using predicted noise
-        x_t_minus_1 = model.reverse_denoising(xt, t)
+        x_t_minus_1 = model.reverse_diffusion(xt, t)
 
         # Compute metrics
         metrics = {

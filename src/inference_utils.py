@@ -792,7 +792,7 @@ def generate_samples_mid_step(
         # Perform reverse diffusion from mid_timestep to 0
         for t in reversed(range(model.ddpm.tmin, mid_timestep + 1, denoise_step)):
             t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-            x = model.reverse_denoising(x, t_tensor)
+            x = model.reverse_diffusion(x, t_tensor)
 
             # Print statistics every 100 steps
             if t % 100 == 0 or t == model.ddpm.tmin:
@@ -812,7 +812,7 @@ def generate_samples_mid_step(
 
 
 # === Visualize Reverse Denoising ===
-def visualize_reverse_denoising(
+def visualize_reverse_diffusion(
     model,
     output_dir,
     start_timestep=None,  # None means full noise
@@ -855,7 +855,7 @@ def visualize_reverse_denoising(
         if t_val == model.ddpm.tmin:
             continue
         t_tensor = torch.full((x.size(0),), t_val, device=x.device, dtype=torch.long)
-        x = model.reverse_denoising(x, t_tensor)
+        x = model.reverse_diffusion(x, t_tensor)
         x = torch.clamp(x, -5.0, 5.0)
         reverse_samples.append(x.clone())
         timesteps.append(t_val)
@@ -864,7 +864,7 @@ def visualize_reverse_denoising(
     t_tensor = torch.full(
         (x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long
     )
-    x = model.reverse_denoising(x, t_tensor)
+    x = model.reverse_diffusion(x, t_tensor)
     x = torch.clamp(x, 0, 0.5)  # Clamp to [0, 0.5] for scaled data
     reverse_samples.append(x.clone())
     timesteps.append(model.ddpm.tmin)
@@ -875,7 +875,7 @@ def visualize_reverse_denoising(
     reverse_samples_tensor = torch.stack(reverse_samples)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    plot_path = output_dir / f"{save_prefix}reverse_denoising_t{start_timestep}.png"
+    plot_path = output_dir / f"{save_prefix}reverse_diffusion_t{start_timestep}.png"
     visualize_diffusion(
         reverse_samples_tensor.cpu(),
         plot_path,

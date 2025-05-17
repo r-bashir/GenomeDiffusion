@@ -49,7 +49,7 @@ class DiffusionModel(NetworkBase):
         )
 
         # UNet1D or MLP for noise prediction
-        self.unet = UNet1D(
+        self.unet = MLP(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
@@ -192,7 +192,7 @@ class DiffusionModel(NetworkBase):
 
         return torch.stack(losses)
 
-    def reverse_denoising(self, xt: torch.Tensor, t: int) -> torch.Tensor:
+    def reverse_diffusion(self, xt: torch.Tensor, t: int) -> torch.Tensor:
         """Reverse diffusion step to estimate x_{t-1} given x_t.
 
         Computes parameters of a Gaussian p(x_{t-1}| x_t, x0_pred),
@@ -269,7 +269,7 @@ class DiffusionModel(NetworkBase):
 
             # Calculate predicted x0
             x0_pred = (
-                xt - self.ddpm.sigma(t).view(-1, 1, 1) * eps_pred
+                xt - self.ddpm.sigma(t).to(xt.device).view(-1, 1, 1) * eps_pred
             ) / sqrt_alpha_bar_t
 
             # Clamp x0_pred to reasonable values
@@ -353,7 +353,7 @@ class DiffusionModel(NetworkBase):
                 t_tensor = torch.full(
                     (x.size(0),), t, device=x.device, dtype=torch.long
                 )
-                x = self.reverse_denoising(x, t_tensor)
+                x = self.reverse_diffusion(x, t_tensor)
 
             # Always clamp to valid data range
             # x = torch.clamp(x, 0, 1)  # Use (0, 0.5) if your data is in [0, 0.5]
