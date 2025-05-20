@@ -8,252 +8,157 @@ This script analyzes the diffusion process parameters at different timesteps
 and visualizes how data transforms during forward and reverse diffusion.
 """
 
+import argparse
+from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-import math
-import yaml
-from torch.utils.data import DataLoader
 
-from src import DiffusionModel, SNPDataset
+from src import DiffusionModel
+from src.utils import set_seed
+from test_diffusion_utils import (
+    test_diffusion_at_timestep,
+    plot_noise_evolution,
+    track_single_run_at_snp,
+    calculate_variance_across_runs,
+    plot_variance_statistics,
+)
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def plot_diffusion_process(
-    x0, noise, x_t, predicted_noise, x_t_minus_1, timestep, save_path=None
-):
-    """Plot the diffusion process steps.
-
-    Args:
-        x0: Original input [B, C, seq_len]
-        noise: Added noise
-        x_t: Noisy input at timestep t
-        predicted_noise: Model's noise prediction
-        x_t_minus_1: Denoised output
-        timestep: Current timestep
-        save_path: Optional path to save the plot
-    """
-
-    # Convert tensors to numpy arrays
-    def to_numpy(x):
-        return x[0, 0].detach().cpu().numpy()
-
-    x0 = to_numpy(x0)
-    noise = to_numpy(noise)
-    x_t = to_numpy(x_t)
-    predicted_noise = to_numpy(predicted_noise)
-    x_t_minus_1 = to_numpy(x_t_minus_1)
-
-    # Create figure
-    fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle(f"Diffusion Process at t={timestep}")
-
-    # Plot original and noisy signals
-    axes[0].plot(x0[:100], label="Original x0", alpha=0.8)
-    axes[0].plot(x_t[:100], label=f"Noisy x_t", alpha=0.8)
-    axes[0].legend()
-    axes[0].set_ylabel("Signal")
-    axes[0].grid(True)
-
-    # Plot true and predicted noise
-    axes[1].plot(noise[:100], label="True Noise", alpha=0.8)
-    axes[1].plot(predicted_noise[:100], label="Predicted Noise", alpha=0.8)
-    axes[1].legend()
-    axes[1].set_ylabel("Noise")
-    axes[1].grid(True)
-
-    # Plot original and denoised signals
-    axes[2].plot(x0[:100], label="Original x0", alpha=0.8)
-    axes[2].plot(x_t_minus_1[:100], label="Denoised x_(t-1)", alpha=0.8)
-    axes[2].legend()
-    axes[2].set_ylabel("Signal")
-    axes[2].set_xlabel("Position")
-    axes[2].grid(True)
-
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path)
-    else:
-        plt.show()
-
-    plt.close()
-
-
-def display_diffusion_parameters(model, timestep):
-    """Display diffusion process parameters for a specific timestep.
-
-    Args:
-        model: The diffusion model
-        timestep: Timestep to display parameters for
-    """
-    # Get parameters directly
-    alpha_t = model.ddpm._alphas_t[timestep - 1].item()
-    alpha_bar_t = model.ddpm._alphas_bar_t[timestep].item()
-    sigma_t = model.ddpm._sigmas_t[timestep].item()
-    beta_t = 1.0 - alpha_t
-
-    # Print formatted parameters
-    print(f"\n--- Diffusion Parameters at t={timestep} ---")
-    print(f"β_{timestep} = {beta_t:.6f}")
-    print(f"α_{timestep} = {alpha_t:.6f}")
-    print(f"α̅_{timestep} = {alpha_bar_t:.6f}")
-    print(f"σ_{timestep} = {sigma_t:.6f}")
-    print(f"√α_{timestep} = {alpha_t**0.5:.6f}")
-    print(f"√(1-α̅_{timestep}) = {(1-alpha_bar_t)**0.5:.6f}")
-    print(
-        f"Forward diffusion equation: x_{timestep} = {alpha_t**0.5:.3f}·x₀ + {sigma_t:.3f}·ε"
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Test diffusion model noise prediction"
     )
-
-    return alpha_t, alpha_bar_t, sigma_t, beta_t
-
-
-def run_diffusion_step(model, x0, timestep):
-    """Run a single step of forward and reverse diffusion.
-
-    Args:
-        model: The diffusion model
-        x0: Input data [B, C, seq_len]
-        timestep: Timestep to test at
-
-    Returns:
-        tuple: (x0, noise, xt, predicted_noise, x_t_minus_1, metrics)
-    """
-    with torch.no_grad():
-        # Create timestep tensor
-        t = torch.full((x0.shape[0],), timestep, dtype=torch.long, device=x0.device)
-
-        # Sample random noise
-        noise = torch.randn_like(x0)
-
-        # 1. Forward diffusion: Add noise to input
-        xt = model.ddpm.sample(x0, t, noise)
-
-        # 2. Model prediction (should be ≈ 0 for zero-initialized model)
-        predicted_noise = model.predict_added_noise(xt, t)
-
-        # 3. Reverse process using predicted noise
-        x_t_minus_1 = model.reverse_diffusion(xt, t)
-
-        # Compute metrics
-        metrics = {
-            "noise_mse": F.mse_loss(predicted_noise, noise).item(),
-            "pred_noise_magnitude": torch.mean(torch.abs(predicted_noise)).item(),
-            "x0_diff": F.mse_loss(x_t_minus_1, x0).item(),
-        }
-
-        return x0, noise, xt, predicted_noise, x_t_minus_1, metrics
-
-
-def print_diffusion_results(
-    x0, noise, xt, predicted_noise, x_t_minus_1, metrics, timestep
-):
-    """Print the results of a diffusion step.
-
-    Args:
-        x0, noise, xt, predicted_noise, x_t_minus_1: Tensors from diffusion process
-        metrics: Dictionary of computed metrics
-        timestep: Current timestep
-    """
-    # Print signal analysis
-    print(f"\nSignal Analysis:")
-    print(f"1. Original x0 (first 30):\n{x0[0,0,:30].cpu().numpy()}")
-    print(f"2. Added noise (first 30):\n{noise[0,0,:30].cpu().numpy()}")
-    print(f"3. Noisy xt (first 30):\n{xt[0,0,:30].cpu().numpy()}")
-    print(f"4. Predicted noise (first 30):\n{predicted_noise[0,0,:30].cpu().numpy()}")
-    print(f"5. Denoised output (first 30):\n{x_t_minus_1[0,0,:30].cpu().numpy()}")
-
-    # Print metrics
-    print("\nMetrics:")
-    print(f"- Average predicted noise magnitude: {metrics['pred_noise_magnitude']:.6f}")
-    print(f"- True vs Predicted noise MSE: {metrics['noise_mse']:.6f}")
-    print(f"- Original vs Denoised MSE: {metrics['x0_diff']:.6f}")
-
-
-def test_diffusion_at_timestep(
-    model, x0, timestep, plot=True, save_plot=True
-):  # plot/save_plot args retained for compatibility, always True in main()
-    """Test the diffusion process at a specific timestep.
-
-    Args:
-        model: The diffusion model
-        x0: Input data [B, C, seq_len]
-        timestep: Timestep to test at
-        plot: Whether to plot the results
-        save_plot: Whether to save the plot to a file (if plot=True)
-    """
-    # 1. Display parameters
-    display_diffusion_parameters(model, timestep)
-
-    # 2. Run diffusion
-    results = run_diffusion_step(model, x0, timestep)
-    x0, noise, xt, predicted_noise, x_t_minus_1, metrics = results
-
-    # 3. Print results
-    print_diffusion_results(
-        x0, noise, xt, predicted_noise, x_t_minus_1, metrics, timestep
+    parser.add_argument(
+        "--checkpoint", type=str, required=True, help="Path to model checkpoint"
     )
-
-    # 4. Plot if requested
-    if plot:
-        save_path = f"diffusion_t{timestep}.png" if save_plot else None
-        plot_diffusion_process(
-            x0, noise, xt, predicted_noise, x_t_minus_1, timestep, save_path=save_path
-        )
-
-
-def load_config(config_path):
-    """Load configuration from yaml file."""
-    import yaml
-
-    with open(config_path, "r") as f:
-        return yaml.safe_load(f)
+    parser.add_argument(
+        "--snp_index",
+        type=int,
+        default=50,
+        help="Index of the SNP to monitor (default: 50)",
+    )
+    parser.add_argument(
+        "--num_runs",
+        type=int,
+        default=3,
+        help="Number of runs for variance estimation (default: 3)",
+    )
+    return parser.parse_args()
 
 
 def main():
-    """Main function to test diffusion model parameters and behavior."""
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+    """Main function."""
 
-    # Load configuration
-    config = load_config("config.yaml")
+    # Set global seed for reproducibility
+    set_seed(42)
 
-    # Set diffusion steps
-    print("\nTesting Diffusion Process")
-    print("======================")
-    print(f"Diffusion steps: {config['diffusion']['diffusion_steps']}")
-    print(f"Schedule type: {config['diffusion']['schedule_type']}")
-    print(f"Device: {device}")
+    # Parse Arguments
+    args = parse_args()
 
-    # Load dataset
-    print("\nLoading dataset...")
-    dataset = SNPDataset(
-        config.get("input_path"), seq_length=config.get("data").get("seq_length")
-    )
+    try:
+        # Load the model from checkpoint
+        print(f"\nLoading model from checkpoint: {args.checkpoint}")
+        model = DiffusionModel.load_from_checkpoint(
+            args.checkpoint,
+            map_location=device,
+            strict=True,
+        )
 
-    # Create data loader and get a batch
-    loader = DataLoader(
-        dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
-    )
-    x0 = next(iter(loader)).unsqueeze(1).to(device)  # shape=[B, C, seq_len]
+        config = model.hparams  # model config used during training
+        model = model.to(device)  # move model to device
+        model.eval()  # Set to evaluation mode
 
-    # Initialize model
-    print("Initializing model...")
-    model = DiffusionModel(hparams=config)
-    model.eval()
+        print(f"Model loaded successfully from checkpoint on {device}")
+        print("Model config loaded from checkpoint:\n")
+        print(config)
 
-    # Define timesteps to test
-    # Early (1, 2), middle (250, 500), and late (750, 999, 1000) timesteps
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
+
+    # Setup output directory
+    checkpoint_path = Path(args.checkpoint)
+    base_dir = checkpoint_path.parent.parent
+    print(f"\nResults will be saved to: {base_dir}")
+
+    # Load test dataset
+    print("\nLoading test dataset...")
+    model.setup("test")  # Initialize test dataset
+    test_loader = model.test_dataloader()
+
+    # Get a batch of test data
+    print("Preparing a batch of test data...")
+    x0 = next(iter(test_loader)).to(device)
+    x0 = x0.unsqueeze(1)  # Add channel dimension
+
+    print(f"Input shape: {x0.shape}")
+
+    # === Task1: Analyze Diffusion ===
+    output_dir = base_dir / "diffusion_plots"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     timesteps_to_test = [1, 2, 250, 500, 750, 999, 1000]
     print(f"\nAnalyzing diffusion process at timesteps: {timesteps_to_test}")
-
-    # Always plot and save for all timesteps
-    print("\nPlotting and saving results for all timesteps...")
     for t in timesteps_to_test:
-        test_diffusion_at_timestep(model, x0, timestep=t, plot=True, save_plot=True)
+        test_diffusion_at_timestep(
+            model, x0, timestep=t, plot=True, save_plot=True, output_dir=output_dir
+        )
+
+    # === Task2: Analyze Noise ===
+    print(f"\nAnalyzing noise at SNP index {args.snp_index}...")
+
+    output_dir = base_dir / "noise_analysis"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Perform multiple runs
+    all_runs = []
+    for run in range(args.num_runs):
+        print(f"\nRun {run + 1}/{args.num_runs}...")
+        run_result = track_single_run_at_snp(model, x0, args.snp_index)
+        all_runs.append(run_result)
+
+        # Plot individual run with enhanced visualization
+        plot_noise_evolution(
+            run_result["timesteps"],
+            run_result["true_noises"],
+            run_result["pred_noises"],
+            snp_index=args.snp_index,
+            save_path=str(output_dir / f"noise_evolution_run{run+1}.png"),
+        )
+
+    # Calculate and plot variance statistics
+    variance_stats = calculate_variance_across_runs(all_runs)
+    if variance_stats:
+        plot_variance_statistics(
+            variance_stats, save_path=str(output_dir / "noise_variance_analysis.png")
+        )
+
+        # Save statistics to file
+        stats_path = output_dir / "noise_statistics.txt"
+        with open(stats_path, "w") as f:
+            f.write("Noise Analysis Statistics\n")
+            f.write("========================\n\n")
+            f.write(f"Model: {args.checkpoint}\n")
+            f.write(f"SNP Index: {args.snp_index}\n")
+            f.write(f"Number of runs: {args.num_runs}\n\n")
+            f.write("Variance Analysis:\n")
+            f.write(
+                f"- Average true noise variance: {np.mean(variance_stats['true_variance']):.6f}\n"
+            )
+            f.write(
+                f"- Average predicted noise variance: {np.mean(variance_stats['pred_variance']):.6f}\n"
+            )
+            f.write(f"- Average MSE: {np.mean(variance_stats['mse']):.6f}\n")
+            f.write(
+                f"- Max MSE at timestep {np.argmax(variance_stats['mse']) + 1}: {np.max(variance_stats['mse']):.6f}\n"
+            )
+
+        print(f"\nAnalysis complete! Results saved to {output_dir}")
 
 
 if __name__ == "__main__":
