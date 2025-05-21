@@ -10,20 +10,33 @@ and visualizes how data transforms during forward and reverse diffusion.
 
 import argparse
 from pathlib import Path
+from typing import Dict, Any, List
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
+from torch import Tensor
 
 from src import DiffusionModel
 from src.utils import set_seed
+from test_noise_utils import (
+    run_noise_analysis,
+    plot_noise_analysis_results,
+    plot_loss_vs_timestep,
+    plot_noise_distributions,
+    plot_error_heatmap,
+    plot_noise_scales,
+    plot_error_statistics,
+    save_noise_analysis,
+)
+
+from test_snp_utils import analyze_single_snp, plot_noise_evolution
 from test_diffusion_utils import (
     test_diffusion_at_timestep,
-    plot_noise_evolution,
-    track_single_run_at_snp,
-    calculate_variance_across_runs,
-    plot_variance_statistics,
+    plot_diffusion_process,
+    display_diffusion_parameters,
 )
+
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -44,6 +57,12 @@ def parse_args():
         help="Index of the SNP to monitor (default: 50)",
     )
     parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=5,
+        help="Number of samples to analyze (default: 5)",
+    )
+    parser.add_argument(
         "--num_runs",
         type=int,
         default=3,
@@ -53,8 +72,6 @@ def parse_args():
 
 
 def main():
-    """Main function."""
-
     # Set global seed for reproducibility
     set_seed(42)
 
@@ -70,9 +87,10 @@ def main():
             strict=True,
         )
 
-        config = model.hparams  # model config used during training
-        model = model.to(device)  # move model to device
-        model.eval()  # Set to evaluation mode
+        # Get model config and move to device
+        config = model.hparams
+        model = model.to(device)
+        model.eval()
 
         print(f"Model loaded successfully from checkpoint on {device}")
         print("Model config loaded from checkpoint:\n")
@@ -81,84 +99,159 @@ def main():
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Setup output directory
+    # Setup output directory structure
     checkpoint_path = Path(args.checkpoint)
     base_dir = checkpoint_path.parent.parent
     print(f"\nResults will be saved to: {base_dir}")
 
     # Load test dataset
     print("\nLoading test dataset...")
-    model.setup("test")  # Initialize test dataset
+    model.setup("test")
     test_loader = model.test_dataloader()
 
     # Get a batch of test data
     print("Preparing a batch of test data...")
     x0 = next(iter(test_loader)).to(device)
     x0 = x0.unsqueeze(1)  # Add channel dimension
+    print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
-    print(f"Input shape: {x0.shape}")
+    # Run analyses
+    base_dir = Path(base_dir)
 
-    # === Task1: Analyze Diffusion ===
-    output_dir = base_dir / "diffusion_plots"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 1. Noise analysis
+    noise_analysis = False
+    if noise_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING NOISE ANALYSIS ")
+        print("=" * 70)
 
-    timesteps_to_test = [1, 2, 250, 500, 750, 999, 1000]
-    print(f"\nAnalyzing diffusion process at timesteps: {timesteps_to_test}")
-    for t in timesteps_to_test:
-        test_diffusion_at_timestep(
-            model, x0, timestep=t, plot=True, save_plot=True, output_dir=output_dir
+        # Create output directory
+        noise_analysis_dir = base_dir / "noise_analysis"
+        noise_analysis_dir.mkdir(exist_ok=True)
+
+        # Use provided timesteps or default range
+        timesteps = [1, 10, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+
+        print(f"Running noise analysis at timesteps: {timesteps}")
+        noise_results = run_noise_analysis(
+            model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
         )
 
-    # === Task2: Analyze Noise ===
-    print(f"\nAnalyzing noise at SNP index {args.snp_index}...")
+        # Plot and save noise analysis results
+        plot_noise_analysis_results(noise_results, noise_analysis_dir)
+        plot_loss_vs_timestep(noise_results, noise_analysis_dir)
+        save_noise_analysis(noise_results, noise_analysis_dir)
+        plot_noise_distributions(noise_results, noise_analysis_dir)
+        # plot_spatial_correlations(noise_results, noise_analysis_dir)
+        plot_error_heatmap(noise_results, noise_analysis_dir)
+        plot_noise_scales(noise_results, noise_analysis_dir)
+        plot_error_statistics(noise_results, noise_analysis_dir)
+        print(f"\nNoise analysis complete! Results saved to {noise_analysis_dir}")
 
-    output_dir = base_dir / "noise_analysis"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # 2. Run diffusion analysis
+    diffusion_analysis = True
+    if diffusion_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING DIFFUSION ANALYSIS ")
+        print("=" * 70)
 
-    # Perform multiple runs
-    all_runs = []
-    for run in range(args.num_runs):
-        print(f"\nRun {run + 1}/{args.num_runs}...")
-        run_result = track_single_run_at_snp(model, x0, args.snp_index)
-        all_runs.append(run_result)
+        # Create output directory
+        diffusion_analysis_dir = base_dir / "diffusion_analysis"
+        diffusion_analysis_dir.mkdir(exist_ok=True)
 
-        # Plot individual run with enhanced visualization
-        plot_noise_evolution(
-            run_result["timesteps"],
-            run_result["true_noises"],
-            run_result["pred_noises"],
+        # Use provided timesteps or default range (fewer timesteps for diffusion analysis)
+        diff_timesteps = [1, 10, 100, 200, 500, 600, 800, 900, 1000]
+
+        print(f"Running diffusion analysis at timesteps: {diff_timesteps}")
+        print(f"Using {args.num_samples} samples")
+
+        # Run the diffusion analysis
+        print("\nRunning diffusion analysis...")
+
+        # Create results dictionary to store metrics
+        diffusion_results = {}
+
+        # Run analysis for each timestep
+        for t in diff_timesteps:
+            print(f"\n--- Analyzing timestep {t} ---")
+
+            # Run the diffusion step and get results
+            result = test_diffusion_at_timestep(
+                model=model,
+                x0=x0[: args.num_samples],  # Use specified number of samples
+                timestep=t,
+                plot=True,
+                save_plot=True,
+                output_dir=str(diffusion_analysis_dir),
+            )
+
+            # Generate comprehensive diffusion process plot
+            if t in [1, diff_timesteps[len(diff_timesteps) // 2], diff_timesteps[-1]]:
+                plot_diffusion_process(
+                    x0=result["x0"][:1],  # Use x0 from result to ensure consistency
+                    noise=result["noise"][:1],
+                    x_t=result["xt"][:1],  # Changed from "x_t" to "xt"
+                    predicted_noise=result["predicted_noise"][:1],
+                    x_t_minus_1=result["x_t_minus_1"][:1],
+                    timestep=t,
+                    save_dir=str(diffusion_analysis_dir / "diffusion_plots"),
+                )
+
+            # Store results
+            diffusion_results[t] = result
+
+            # Print detailed results
+            print(f"\nResults for timestep {t}:")
+            print("-" * 40)
+            print(f"MSE: {result['metrics']['mse']:.6f}")
+            print(f"Weighted MSE: {result['metrics']['weighted_mse']:.6f}")
+            print(f"Reconstruction MSE: {result['metrics']['x0_diff']:.6f}")
+
+            # Display diffusion parameters for key timesteps
+            if t in [1, diff_timesteps[len(diff_timesteps) // 2], diff_timesteps[-1]]:
+                display_diffusion_parameters(model, t)
+
+        print("\nDiffusion analysis complete!")
+        print(f"Results saved to: {diffusion_analysis_dir}")
+        print(f"- Individual step plots: {diffusion_analysis_dir}")
+        print(
+            f"- Combined process visualizations: {diffusion_analysis_dir / 'diffusion_plots'}"
+        )
+
+    # 3. Run SNP-specific analysis
+    snp_analysis = False
+    if snp_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING SNP-SPECIFIC ANALYSIS ")
+        print("=" * 70)
+
+        # Create output directory
+        snp_analysis_dir = base_dir / "snp_analysis"
+        snp_analysis_dir.mkdir(exist_ok=True)
+
+        # Run SNP analysis
+        print(f"\nAnalyzing SNP at index {args.snp_index}...")
+        snp_results = analyze_single_snp(
+            model=model,
+            x0=x0,
             snp_index=args.snp_index,
-            save_path=str(output_dir / f"noise_evolution_run{run+1}.png"),
+            num_runs=args.num_runs,
+            output_dir=snp_analysis_dir,
         )
 
-    # Calculate and plot variance statistics
-    variance_stats = calculate_variance_across_runs(all_runs)
-    if variance_stats:
-        plot_variance_statistics(
-            variance_stats, save_path=str(output_dir / "noise_variance_analysis.png")
-        )
-
-        # Save statistics to file
-        stats_path = output_dir / "noise_statistics.txt"
-        with open(stats_path, "w") as f:
-            f.write("Noise Analysis Statistics\n")
-            f.write("========================\n\n")
-            f.write(f"Model: {args.checkpoint}\n")
-            f.write(f"SNP Index: {args.snp_index}\n")
-            f.write(f"Number of runs: {args.num_runs}\n\n")
-            f.write("Variance Analysis:\n")
-            f.write(
-                f"- Average true noise variance: {np.mean(variance_stats['true_variance']):.6f}\n"
-            )
-            f.write(
-                f"- Average predicted noise variance: {np.mean(variance_stats['pred_variance']):.6f}\n"
-            )
-            f.write(f"- Average MSE: {np.mean(variance_stats['mse']):.6f}\n")
-            f.write(
-                f"- Max MSE at timestep {np.argmax(variance_stats['mse']) + 1}: {np.max(variance_stats['mse']):.6f}\n"
+        # Plot noise evolution for the first run
+        if snp_results["all_runs"]:
+            first_run = snp_results["all_runs"][0]
+            plot_path = snp_analysis_dir / f"snp_{args.snp_index}_noise_evolution.png"
+            plot_noise_evolution(
+                timesteps=first_run["timesteps"],
+                true_noises=first_run["true_noises"],
+                pred_noises=first_run["pred_noises"],
+                snp_index=args.snp_index,
+                save_path=plot_path,
             )
 
-        print(f"\nAnalysis complete! Results saved to {output_dir}")
+        print(f"\nSNP analysis complete! Results saved to {snp_analysis_dir}")
 
 
 if __name__ == "__main__":
