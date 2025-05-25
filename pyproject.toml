@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genome_diffusion"
+version = "0.1.0"
+description = "Genome Diffusion Models for SNP Data"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v"
+
+[tool.black]
+line-length = 88
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.flake8]
+# Match Black's line length
+max-line-length = 88
+# Ignore whitespace around : in slices (E203) and line break before binary operator (W503)
+extend-ignore = "E203, W503"
+# Maximum complexity (McCabe complexity)
+max-complexity = 10
+# Select error codes: PyFlakes (F), pycodestyle (E, W), and McCabe complexity (C90)
+select = "E,F,W,C90"
+# Allow unused imports in __init__.py
+per-file-ignores = [
+    "__init__.py: F401"
+]
+
+[tool.mypy]
+# Basic Python version compatibility
+python_version = "3.8"
+# Enable strict optional checking (PEP 484)
+strict_optional = true
+# Disallow untyped definitions
+no_implicit_optional = true
+disallow_untyped_defs = true
+# Warn about unreachable code and missing returns
+warn_unreachable = true
+warn_no_return = true
+# Enable some useful warnings
+warn_return_any = true
+warn_unused_configs = true
+# Ignore missing imports for third-party packages
+ignore_missing_imports = true

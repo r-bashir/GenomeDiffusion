@@ -10,33 +10,31 @@ and visualizes how data transforms during forward and reverse diffusion.
 
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from test_diff_utils import (
+    display_diffusion_parameters,
+    plot_diffusion_process,
+    test_diffusion_at_timestep,
+)
+from test_noise_utils import (
+    plot_error_heatmap,
+    plot_error_statistics,
+    plot_loss_vs_timestep,
+    plot_noise_analysis_results,
+    plot_noise_distributions,
+    plot_noise_scales,
+    run_noise_analysis,
+    save_noise_analysis,
+)
+from test_snp_utils import analyze_single_snp, plot_noise_evolution
 from torch import Tensor
 
 from src import DiffusionModel
 from src.utils import set_seed
-from test_noise_utils import (
-    run_noise_analysis,
-    plot_noise_analysis_results,
-    plot_loss_vs_timestep,
-    plot_noise_distributions,
-    plot_error_heatmap,
-    plot_noise_scales,
-    plot_error_statistics,
-    save_noise_analysis,
-)
-
-from test_snp_utils import analyze_single_snp, plot_noise_evolution
-from test_diffusion_utils import (
-    test_diffusion_at_timestep,
-    plot_diffusion_process,
-    display_diffusion_parameters,
-)
-
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -119,7 +117,7 @@ def main():
     base_dir = Path(base_dir)
 
     # 1. Noise analysis
-    noise_analysis = False
+    noise_analysis = True
     if noise_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING NOISE ANALYSIS ")
@@ -219,7 +217,7 @@ def main():
         )
 
     # 3. Run SNP-specific analysis
-    snp_analysis = False
+    snp_analysis = True
     if snp_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING SNP-SPECIFIC ANALYSIS ")

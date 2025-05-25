@@ -34,13 +34,13 @@ Common Issues to Watch For:
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
-import torch
 import numpy as np
-from scipy.stats import norm
+import torch
 from scipy.signal import welch
+from scipy.stats import norm
 from torch import Tensor
 
 from src import DiffusionModel
@@ -327,8 +327,9 @@ def save_noise_analysis(
         output_dir: Directory to save the CSV file
         filename: Name of the output CSV file
     """
+    from typing import Any, Dict, List
+
     import pandas as pd
-    from typing import List, Dict, Any
 
     # Prepare data for DataFrame
     rows: List[Dict[str, Any]] = []

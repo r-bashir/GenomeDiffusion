@@ -1,19 +1,43 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-from .dataset import SNPDataset
+from pathlib import Path
+
+# Project paths
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+SRC_DIR = PROJECT_ROOT / "src"
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
+DATA_DIR = PROJECT_ROOT / "data"
+
+from .dataset import SNPDataModule, SNPDataset
 from .ddpm import DDPM
 from .diffusion_model import DiffusionModel
 from .mlp import MLP
-from .models import UniformContinuousTimeSampler, UniformDiscreteTimeSampler
+from .time_sampler import UniformContinuousTimeSampler, UniformDiscreteTimeSampler
 from .unet import UNet1D
+from .utils import set_seed
+
+__version__ = "0.1.0"
 
 __all__ = [
+    # Paths
+    "PROJECT_ROOT",
+    "SRC_DIR",
+    "SCRIPTS_DIR",
+    "DATA_DIR",
+    "__version__",
+    
+    # Dataset
     "SNPDataset",
-    "DDPM",
-    "UNet1D",
-    "MLP",
-    "UniformDiscreteTimeSampler",
-    "UniformContinuousTimeSampler",
+    "SNPDataModule",
+    # Models
     "DiffusionModel",
+    "DDPM",
+    "MLP",
+    "UNet1D",
+    # Time samplers
+    "UniformContinuousTimeSampler",
+    "UniformDiscreteTimeSampler",
+    # Utils
+    "set_seed",
 ]

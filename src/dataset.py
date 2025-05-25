@@ -1,421 +1,429 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""This script implements the SNPDataset and SNPDataModule classes."""
+"""
+SNP Data Loading and Preprocessing Module.
+
+This module provides functionality for loading and preprocessing SNP (Single Nucleotide Polymorphism) data.
+It includes classes and functions for data loading, preprocessing, and dataset management for machine learning.
+
+Classes:
+    SNPDataset: PyTorch Dataset for SNP data
+    SNPDataModule: PyTorch Lightning DataModule for SNP data
+
+Functions:
+    load_data: Load and preprocess SNP data from a parquet file
+    handle_missing_values: Impute missing values using mode imputation
+    normalize_data: Normalize SNP values to [0.0, 0.5, 1.0] range
+    scale_data: Scale normalized data by a given factor
+    augment_data: Apply test patterns to the data (for debugging)
+    print_data_stats: Print statistics about the data
+    main: Command-line entry point for data preprocessing
+
+Example:
+    # Run as a module
+    python -m src.dataset --config config.yaml
+
+    # Run as a script
+    python src/dataset.py --config config.yaml
+"""
 
 import argparse
-import os
+import logging
+from pathlib import Path
+from pprint import pprint
+from typing import Any, Dict, Optional, Union
 
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import torch.utils.data
+import yaml
 from scipy import stats
 
 
-# load dataset
-def load_data_old(input_path=None, seq_length=None):
-    """
-    Load data and process it.
+def setup_logging(debug: bool = False) -> logging.Logger:
+    """Configure console logging and return a logger instance.
 
     Args:
-        input_path: Path to the parquet file containing SNP data
-        seq_length: Number of SNP markers to include (None for all markers)
+        debug: If True, set log level to DEBUG, else INFO
 
     Returns:
-        torch.FloatTensor: Processed data with shape (n_samples, seq_length)
+        logging.Logger: Configured logger instance with name "DataLogger"
     """
-    # Read data
-    try:
-        # The parquet data is stored in shape (n_markers, n_samples).
-        # We need to transpose it to get shape as (n_samples, n_markers)
-        data = pd.read_parquet(input_path).to_numpy()
-    except Exception as e:
-        raise ValueError(f"Error loading data: {e}")
+    logger = logging.getLogger("DataLogger")
 
-    # Handle NaNs
-    data = handle_missing_values(data)
+    # Only configure if not already configured
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
-    # Normalize Data
-    data = normalize_data(data)
-
-    # Augment Data (replace 50% data with 0.5)
-    # data = data_augmentation(data)
-
-    # Transpose to get (n_samples, n_markers)
-    data = data.T
-
-    # Slice to seq_length if specified
-    if seq_length is not None:
-        print(f"Loading data with {seq_length} markers (out of {data.shape[1]})")
-        data = data[:, :seq_length]
-    else:
-        print(f"Loading full dataset with {data.shape[1]} markers")
-
-    # Scale Data by a Factor
-    # data = scale_data(data, factor=0.5)
-
-    # Convert to Float Tensor
-    data = torch.FloatTensor(data)  # [n_samples, seq_len]
-    return data
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    return logger
 
 
-def load_data(input_path=None, seq_length=None):
-    """
-    Load data and process it.
+# Initialize the module-level logger
+logger = setup_logging()
+
+
+# Load dataset
+def load_data(config: Dict[str, Any]) -> torch.Tensor:
+    """Load and preprocess SNP data based on configuration. The data is loaded
+    from a parquet file with shape (n_markers, n_samples) and transposed to shape
+    (n_samples, n_markers). The data is then processed based on the configuration.
+
+    Preprocessing steps (ordered):
+    1. Handle sequence length
+    2. Handle missing values
+    3. Apply normalization
+    4. Apply scaling
+    5. Apply augmentation (Fixed patterns)
 
     Args:
-        input_path: Path to the parquet file containing SNP data
-        seq_length: Number of SNP markers to include (None for all markers)
+        config: Configuration dictionary with data and preprocessing parameters
 
     Returns:
-        torch.FloatTensor: Processed data with shape (n_samples, seq_length)
+        torch.FloatTensor: Processed data with shape (n_samples, n_markers)
     """
-    # Read data
+    logger.info("Starting data loading and preprocessing")
+    data_config = config.get("data")
+
+    # Load and transpose data
     try:
-        # The parquet data is stored in shape (n_markers, n_samples).
-        # We need to transpose it to get shape as (n_samples, n_markers)
-        data = pd.read_parquet(input_path).to_numpy()
+        input_path = data_config.get("input_path")
+        if not input_path:
+            raise ValueError("input_path not specified in config")
+
+        logger.info(f"Loading data from {input_path}")
+        data = pd.read_parquet(input_path).to_numpy().T
+        logger.info(f"Loaded data with shape: {data.shape} (n_samples, n_markers)")
     except Exception as e:
-        raise ValueError(f"Error loading data: {e}")
+        logger.error(f"Error loading data from {input_path}: {e}")
+        raise
 
-    # Handle NaNs
-    data = handle_missing_values(data)
-
-    # Normalize Data
-    data = normalize_data(data)
-
-    # Augment Data
-    # data = augment_data(data)
-
-    # Transpose to get (n_samples, n_markers)
-    data = data.T
-
-    # Slice to seq_length if specified
-    if seq_length is not None:
-        print(f"Loading data with {seq_length} markers (out of {data.shape[1]})")
+    # 1. Handle sequence length
+    seq_length = data_config.get("seq_length", data.shape[1])
+    if seq_length is not None and seq_length < data.shape[1]:
+        logger.info(f"Using first {seq_length} markers (out of {data.shape[1]})")
         data = data[:, :seq_length]
     else:
-        print(f"Loading full dataset with {data.shape[1]} markers")
+        logger.info(f"Using all {data.shape[1]} markers")
 
-    # Create position-dependent pattern in the first 100 SNPs
-    if seq_length is not None and seq_length >= 100:
-        # Set first 25 SNPs to 0.0
-        data[:, :25] = 0.0
-        # Set next 50 SNPs to 0.5
-        data[:, 25:75] = 0.5
-        # Set next 25 SNPs to 1.0
-        data[:, 75:100] = 1.0
+    # 2. Handle missing values
+    missing_value = data_config.get("missing_value", 9)
+    if missing_value is not None:
+        logger.info(f"Handling missing values (marked as {missing_value})")
+        data = handle_missing_values(data, missing_value)
 
-    # Scale Data by a Factor
-    data = scale_data(data, factor=0.5)
+    # 3. Handle normalization
+    if data_config.get("normalize", False):
+        logger.info("Normalizing data to [0.0, 0.5, 1.0] range")
+        data = normalize_data(data)
 
-    # Convert to Float Tensor
+    # 4. Handle scaling
+    if data_config.get("scaling", False):
+        scale_factor = data_config.get("scale_factor")
+        logger.info(f"Scaling data by factor {scale_factor}")
+        data = scale_data(data, scale_factor)
+
+    # 5. Handle augmentation
+    if data_config.get("augment", False):
+        logger.info("Applying data augmentation")
+        data = augment_data(data)
+
+    logger.info("Data preprocessing completed")
+
     return torch.FloatTensor(data)
 
 
-def handle_missing_values(data):
-    """Handles missing values in the dataset per SNP marker.
+# Handle missing values
+def handle_missing_values(data: np.ndarray, missing_value: int = 9) -> np.ndarray:
+    """Handle missing values (9s) by imputing with the most frequent valid value (0,1,2)
+    for each marker. For each marker (column), computes the mode of valid values (0,1,2)
+    and uses it to replace any missing values (9s) in that marker. In case of ties
+    (multiple modes), the smallest value is used.
 
-    At this point in the data pipeline, the data has shape (n_markers, n_samples),
-    where each row represents a single marker across all samples.
-    For each marker, we find the most frequent non-missing value and replace
-    any missing values (9) with that value.
+    Args:
+        data: Input data array of shape (n_samples, n_markers)
+        missing_value: Value representing missing data (default: 9)
+
+    Returns:
+        Data with missing values imputed
     """
+    logger = logging.getLogger(__name__)
+    data = data.copy()  # Don't modify input array
+    n_missing = 0
+    n_markers = data.shape[1]
 
-    # Loop over each SNP/marker (rows in the current orientation)
-    for i in range(data.shape[0]):
-        row = data[i]  # All samples for this marker
-        valid_values = row[row != 9]  # Filter out missing values
-        if len(valid_values) > 0:
-            # Find most common value for this marker
-            mode_value = stats.mode(valid_values, keepdims=True)[0][0]
-            # Replace missing values with the mode
-            row[row == 9] = mode_value
+    for col in range(n_markers):
+        marker_values = data[:, col]
+        valid_mask = marker_values != missing_value
+        n_missing_col = np.sum(~valid_mask)
+        n_missing += n_missing_col
+
+        if n_missing_col == 0:
+            continue  # No missing values in this column
+
+        if np.any(valid_mask):
+            valid_values = marker_values[valid_mask]
+            # Compute mode of valid values
+            values, counts = np.unique(valid_values, return_counts=True)
+            if len(values) > 0:  # If we have valid values
+                # Get all values with maximum count (handles multiple modes)
+                max_count = counts.max()
+                modes = values[counts == max_count]
+                # Use the smallest mode value in case of ties
+                mode_value = modes.min() if len(modes) > 0 else 0
+
+                # Replace missing values with mode
+                missing_mask = ~valid_mask
+                data[missing_mask, col] = mode_value
+                logger.debug(
+                    f"Marker {col}: imputed {n_missing_col} missing values with {mode_value}"
+                )
+        else:
+            logger.warning(
+                f"Marker {col}: No valid values found, using 0 for all values"
+            )
+            data[:, col] = 0  # If all values are missing, set entire column to 0
+
+    if n_missing > 0:
+        logger.info(f"Imputed {n_missing} missing values in total")
 
     return data
 
 
-def augment_data(data):
-    """Augment data by changing the values of certain markers"""
+# Normalize data
+def normalize_data(data: np.ndarray) -> np.ndarray:
+    """Normalize data by mapping original SNP/marker values to
+    new SNP/marker values. We map 0 → 0.0, 1 → 0.5, and 2 → 1.0"""
 
-    # Replace 50% of data values with 0.5
-    num_elements = data.size
-    num_to_replace = num_elements // 2
-    indices = np.unravel_index(
-        np.random.choice(num_elements, num_to_replace, replace=False), data.shape
-    )
-    data[indices] = 0.5
+    # Create output array with proper type
+    result = np.empty_like(data, dtype=np.float32)
 
-    return data
+    # Vectorized normalization
+    result[data == 0] = 0.0
+    result[data == 1] = 0.5
+    result[data == 2] = 1.0
 
-
-def normalize_data(data):
-    """Normalize data by mapping original SNP/marker values to new
-    SNP/marker values. We map 0 → 0.0, 1 → 0.5, and 2 → 1.0"""
-
-    # Normalize by mapping
-    data[data == 0] = 0.0
-    data[data == 1] = 0.5
-    data[data == 2] = 1.0
-
-    return data
+    return result
 
 
-def scale_data(data, factor=0.5):
-    """
-    Scale SNP/marker data by 0.5 to shift peaks for trimodal distribution.
+# Scale data
+def scale_data(
+    data: Union[np.ndarray, torch.Tensor], factor: float = 0.5
+) -> Union[np.ndarray, torch.Tensor]:
+    """Scale data by a given factor to shift peaks for trimodal distribution.
     After normalization, this maps peaks from [0.0, 0.5, 1.0] to [0.0, 0.25, 0.5].
     Args:
-        data (np.ndarray or torch.Tensor): Normalized data (values in [0.0, 0.5, 1.0])
+        data (np.ndarray or torch.Tensor): Normalized data
+        factor (float): Scaling factor
     Returns:
         Scaled data (same type as input)
     """
-    return data * factor
+    data = data * factor
+    return data
 
 
-# SNPDataset
+# Augment data
+def augment_data(data: np.ndarray) -> np.ndarray:
+    """Apply test patterns to the data for debugging.
+
+    Applies the following fixed patterns to the data:
+    - First 25 markers: 0.0
+    - Next 50 markers: 0.5
+    - Next 25 markers: 1.0
+
+    Args:
+        data: Input data array of shape (n_samples, n_markers)
+
+    Returns:
+        Copy of input data with test patterns applied
+    """
+    data = data.copy()
+    n_markers = data.shape[1]
+
+    # Define pattern ranges [start, end, value]
+    patterns = [
+        (0, 25, 0.0),  # First 25 markers set to 0.0
+        (25, 75, 0.5),  # Next 50 markers set to 0.5
+        (75, 100, 1.0),  # Next 25 markers set to 1.0
+    ]
+
+    # Apply each pattern
+    for start, end, value in patterns:
+        if start < n_markers:  # Only apply if start is within bounds
+            end = min(end, n_markers)  # Don't exceed array bounds
+            data[:, start:end] = value
+
+    return data
+
+
 class SNPDataset(torch.utils.data.Dataset):
-    def __init__(self, input_path=None, seq_length=None):
+    """A PyTorch Dataset for loading and accessing SNP data.
 
-        self.input_path = input_path
-        self.seq_length = seq_length
-        self.data = load_data(self.input_path, seq_length=self.seq_length)
+    Handles loading and preprocessing of SNP data according to the provided config.
+    The actual data loading and preprocessing is handled by the `load_data` function.
+    """
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize with configuration.
+
+        Args:
+            config: Full configuration dictionary. The 'data' key should contain
+                   data loading and preprocessing parameters.
+        """
+        self.config = config
+        self.data = load_data(config)
         self.validate_data()
+        logger.info(f"Loaded dataset with {len(self)} samples")
 
-    def validate_data(self):
-        """Validates the loaded data for integrity."""
-        if self.data is None or len(self.data) == 0:
-            raise ValueError("Loaded data is empty or None.")
+    def validate_data(self) -> None:
+        """Validate that data was loaded correctly."""
+        if self.data is None:
+            raise ValueError("Data loading failed: returned None")
+        if len(self.data) == 0:
+            raise ValueError("Loaded data is empty")
 
-    def __len__(self):
-        return self.data.shape[0]
+    def __len__(self) -> int:
+        """Return number of samples in the dataset.
 
-    def __getitem__(self, idx):
+        Returns:
+            int: Number of samples in the dataset
+        """
+        return len(self.data)
+
+    def __getitem__(self, idx: int) -> torch.Tensor:
+        """Get a single sample by index.
+
+        Args:
+            idx: Index of the sample to retrieve
+
+        Returns:
+            torch.Tensor: The sample at the given index with shape (n_markers,)
+
+        Raises:
+            IndexError: If the index is out of bounds
+        """
+        if idx < 0 or idx >= len(self):
+            raise IndexError(f"Index {idx} out of range [0, {len(self) - 1}]")
         return self.data[idx]
 
 
-# SNPDataModule
 class SNPDataModule(pl.LightningDataModule):
-    def __init__(self, input_path, batch_size=256, num_workers=1, seq_length=None):
-        super().__init__()
-        self.input_path = input_path
-        self.batch_size = batch_size
-        self.workers = num_workers
-        self.fractions = [0.8, 0.1, 0.1]
-        self.seq_length = seq_length
+    """LightningDataModule for handling SNP data loading and splitting.
 
-    # Setup Data
-    def setup(self, stage=None, fractions=[0.8, 0.1, 0.1]):
-        """Prepare the dataset"""
-        if sum(fractions) != 1.0:
-            raise ValueError("Fractions must sum to 1.")
+    Handles train/val/test splits and creates appropriate DataLoaders.
+    The data is only loaded and split when setup() is called.
+    """
 
-        full_dataset = load_data(self.input_path, seq_length=self.seq_length)
-        n = len(full_dataset)
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize with configuration.
 
-        # Calculate dataset sizes
-        n_train = int(fractions[0] * n)
-        n_val = int(fractions[1] * n)
-        n_test = n - n_train - n_val  # Ensure all data is used
-
-        # Split dataset
-        self.trainset, self.valset, self.testset = torch.utils.data.random_split(
-            full_dataset,
-            [n_train, n_val, n_test],
-            generator=torch.Generator().manual_seed(42),
-        )
-
-    # Data Loaders
-    def train_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.trainset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.workers,
-        )
-
-    def val_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.valset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.workers,
-        )
-
-    def test_dataloader(self):
-        return torch.utils.data.DataLoader(
-            self.testset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.workers,
-        )
-
-
-class SNPDataModule_v2(pl.LightningDataModule):
-    def __init__(
-        self,
-        input_path,
-        batch_size=256,
-        num_workers=1,
-        impute_strategy="mode",
-        seq_length=None,
-    ):
-        """
         Args:
-            input_path (str): Path to SNP dataset.
-            batch_size (int): Batch size for data loaders.
-            num_workers (int): Number of workers for DataLoader.
-            impute_strategy (str): Strategy for handling missing values (9). Options: ["mode", "mean", None].
+            config: Full configuration dictionary
         """
         super().__init__()
-        self.path = input_path
-        self.batch_size = batch_size
-        self.workers = num_workers
-        self.impute_strategy = impute_strategy
-        self.seq_length = seq_length
-        self.data_split = [128686, 16086, 16086]  # 80% train, 10% val, 10% test
+        self.config = config
+        self.batch_size = self.config["data"].get("batch_size", 64)
+        self.num_workers = self.config["data"].get("num_workers", 4)
+        self.datasplit = self.config["data"].get("datasplit", [1700, 200, 167])
 
-    def preprocess(self, dataset):
-        """Handles missing values (9s) by either mode or mean imputation."""
-        data = dataset.tensors[
-            0
-        ]  # Extract SNP data (assuming dataset is TensorDataset)
+        # Track if we've loaded the data
+        self._data_loaded = False
+        self.full_dataset = None
 
-        mask = (data != 9).float()  # Mask: 1 for valid, 0 for missing
+        # Will be initialized in setup()
+        self.train_dataset = None
+        self.val_dataset = None
+        self.test_dataset = None
 
-        if self.impute_strategy == "mode":
-            mode_values = self.compute_mode(data)
-            data = torch.where(mask.bool(), data, mode_values)
-        elif self.impute_strategy == "mean":
-            mean_values = torch.nanmean(
-                torch.where(mask.bool(), data, torch.nan), dim=0
+    def _load_and_split_data(self) -> None:
+        """Load the full dataset and perform the train/val/test split."""
+        if self._data_loaded:
+            return
+
+        logger.info("Loading and splitting dataset...")
+
+        # Load full dataset
+        self.full_dataset = SNPDataset(self.config)
+
+        # Split the dataset
+        self.train_dataset, self.val_dataset, self.test_dataset = (
+            torch.utils.data.random_split(
+                self.full_dataset,
+                self.datasplit,
+                generator=torch.Generator().manual_seed(42),
             )
-            data = torch.where(mask.bool(), data, mean_values)
-
-        return torch.utils.data.TensorDataset(
-            data, dataset.tensors[1]
-        )  # Reconstruct dataset
-
-    def compute_mode(self, data):
-        """Computes mode per SNP column, ignoring missing values (9s)."""
-        valid_data = data[data != 9]
-        mode_values = torch.mode(valid_data, dim=0)[0]  # Get most common value per SNP
-        return mode_values
-
-    def setup(self, stage=None):
-        """Loads and preprocesses dataset."""
-        full_dataset = load_data(
-            self.path, seq_length=self.seq_length
-        )  # Load with specified sequence length
-
-        # Split into train/val/test
-        self.trainset, self.valset, self.testset = torch.utils.data.random_split(
-            full_dataset,
-            self.data_split,
-            generator=torch.Generator().manual_seed(
-                42
-            ),  # Fixed seed for reproducibility
         )
 
-        # Apply preprocessing
-        self.trainset = self.preprocess(self.trainset)
-        self.valset = self.preprocess(self.valset)
-        self.testset = self.preprocess(self.testset)
+        self._data_loaded = True
 
-    def train_dataloader(self):
+    def setup(self, stage: Optional[str] = None) -> None:
+        """Set up the data for the current stage.
+
+        This method is called on every GPU in distributed training. It handles:
+        - Loading data only when needed based on the stage
+        - Setting up the appropriate datasets
+
+        Args:
+            stage: Either 'fit' (train+val), 'validate' (val), 'test' (test), or None (all)
+        """
+        # For our case, we'll load everything in one go since we're using the same
+        # dataset. But we'll respect the stage parameter for future flexibility.
+        if stage == "fit" and self.train_dataset is None:
+            self._load_and_split_data()
+        elif stage == "validate" and self.val_dataset is None:
+            self._load_and_split_data()
+        elif stage == "test" and self.test_dataset is None:
+            self._load_and_split_data()
+        elif stage is None and not self._data_loaded:
+            self._load_and_split_data()
+
+    def train_dataloader(self) -> torch.utils.data.DataLoader:
+        """Create and return the training dataloader."""
+        if self.train_dataset is None:
+            self.setup("fit")
+
         return torch.utils.data.DataLoader(
-            self.trainset,
+            self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.workers,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0,
+            drop_last=True,  # Helps with batch norm
         )
 
-    def val_dataloader(self):
+    def val_dataloader(self) -> torch.utils.data.DataLoader:
+        """Create and return the validation dataloader."""
+        if self.val_dataset is None:
+            self.setup("validate")
+
         return torch.utils.data.DataLoader(
-            self.valset,
+            self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.workers,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0,
         )
 
-    def test_dataloader(self):
+    def test_dataloader(self) -> torch.utils.data.DataLoader:
+        """Create and return the test dataloader."""
+        if self.test_dataset is None:
+            self.setup("test")
+
         return torch.utils.data.DataLoader(
-            self.testset,
+            self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.workers,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0,
         )
-
-
-def check_path_exists(path):
-    """Check if a path exists."""
-    return os.path.exists(path)
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input_path", type=str, required=True)
-    args = parser.parse_args()
-
-    # Initial marker frequencies (whole dataset)
-    print("\nInitial marker frequencies (whole dataset)...")
-    raw_data = pd.read_parquet(args.input_path).to_numpy().T
-    unique, counts = np.unique(raw_data, return_counts=True)
-    freq_dict = dict(zip(unique, counts))
-    for value in sorted(freq_dict.keys()):
-        percentage = (freq_dict[value] / raw_data.size) * 100
-        print(f"Value {value}: {percentage:.2f}%")
-
-    # Handle missing values
-    print("\nHandling missing values...")
-    raw_data = handle_missing_values(raw_data)
-
-    print("\nFinal marker frequencies (whole dataset)...")
-    unique, counts = np.unique(raw_data, return_counts=True)
-    freq_dict = dict(zip(unique, counts))
-    for value in sorted(freq_dict.keys()):
-        percentage = (freq_dict[value] / raw_data.size) * 100
-        print(f"Value {value}: {percentage:.2f}%")
-
-    # Handling normalization
-    print("\nHandling normalization...")
-    raw_data[raw_data == 0] = 0.0
-    raw_data[raw_data == 1] = 0.5
-    raw_data[raw_data == 2] = 1.0
-
-    print("\nNormalized marker frequencies (whole dataset)...")
-    unique, counts = np.unique(raw_data, return_counts=True)
-    freq_dict = dict(zip(unique, counts))
-    for value in sorted(freq_dict.keys()):
-        percentage = (freq_dict[value] / raw_data.size) * 100
-        print(f"Value {value}: {percentage:.2f}%")
-
-    # Test Python Dataset
-    print("\nTesting Python Dataset:")
-    dataset = load_data(
-        input_path=args.input_path, seq_length=1000
-    )  # Test with 1000 markers
-    print(f"Dataset length: {len(dataset)}")
-    print(f"First example: {dataset[0].shape}")
-
-    # Test PyTorch Dataset
-    print("\nTesting PyTorch Dataset:")
-    snp_dataset = SNPDataset(args.input_path, seq_length=1000)  # Test with 1000 markers
-    print(f"Dataset length: {len(snp_dataset)}")
-    print(f"First example: {snp_dataset[0].shape}")
-
-    # Test Lightning DataModule
-    print("\nTesting Lightning DataModule:")
-    data_module = SNPDataModule(
-        args.input_path, batch_size=256, num_workers=1, seq_length=1000
-    )  # Test with 1000 markers
-    data_module.setup(fractions=[0.8, 0.1, 0.1])
-    print(f"Train batches: {len(data_module.train_dataloader())}")
-    batch = next(iter(data_module.train_dataloader()))
-    print(f"Batch length: {len(batch)}")
-    print(f"First example: {batch[0].shape}")
-
-
-if __name__ == "__main__":
-    main()

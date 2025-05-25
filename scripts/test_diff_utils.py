@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
-import os
 import argparse
+import os
 from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
