@@ -15,12 +15,18 @@ from typing import Any, Dict, List
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from test_diff_utils import (
+import sys
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from diff_utils import (
     display_diffusion_parameters,
     plot_diffusion_process,
     test_diffusion_at_timestep,
 )
-from test_noise_utils import (
+from noise_utils import (
     plot_error_heatmap,
     plot_error_statistics,
     plot_loss_vs_timestep,
@@ -30,8 +36,11 @@ from test_noise_utils import (
     run_noise_analysis,
     save_noise_analysis,
 )
-from test_snp_utils import analyze_single_snp, plot_noise_evolution
+from snp_utils import analyze_single_snp, plot_noise_evolution
 from torch import Tensor
+
+
+
 
 from src import DiffusionModel
 from src.utils import set_seed
