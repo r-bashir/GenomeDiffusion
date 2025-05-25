@@ -9,13 +9,13 @@ and visualizes how data transforms during forward and reverse diffusion.
 """
 
 import argparse
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import sys
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent
@@ -39,11 +39,8 @@ from noise_utils import (
 from snp_utils import analyze_single_snp, plot_noise_evolution
 from torch import Tensor
 
-
-
-
 from src import DiffusionModel
-from src.utils import set_seed
+from src.utils import load_config, set_seed
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

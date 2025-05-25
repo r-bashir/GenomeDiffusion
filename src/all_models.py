@@ -12,6 +12,9 @@ import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# FIXME: This file will be deleted once all models are moved to their dedicated
+# files. UNet1D to unet.py, time sampler to time_sampler.py etc.
+
 
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
     """Util function for broadcasting to the right."""

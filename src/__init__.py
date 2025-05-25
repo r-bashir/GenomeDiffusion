@@ -15,7 +15,7 @@ from .diffusion_model import DiffusionModel
 from .mlp import MLP
 from .time_sampler import UniformContinuousTimeSampler, UniformDiscreteTimeSampler
 from .unet import UNet1D
-from .utils import set_seed
+from .utils import load_config, set_seed
 
 __version__ = "0.1.0"
 
@@ -26,7 +26,6 @@ __all__ = [
     "SCRIPTS_DIR",
     "DATA_DIR",
     "__version__",
-    
     # Dataset
     "SNPDataset",
     "SNPDataModule",
@@ -39,5 +38,6 @@ __all__ = [
     "UniformContinuousTimeSampler",
     "UniformDiscreteTimeSampler",
     # Utils
+    "load_config",
     "set_seed",
 ]

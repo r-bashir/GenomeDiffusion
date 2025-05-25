@@ -73,7 +73,7 @@ class NetworkBase(pl.LightningModule):
         from src import SNPDataset
 
         print(f"Creating dataset with sequence length: {seq_length}")
-        return SNPDataset(self.hparams["input_path"], seq_length=seq_length)
+        return SNPDataset(self.hparams)
 
     def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
         """Prepare a batch for model input.

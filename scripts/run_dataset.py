@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 from pprint import pprint
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,7 @@ import torch.utils.data
 import yaml
 from scipy import stats
 
-# Add project root to Python path
+# Add project root
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -37,6 +37,7 @@ from src.dataset import (
     scale_data,
     setup_logging,
 )
+from src.utils import load_config
 
 
 # Print data statistics
@@ -67,12 +68,6 @@ def print_data_stats(data: Union[np.ndarray, torch.Tensor], title: str = "") -> 
     # Print first few samples
     # print("\nFirst 3 samples (first 10 markers):")
     # print(data[:3, :10])
-
-
-def load_config(config_path: Path) -> dict:
-    """Load configuration from a YAML file."""
-    with config_path.open("r") as f:
-        return yaml.safe_load(f)
 
 
 def parse_args():
@@ -131,7 +126,12 @@ def main() -> int:
     logger.info("Starting SNP data processing")
     logger.debug(f"Command line arguments: {args}")
 
-    # Load config
+    # Ensure PROJECT_ROOT is set in environment
+    if "PROJECT_ROOT" not in os.environ:
+        os.environ["PROJECT_ROOT"] = str(Path(__file__).parent.parent.absolute())
+        logger.info(f"Set PROJECT_ROOT to: {os.environ['PROJECT_ROOT']}")
+
+    # Load config with environment variable expansion
     logger.info(f"Loading configuration from {args.config}")
     config = load_config(args.config)
 

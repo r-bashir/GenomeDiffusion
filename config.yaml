@@ -2,11 +2,11 @@
 project_name: "TestDiff"
 
 # Project output
-project_output: "outputs"
+project_output: "${PROJECT_ROOT}/outputs"
 
 # Dataset
 data:
-  input_path: "data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
+  input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
   batch_size: 64
   num_workers: 4
   datasplit: [1700, 200, 167]
