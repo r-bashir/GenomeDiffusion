@@ -3,13 +3,14 @@ PyTorch Lightning implementation of DDPM using NetworkBase.
 """
 
 from typing import Dict, Optional, Tuple, Union
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .network_base import NetworkBase
 from .mlp import MLP
+from .network_base import NetworkBase
 
 
 class DDPM(NetworkBase):
