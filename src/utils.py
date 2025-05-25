@@ -6,7 +6,7 @@
 import os
 import random
 from pathlib import Path
-from typing import Any, Dict, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -27,6 +27,69 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:
+    """Broadcast a tensor to the right dimensions.
+
+    This utility function handles broadcasting tensors to the right shape,
+    which is particularly useful for diffusion models where we need to
+    broadcast scalar or 1D tensors to match the shape of data tensors.
+
+    Args:
+        x: Input tensor to broadcast
+        ndim: Target number of dimensions
+
+    Returns:
+        Tensor with shape expanded to ndim by adding dimensions on the right
+
+    Raises:
+        ValueError: If x.ndim > ndim (cannot reduce dimensions)
+    """
+    if x.ndim > ndim:
+        raise ValueError(f"Cannot broadcast a value with {x.ndim} dims to {ndim} dims.")
+    elif x.ndim < ndim:
+        difference = ndim - x.ndim
+        return x.view(*x.shape, *((1,) * difference))
+    else:
+        return x
+
+
+def tensor_to_device(
+    tensor: torch.Tensor, device: Optional[torch.device] = None
+) -> torch.Tensor:
+    """Move a tensor to the specified device if it's not already there.
+
+    This utility function provides a consistent way to handle device placement
+    throughout the codebase. If no device is specified, it uses CUDA if available.
+
+    Args:
+        tensor: The tensor to move to the device
+        device: Target device. If None, uses CUDA if available, else CPU
+
+    Returns:
+        The tensor on the specified device
+    """
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if tensor.device != device:
+        return tensor.to(device)
+    return tensor
+
+
+def prepare_batch_shape(batch: torch.Tensor) -> torch.Tensor:
+    """Ensure batch has shape [B, C, L] for consistent processing.
+
+    Args:
+        batch: Input tensor that might need reshaping
+
+    Returns:
+        Tensor with shape [B, C, L]
+    """
+    if len(batch.shape) == 2:  # [B, L]
+        return batch.unsqueeze(1)  # Convert to [B, 1, L]
+    return batch  # Already [B, C, L]
 
 
 def load_config(config_path: Union[str, Path]) -> Dict[str, Any]:

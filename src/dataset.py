@@ -81,8 +81,8 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     1. Handle sequence length
     2. Handle missing values
     3. Apply normalization
-    4. Apply scaling
-    5. Apply augmentation (Fixed patterns)
+    4. Apply augmentation (Fixed patterns)
+    5. Apply scaling (always last)
 
     Args:
         config: Configuration dictionary with data and preprocessing parameters
@@ -123,18 +123,22 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     # 3. Handle normalization
     if data_config.get("normalize", False):
         logger.info("Normalizing data to [0.0, 0.5, 1.0] range")
+        logger.info("Mapping: 0 → 0.0, 1 → 0.5, 2 → 1.0")
         data = normalize_data(data)
+        logger.info(f"Uniques values: {np.unique(data)}")
 
-    # 4. Handle scaling
+    # 4. Handle augmentation
+    if data_config.get("augment", False):
+        logger.info("Applying data augmentation")
+        data = augment_data(data)
+        logger.info(f"Uniques values: {np.unique(data)}")
+
+    # 5. Handle scaling (always last)
     if data_config.get("scaling", False):
         scale_factor = data_config.get("scale_factor")
         logger.info(f"Scaling data by factor {scale_factor}")
         data = scale_data(data, scale_factor)
-
-    # 5. Handle augmentation
-    if data_config.get("augment", False):
-        logger.info("Applying data augmentation")
-        data = augment_data(data)
+        logger.info(f"Uniques values: {np.unique(data)}")
 
     logger.info("Data preprocessing completed")
 
@@ -281,7 +285,7 @@ class SNPDataset(torch.utils.data.Dataset):
         self.config = config
         self.data = load_data(config)
         self.validate_data()
-        logger.info(f"Loaded dataset with {len(self)} samples")
+        logger.info(f"SNPDataset loaded with {len(self)} samples")
 
     def validate_data(self) -> None:
         """Validate that data was loaded correctly."""

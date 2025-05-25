@@ -60,13 +60,13 @@ def test_diffusion_at_timestep(
         noise = torch.randn_like(x0)
 
         # Forward diffusion
-        xt = model.ddpm.sample(x0, t_tensor, noise)
+        xt = model.forward_diffusion.sample(x0, t_tensor, noise)
 
         # Get model's noise prediction
         predicted_noise = model.predict_added_noise(xt, t_tensor)
 
         # Reverse diffusion step
-        x_t_minus_1 = model.reverse_diffusion(xt, t_tensor)
+        x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step(xt, t_tensor)
 
         # Calculate metrics
         mse = F.mse_loss(predicted_noise, noise).item()
@@ -226,9 +226,9 @@ def display_diffusion_parameters(model, timestep):
         timestep: Timestep to display parameters for
     """
     # Get parameters directly
-    alpha_t = model.ddpm._alphas_t[timestep - 1].item()
-    alpha_bar_t = model.ddpm._alphas_bar_t[timestep].item()
-    sigma_t = model.ddpm._sigmas_t[timestep].item()
+    alpha_t = model.forward_diffusion._alphas_t[timestep - 1].item()
+    alpha_bar_t = model.forward_diffusion._alphas_bar_t[timestep].item()
+    sigma_t = model.forward_diffusion._sigmas_t[timestep].item()
     beta_t = 1.0 - alpha_t
 
     # Print formatted parameters

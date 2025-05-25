@@ -2,8 +2,10 @@
 
 # Paths and variables
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
-PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenDiffusion
+PROJECT_ROOT=/proj/gcae_berzelius/users/x_rabba/GenDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
+
+export PROJECT_ROOT
 
 # WandB API Key
 export WANDB_API_KEY="145f0112a8066d63f7e4856f3ac01edd336afebd"
@@ -17,7 +19,7 @@ echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 # Run the container
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
-    --bind $PROJECT_DIR:/workspace \
+    --bind $PROJECT_ROOT:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml 2>&1 | tee train.log" || {
     echo "Error: Apptainer execution failed!" >&2

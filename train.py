@@ -25,6 +25,7 @@ from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
 
 from src import DiffusionModel
 from src.evaluation_callback import EvaluationCallback
+from src.utils import load_config, set_seed
 
 
 def parse_args():
@@ -45,13 +46,6 @@ def parse_args():
         help="Path to checkpoint file to resume training from",
     )
     return parser.parse_args()
-
-
-def load_config(config_path: str) -> Dict:
-    """Load configuration from YAML file."""
-    with open(config_path) as f:
-        config = yaml.safe_load(f)
-    return config
 
 
 def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]:
@@ -181,8 +175,25 @@ def main():
     # Parse arguments
     args = parse_args()
 
-    # Load configuration
+    # Set a seed for reproducibility
+    set_seed(42)
+
+    # Only set PROJECT_ROOT if it's not already defined in the environment
+    if "PROJECT_ROOT" not in os.environ:
+        os.environ["PROJECT_ROOT"] = os.getcwd()
+        print(f"Setting PROJECT_ROOT to current directory: {os.getcwd()}")
+    else:
+        print(
+            f"Using existing PROJECT_ROOT from environment: {os.environ['PROJECT_ROOT']}"
+        )
+
+    # Use the utility function to load and process the config
     config = load_config(args.config)
+
+    # Print key paths for verification
+    print(f"\nUsing PROJECT_ROOT: {os.environ.get('PROJECT_ROOT')}")
+    print(f"Input path: {config['data']['input_path']}")
+    print(f"Output path: {config['output_path']}\n")
 
     # Ensure output directory exists
     os.makedirs(config["output_path"], exist_ok=True)

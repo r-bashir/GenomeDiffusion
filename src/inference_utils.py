@@ -757,9 +757,9 @@ def generate_samples_mid_step(
     Returns:
         torch.Tensor: Generated samples starting from mid-noise level
     """
-    if mid_timestep >= model.ddpm.tmax:
+    if mid_timestep >= model.forward_diffusion.tmax:
         raise ValueError(
-            f"mid_timestep ({mid_timestep}) must be less than tmax ({model.ddpm.tmax})"
+            f"mid_timestep ({mid_timestep}) must be less than tmax ({model.forward_diffusion.tmax})"
         )
 
     # Create noise for the specified number of samples
@@ -779,23 +779,25 @@ def generate_samples_mid_step(
         )
 
         # Sample noise at mid_timestep
-        x = model.ddpm.sample(dummy_batch, t, x)
+        x = model.forward_diffusion.sample(dummy_batch, t, x)
 
         # Print initial statistics
         # print(f"Initial noise stats at t={mid_timestep} - mean: {x.mean():.4f}, std: {x.std():.4f}")
 
         # Custom reverse diffusion process starting from mid_timestep
         print(
-            f"Starting reverse diffusion from t={mid_timestep} to t={model.ddpm.tmin} with step {denoise_step}"
+            f"Starting reverse diffusion from t={mid_timestep} to t={model.forward_diffusion.tmin} with step {denoise_step}"
         )
 
         # Perform reverse diffusion from mid_timestep to 0
-        for t in reversed(range(model.ddpm.tmin, mid_timestep + 1, denoise_step)):
+        for t in reversed(
+            range(model.forward_diffusion.tmin, mid_timestep + 1, denoise_step)
+        ):
             t_tensor = torch.full((x.size(0),), t, device=x.device, dtype=torch.long)
-            x = model.reverse_diffusion(x, t_tensor)
+            x = model.reverse_diffusion.reverse_diffusion_step(x, t_tensor)
 
             # Print statistics every 100 steps
-            if t % 100 == 0 or t == model.ddpm.tmin:
+            if t % 100 == 0 or t == model.forward_diffusion.tmin:
                 # print(f"Step {t} stats - mean: {x.mean():.4f}, std: {x.std():.4f}")
                 pass
 
@@ -835,7 +837,7 @@ def visualize_reverse_diffusion(
     """
 
     if start_timestep is None:
-        start_timestep = model.ddpm.tmax
+        start_timestep = model.forward_diffusion.tmax
 
     batch_shape = (num_samples,) + model._data_shape
     # Set the seed for reproducibility
@@ -846,28 +848,30 @@ def visualize_reverse_diffusion(
     t = torch.full(
         (num_samples,), start_timestep, device=model.device, dtype=torch.long
     )
-    x = model.ddpm.sample(torch.zeros_like(x), t, x)
+    x = model.forward_diffusion.sample(torch.zeros_like(x), t, x)
 
     reverse_samples = [x.clone()]
     timesteps = [start_timestep]
 
-    for t_val in reversed(range(model.ddpm.tmin, start_timestep + 1, step_size)):
-        if t_val == model.ddpm.tmin:
+    for t_val in reversed(
+        range(model.forward_diffusion.tmin, start_timestep + 1, step_size)
+    ):
+        if t_val == model.forward_diffusion.tmin:
             continue
         t_tensor = torch.full((x.size(0),), t_val, device=x.device, dtype=torch.long)
-        x = model.reverse_diffusion(x, t_tensor)
+        x = model.reverse_diffusion.reverse_diffusion_step(x, t_tensor)
         x = torch.clamp(x, -5.0, 5.0)
         reverse_samples.append(x.clone())
         timesteps.append(t_val)
 
     # Final step (fully denoised)
     t_tensor = torch.full(
-        (x.size(0),), model.ddpm.tmin, device=x.device, dtype=torch.long
+        (x.size(0),), model.forward_diffusion.tmin, device=x.device, dtype=torch.long
     )
-    x = model.reverse_diffusion(x, t_tensor)
+    x = model.reverse_diffusion.reverse_diffusion_step(x, t_tensor)
     x = torch.clamp(x, 0, 0.5)  # Clamp to [0, 0.5] for scaled data
     reverse_samples.append(x.clone())
-    timesteps.append(model.ddpm.tmin)
+    timesteps.append(model.forward_diffusion.tmin)
 
     if discretize:
         x = torch.round(x * 2) / 2
@@ -879,7 +883,7 @@ def visualize_reverse_diffusion(
     visualize_diffusion(
         reverse_samples_tensor.cpu(),
         plot_path,
-        f"Reverse Diffusion Process (t={start_timestep} to t={model.ddpm.tmin})",
+        f"Reverse Diffusion Process (t={start_timestep} to t={model.forward_diffusion.tmin})",
         timesteps=timesteps,
     )
     print(f"Visualization saved to: {plot_path}")

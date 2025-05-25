@@ -1,8 +1,8 @@
 # Project name
-project_name: "TestDiff"
+project_name: "XYZ"
 
 # Project output
-project_output: "${PROJECT_ROOT}/outputs"
+output_path: "${PROJECT_ROOT}/outputs"
 
 # Dataset
 data:

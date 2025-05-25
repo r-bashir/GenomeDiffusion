@@ -133,8 +133,8 @@ def analyze_noise_prediction_at_timestep(
 
         # Sample noise and apply forward diffusion
         true_noise = torch.randn_like(x0_samples)
-        xt = model.ddpm.sample(x0_samples, t_tensor, true_noise)
-        pred_noise = model.predict_added_noise(xt, t_tensor)
+        xt = model.forward_diffusion.sample(x0_samples, t_tensor, true_noise)
+        pred_noise = model.reverse_diffusion.reverse_diffusion_step(xt, t_tensor)
 
         # Calculate errors and statistics
         abs_errors = (pred_noise - true_noise).abs()

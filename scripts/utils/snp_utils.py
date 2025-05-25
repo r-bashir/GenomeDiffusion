@@ -74,7 +74,7 @@ def track_single_run_at_snp(model: Any, x0: Tensor, snp_index: int) -> Dict[str,
         Dictionary containing timesteps, true_noises, and pred_noises for a single run
     """
     model.eval()
-    timesteps = list(range(1, model.ddpm.tmax + 1))
+    timesteps = list(range(1, model.forward_diffusion.tmax + 1))
     true_noises = []
     pred_noises = []
 
@@ -88,7 +88,7 @@ def track_single_run_at_snp(model: Any, x0: Tensor, snp_index: int) -> Dict[str,
             noise = torch.randn_like(x0)
 
             # Forward diffusion
-            xt = model.ddpm.sample(x0, t_tensor, noise)
+            xt = model.forward_diffusion.sample(x0, t_tensor, noise)
 
             # Get model's noise prediction
             predicted_noise = model.predict_added_noise(xt, t_tensor)

@@ -191,7 +191,17 @@ def main() -> int:
         logger.error(f"Error normalizing data: {e}")
         raise
 
-    # 5. Scale data
+    # 5. Handle augmentation (fixed patterns)
+    try:
+        if data_config.get("augment", False):
+            logger.info("Applying data augmentation (fixed patterns)")
+            data = augment_data(data)
+            print_data_stats(data, "After augmentation")
+    except Exception as e:
+        logger.error(f"Error during data augmentation: {e}")
+        raise
+
+    # 6. Scale data (always last)
     try:
         scale_factor = data_config.get("scale_factor")
         if scale_factor is not None:
@@ -201,16 +211,6 @@ def main() -> int:
             logger.info(f"Scaled range: [{data.min()}, {data.max()}]")
     except Exception as e:
         logger.error(f"Error scaling data: {e}")
-        raise
-
-    # 6. Handle augmentation (skipping augmentation as requested)
-    try:
-        if data_config.get("augment", False):
-            logger.info("Applying data augmentation (fixed patterns)")
-            data = augment_data(data)
-            print_data_stats(data, "After augmentation")
-    except Exception as e:
-        logger.error(f"Error during data augmentation: {e}")
         raise
 
     logger.info("Data preprocessing pipeline completed...")

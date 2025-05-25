@@ -63,8 +63,9 @@ class NetworkBase(pl.LightningModule):
         Returns:
             Dataset: The created dataset.
         """
-        if "input_path" not in self.hparams:
-            raise ValueError("input_path must be specified in hparams")
+        # Check if input_path is in the data section of hparams
+        if "data" not in self.hparams or "input_path" not in self.hparams["data"]:
+            raise ValueError("input_path must be specified in hparams['data']")
 
         # Get sequence length from config
         seq_length = self.hparams["data"].get("seq_length", None)
@@ -73,6 +74,7 @@ class NetworkBase(pl.LightningModule):
         from src import SNPDataset
 
         print(f"Creating dataset with sequence length: {seq_length}")
+        print(f"Loading data from: {self.hparams['data']['input_path']}")
         return SNPDataset(self.hparams)
 
     def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
@@ -227,7 +229,7 @@ class NetworkBase(pl.LightningModule):
         scheduler = {
             "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=self.hparams["scheduler"]["T_max"],
+                T_max=self.hparams["training"]["epochs"],
                 eta_min=float(self.hparams["scheduler"]["eta_min"]),
             ),
             "monitor": "val_loss",
