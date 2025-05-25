@@ -8,20 +8,15 @@ $ python scripts/run_dataset.py --config config.yaml
 """
 
 import argparse
-import logging
 import os
 import sys
 from pathlib import Path
-from pprint import pprint
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Union
 
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 import torch.utils.data
-import yaml
-from scipy import stats
 
 # Add project root
 project_root = Path(__file__).parent.parent
@@ -126,10 +121,9 @@ def main() -> int:
     logger.info("Starting SNP data processing")
     logger.debug(f"Command line arguments: {args}")
 
-    # Ensure PROJECT_ROOT is set in environment
-    if "PROJECT_ROOT" not in os.environ:
-        os.environ["PROJECT_ROOT"] = str(Path(__file__).parent.parent.absolute())
-        logger.info(f"Set PROJECT_ROOT to: {os.environ['PROJECT_ROOT']}")
+    # Set PROJECT_ROOT in environment using the existing project_root variable
+    os.environ["PROJECT_ROOT"] = str(project_root.absolute())
+    logger.info(f"Using PROJECT_ROOT: {os.environ['PROJECT_ROOT']}")
 
     # Load config with environment variable expansion
     logger.info(f"Loading configuration from {args.config}")
@@ -228,18 +222,25 @@ def main() -> int:
     print(f"Testing Data Functions and Classes")
     print(f"{'='*65}")
 
-    print("\nData Loading Functions:")
+    print("\nData Loading Function:")
+
+    logger.info("Testing Data Loading Function...")
     dataset = load_data(config)
-    print(f"Dataset length: {len(dataset)}")
-    print(f"First example: {dataset[0].shape}")
+    logger.info(f"Dataset length: {len(dataset)}")
+    logger.info(f"First example shape: {dataset[0].shape}")
+    logger.debug(f"First example values: {dataset[0][:10]}")
 
     # Test PyTorch Dataset and DataModule
     try:
+        print("\nPyTorch Dataset:")
+
         logger.info("Testing PyTorch Dataset...")
         snp_dataset = SNPDataset(config)
         logger.info(f"Dataset length: {len(snp_dataset)}")
         logger.info(f"First example shape: {snp_dataset[0].shape}")
         logger.debug(f"First example values: {snp_dataset[0][:10]}")
+
+        print("\nPyTorch DataModule:")
 
         logger.info("Testing Lightning DataModule...")
         data_module = SNPDataModule(config)
@@ -251,6 +252,7 @@ def main() -> int:
             batch = next(iter(test_loader))
             logger.info(f"Batch length: {len(batch)}")
             logger.info(f"First example shape: {batch[0].shape}")
+            logger.debug(f"First example values: {batch[0][:10]}")
 
     except Exception as e:
         logger.error(f"Error during dataset testing: {e}")

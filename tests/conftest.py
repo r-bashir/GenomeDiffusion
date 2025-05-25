@@ -10,23 +10,24 @@ from pathlib import Path
 
 import pytest
 
-# Import project path utilities
-from src import DATA_DIR, PROJECT_ROOT
-
 # Add the project root to the Python path to allow importing from src
+PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Define data directory path
+DATA_DIR = PROJECT_ROOT / "data"
 
 
 # Example fixture - can be used in any test by adding it as a parameter
 @pytest.fixture
-def project_root_path() -> Path:
-    """Return the absolute path to the project root directory."""
+def project_root_path():
+    """Return the path to the project root."""
     return PROJECT_ROOT
 
 
 # Fixture for easy access to data directory
 @pytest.fixture
-def data_dir() -> Path:
+def data_dir():
     """Return the path to the project's data directory."""
     return DATA_DIR
 

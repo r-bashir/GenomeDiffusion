@@ -6,7 +6,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .models import SinusoidalTimeEmbeddings
+from .all_models import SinusoidalTimeEmbeddings
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
