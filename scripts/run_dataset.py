@@ -19,8 +19,8 @@ import torch
 import torch.utils.data
 
 # Add project root
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dataset import (
     SNPDataModule,
@@ -121,8 +121,8 @@ def main() -> int:
     logger.info("Starting SNP data processing")
     logger.debug(f"Command line arguments: {args}")
 
-    # Set PROJECT_ROOT in environment using the existing project_root variable
-    os.environ["PROJECT_ROOT"] = str(project_root.absolute())
+    # Set PROJECT_ROOT in environment using the existing PROJECT_ROOT variable
+    os.environ["PROJECT_ROOT"] = str(PROJECT_ROOT.absolute())
     logger.info(f"Using PROJECT_ROOT: {os.environ['PROJECT_ROOT']}")
 
     # Load config with environment variable expansion

@@ -11,22 +11,21 @@ and visualizes how data transforms during forward and reverse diffusion.
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
-# Add project root to Python path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# Add project root
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from diff_utils import (
+from src import DiffusionModel
+from src.utils import set_seed
+from utils.diff_utils import (
     display_diffusion_parameters,
     plot_diffusion_process,
     test_diffusion_at_timestep,
 )
-from noise_utils import (
+from utils.noise_utils import (
     plot_error_heatmap,
     plot_error_statistics,
     plot_loss_vs_timestep,
@@ -36,11 +35,7 @@ from noise_utils import (
     run_noise_analysis,
     save_noise_analysis,
 )
-from snp_utils import analyze_single_snp, plot_noise_evolution
-from torch import Tensor
-
-from src import DiffusionModel
-from src.utils import load_config, set_seed
+from utils.snp_utils import analyze_single_snp, plot_noise_evolution
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
