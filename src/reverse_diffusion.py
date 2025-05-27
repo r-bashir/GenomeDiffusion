@@ -35,6 +35,59 @@ class ReverseDiffusion:
         self.noise_predictor = noise_predictor
         self.data_shape = data_shape
 
+    # FIXME: Extract function allows to extract appropriate t index for a batch of indices.
+    def extract(a, t, x_shape):
+        batch_size = t.shape[0]
+        out = a.gather(-1, t.cpu())
+        return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
+
+    # FIXME: Reverse diffusion: https://huggingface.co/blog/annotated-diffusion
+    def p_sample(self, x_t, t, t_index):
+        betas_t = extract(betas, t, x.shape)
+        sqrt_one_minus_alphas_cumprod_t = extract(
+            sqrt_one_minus_alphas_cumprod, t, x.shape
+        )
+        sqrt_recip_alphas_t = extract(sqrt_recip_alphas, t, x.shape)
+
+        # Equation 11 in the paper
+        # Use our model (noise predictor) to predict the mean
+        model_mean = sqrt_recip_alphas_t * (
+            x - betas_t * model(x, t) / sqrt_one_minus_alphas_cumprod_t
+        )
+
+        if t_index == 0:
+            return model_mean
+        else:
+            posterior_variance_t = extract(posterior_variance, t, x.shape)
+            noise = torch.randn_like(x)
+            # Algorithm 2 line 4:
+            return model_mean + torch.sqrt(posterior_variance_t) * noise
+
+    # FIXME: Algorithm 2 (including returning all images)
+    def p_sample_loop(model, shape):
+        device = next(model.parameters()).device
+
+        b = shape[0]
+        # start from pure noise (for each example in the batch)
+        img = torch.randn(shape, device=device)
+        imgs = []
+
+        for i in tqdm(
+            reversed(range(0, timesteps)),
+            desc="sampling loop time step",
+            total=timesteps,
+        ):
+            img = p_sample(
+                model, img, torch.full((b,), i, device=device, dtype=torch.long), i
+            )
+            imgs.append(img.cpu().numpy())
+        return imgs
+
+    def sample(model, image_size, batch_size=16, channels=3):
+        return p_sample_loop(
+            model, shape=(batch_size, channels, image_size, image_size)
+        )
+
     def reverse_diffusion_step(self, x_t, t):
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
@@ -76,6 +129,8 @@ class ReverseDiffusion:
 
         # Predict noise using the noise prediction model (ε_θ(x_t, t))
         eps_theta = self.noise_predictor(x_t, t)
+
+        # FIXME: Add t=1, t>1 cases
 
         # Compute mean for p(x_{t-1}|x_t) as in Eq. 7
         inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)  # 1/sqrt(α_t)

@@ -38,6 +38,18 @@ class MLP(nn.Module):
 
     Note: This is designed to work with SNP data where each example has a large number of markers.
     For memory efficiency, we use a dynamic architecture that scales with sequence length.
+
+    Recommended deeper architecture:
+        hidden_dims = [512, 1024, 512, 256, 128]
+    This can improve model expressiveness and stability, especially at extreme timesteps.
+
+    Example usage:
+        # In your MLP __init__, replace the hidden_dims line with:
+        hidden_dims = [512, 1024, 512, 256, 128]
+
+        # Or, to experiment:
+        # hidden_dims = [2048, 1024, 512, 256, 128]
+
     """
 
     def __init__(
@@ -75,8 +87,7 @@ class MLP(nn.Module):
             self.time_mlp = None
 
         # Hidden dimensions
-        # hidden_dims = [512, 1024, 512, 256, 128]
-        hidden_dims = [1024]  # singl layer
+        hidden_dims = [2048, 1024, 512, 256, 128]
 
         print(f"Using hidden dimensions: {hidden_dims}")
 
