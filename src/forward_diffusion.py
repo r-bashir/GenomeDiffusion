@@ -1,0 +1,367 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+"""Forward Diffusion Process for Denoising Diffusion Probabilistic Models (DDPM).
+
+This module implements the FORWARD (noising) process of the DDPM framework as described in:
+'Denoising Diffusion Probabilistic Models' (Ho et al., 2020)
+https://arxiv.org/abs/2006.11239
+
+The implementation includes both cosine and linear noise schedules, with the cosine
+schedule following the improvements from 'Improved Denoising Diffusion Probabilistic Models'
+(Nichol & Dhariwal, 2021) https://arxiv.org/abs/2102.09672
+
+Typical usage:
+    forward_diff = ForwardDiffusion(diffusion_steps=1000, schedule_type='cosine')
+    noisy_sample = forward_diff.sample(x0, timestep, noise)
+
+Note: This class only implements the forward (noising) process q(x_t|x_0), NOT the full DDPM model.
+"""
+
+from typing import Optional, Union
+
+import numpy as np
+import torch
+
+from .utils import bcast_right, prepare_batch_shape, tensor_to_device
+
+
+class ForwardDiffusion:
+    """Implements the forward diffusion process that gradually adds noise to data.
+
+    This class implements the DDPM framework where the forward process gradually
+    adds Gaussian noise to data according to a fixed schedule, and the reverse
+    process learns to denoise the data. The forward process is defined by:
+        q(x_t | x_0) = N(x_t; √(ᾱ_t) * x_0, (1-ᾱ_t)I)
+    where ᾱ_t = Π_{s=1}^t (1-β_s) and β_s is the noise schedule.
+
+    The forward process can be sampled using the reparameterization trick:
+        x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, where ε ~ N(0, I)
+
+    In this implementation, reverse diffusion is handled by DiffusionModel.
+
+    Key Features:
+        - Supports both cosine and linear beta schedules
+        - Implements the improved cosine schedule from Nichol & Dhariwal, 2021
+        - Handles proper indexing for α, ᾱ, and σ values
+        - GPU/CPU compatible through the device system
+        - Batch processing support for efficient computation
+
+    Attributes:
+        _diffusion_steps (int): Total number of diffusion steps T
+        _beta_start (float): Starting value for β schedule (β_1)
+        _beta_end (float): Ending value for β schedule (β_T)
+        _schedule_type (str): Type of β schedule ('cosine' or 'linear')
+        _betas_t (torch.Tensor): β values for each timestep, shape (T,)
+        _alphas_t (torch.Tensor): α_t = 1-β_t values, shape (T,)
+        _alphas_bar_t (torch.Tensor): Cumulative product ᾱ_t = Π_{s=1}^t α_s, shape (T+1,)
+        _sigmas_t (torch.Tensor): Noise scale σ_t = √(1-ᾱ_t), shape (T+1,)
+    """
+
+    def __init__(
+        self,
+        diffusion_steps: int = 1000,
+        beta_start: float = 0.0001,
+        beta_end: float = 0.02,
+        schedule_type: str = "cosine",
+    ) -> None:
+        """
+        Initialize the diffusion process with specified noise schedule parameters.
+
+        Args:
+            diffusion_steps (int, optional): Total number of diffusion timesteps T. Defaults to 1000.
+            beta_start (float, optional): Starting value for β schedule. Defaults to 0.0001.
+            beta_end (float, optional): Final value for β schedule. Defaults to 0.02.
+            schedule_type (str, optional): Type of β schedule to use ('cosine' or 'linear'). Defaults to 'cosine'.
+
+        Raises:
+            ValueError: If schedule_type is not 'cosine' or 'linear'.
+        """
+
+        # Initialize parameters
+        self._diffusion_steps = diffusion_steps
+        self._beta_start = beta_start
+        self._beta_end = beta_end
+        self._schedule_type = schedule_type
+
+        # Select beta schedule
+        if schedule_type == "linear":
+            betas_np = self._linear_beta_schedule(
+                self._diffusion_steps, self._beta_start, self._beta_end
+            )
+        elif schedule_type == "cosine":
+            betas_np = self._cosine_beta_schedule(self._diffusion_steps)
+        else:
+            raise ValueError(
+                f"Unknown schedule_type '{schedule_type}'. Use 'cosine' or 'linear'."
+            )
+
+        # Calculate alphas and cumulative alphas
+        alphas_np = 1.0 - betas_np
+        alphas_bar_np = self._get_alphas_bar(betas_np)
+
+        # Calculate sigmas
+        sigmas_np = np.sqrt(1.0 - alphas_bar_np)
+
+        # Convert to tensors and register as buffers
+        self.register_buffer("_betas_t", torch.tensor(betas_np, dtype=torch.float32))
+        self.register_buffer("_alphas_t", torch.tensor(alphas_np, dtype=torch.float32))
+        self.register_buffer(
+            "_alphas_bar_t", torch.tensor(alphas_bar_np, dtype=torch.float32)
+        )
+        self.register_buffer("_sigmas_t", torch.tensor(sigmas_np, dtype=torch.float32))
+
+    @staticmethod
+    def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> np.ndarray:
+        """Generate a cosine beta schedule as proposed in 'Improved DDPM' (arXive:2102.09672, 2021).
+
+        This schedule reduces training time and improves sample quality by using a cosine
+        function to control the noise schedule. The offset parameter s prevents
+        the schedule from getting too small near t=0.
+
+        Args:
+            timesteps (int): Total number of diffusion timesteps T.
+            s (float, optional): Offset parameter to prevent β from being too small near t=0.
+                               Defaults to 0.008 as per the paper.
+
+        Returns:
+            np.ndarray: Array of β values with shape (timesteps,), clipped to [0, 0.999].
+        """
+        # Add 1 to timesteps to account for t=0
+        steps = timesteps + 1
+
+        # Generate linearly spaced values from 0 to steps
+        x = np.linspace(0, steps, steps)
+
+        # Compute alphas_cumprod using cosine function
+        alphas_cumprod = np.cos(((x / steps) + s) / (1 + s) * np.pi * 0.5) ** 2
+        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+
+        # Compute betas from alphas_cumprod
+        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+
+        # Clip betas to [0, 0.999]
+        return np.clip(betas, 0, 0.999)
+
+    @staticmethod
+    def _linear_beta_schedule(
+        timesteps: int, beta_start: float, beta_end: float
+    ) -> np.ndarray:
+        """Generate a linear beta schedule from beta_start to beta_end.
+
+        This is the original schedule proposed in the DDPM paper (Ho et al., 2020).
+        It provides a simple linear interpolation between the start and end noise levels.
+
+        Args:
+            timesteps (int): Total number of diffusion timesteps T.
+            beta_start (float): Initial β value for the schedule.
+            beta_end (float): Final β value for the schedule.
+
+        Returns:
+            np.ndarray: Array of β values with shape (timesteps,).
+        """
+        return np.linspace(beta_start, beta_end, timesteps)
+
+    def _get_alphas_bar(self, betas: np.ndarray) -> np.ndarray:
+        """
+        Computes cumulative alpha values following the DDPM formula.
+
+        Key indexing convention:
+        - We prepend a 1.0 at the start of alphas_bar so that alphas_bar[0] = 1.0 (t=0, no noise).
+        - This means for timestep t, you access alphas_bar[t].
+        - This matches the DDPM paper and avoids off-by-one errors for the t=0 case.
+        """
+        # Calculate alphas = 1 - betas
+        alphas = 1.0 - betas
+
+        # Calculate cumulative product of alphas
+        alphas_bar = np.cumprod(alphas)
+
+        # Append 1 at the beginning for convenient indexing (t=0 has no noise)
+        alphas_bar = np.concatenate(([1.0], alphas_bar))
+
+        return alphas_bar
+
+    def alpha(self, t: torch.Tensor) -> torch.Tensor:
+        """Retrieves α_t = 1-β_t for the given timesteps.
+
+        The α_t values determine how much signal is preserved at each timestep.
+
+        Args:
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
+
+        Returns:
+            torch.Tensor: α_t values of shape (batch_size,), where:
+                - For timestep t, returns α_t = 1-β_t
+                - t=1 corresponds to the first diffusion step (β_1)
+                - The returned values are on the same device as the internal tensors
+        """
+        # Ensure t is within valid range
+        t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # Convert to 0-indexed for tensor access (t=1 -> index 0)
+        t_idx = t.long() - 1
+        return tensor_to_device(self._alphas_t[t_idx], t.device)
+
+    def sigma(self, t: torch.Tensor) -> torch.Tensor:
+        """Retrieves σ_t = sqrt(1-ᾱ_t) for the given timesteps.
+
+        The σ_t values represent the standard deviation of the noise added at each timestep.
+
+        Args:
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
+
+        Returns:
+            torch.Tensor: σ_t values of shape (batch_size,), where:
+                - For timestep t, returns σ_t = sqrt(1-ᾱ_t)
+                - t=1 corresponds to the first diffusion step (σ_1 = sqrt(1-ᾱ_1))
+                - The returned values are on the same device as the internal tensors
+        """
+        # Ensure t is within valid range
+        t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # Get sigma values directly from precomputed tensor
+        return tensor_to_device(self._sigmas_t[t.long()], t.device)
+
+    def sample(
+        self, x0: torch.Tensor, t: torch.Tensor, eps: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """
+        Samples from the forward diffusion process q(x_t | x_0).
+
+        Implements:
+            q(x_t|x_0) = N(x_t; sqrt(ᾱ_t) * x_0, (1-ᾱ_t)I)
+            x_t = sqrt(ᾱ_t) * x_0 + sqrt(1-ᾱ_t) * ε, ε ~ N(0, I)
+
+        Args:
+            x0: Clean data sample of shape [B, C, seq_len].
+            t: Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
+            eps: Optional pre-generated noise of same shape as x0. If None, noise is sampled.
+
+        Returns:
+            torch.Tensor: Noisy sample x_t.
+        """
+        device = x0.device
+        # Ensure x0 has the correct shape [B, C, L]
+        x0 = prepare_batch_shape(x0)
+
+        # Convert timesteps to long and get parameters
+        t_discrete = t.long()
+        alpha_bar_t = tensor_to_device(self.alphas_bar[t_discrete], device)
+        sigma_t = tensor_to_device(self.sigma(t_discrete), device)
+
+        # Broadcast parameters to match x0's dimensions
+        ndim = x0.ndim
+        alpha_bar_t = bcast_right(alpha_bar_t, ndim)
+        sigma_t = bcast_right(sigma_t, ndim)
+
+        # Generate noise if not provided
+        if eps is None:
+            eps = torch.randn_like(x0, device=device)
+
+        # Compute noisy sample
+        x_t = torch.sqrt(alpha_bar_t) * x0 + sigma_t * eps
+        return x_t
+
+    def register_buffer(self, name: str, tensor: torch.Tensor) -> None:
+        """
+        Register a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
+
+        This is a simplified implementation for a non-nn.Module class that allows the
+        DDPM to maintain persistent state that should be saved and restored in the
+        state_dict, but not trained.
+
+        Args:
+            name (str): Name of the buffer to register.
+            tensor (torch.Tensor): Tensor to register as a buffer.
+        """
+        setattr(self, name, tensor)
+
+    def to(self, device: Union[str, torch.device]) -> "ForwardDiffusion":
+        """Move all internal tensors to the specified device.
+
+        This method mimics the behavior of nn.Module.to() for compatibility with
+        PyTorch Lightning and general PyTorch operations. It ensures all internal
+        tensors (betas, alphas, etc.) are on the same device.
+
+        Args:
+            device (Union[str, torch.device]): Target device to move tensors to.
+                Can be either a string (e.g., 'cuda:0', 'cpu') or torch.device.
+
+        Returns:
+            ForwardDiffusion: Returns self for method chaining.
+        """
+        # Move all internal tensors to the target device
+        self._betas_t = tensor_to_device(self._betas_t, device)
+        self._alphas_t = tensor_to_device(self._alphas_t, device)
+        self._alphas_bar_t = tensor_to_device(self._alphas_bar_t, device)
+        self._sigmas_t = tensor_to_device(self._sigmas_t, device)
+        return self
+
+    @property
+    def tmin(self) -> int:
+        """Minimum valid timestep value (always 1 since t=0 is the original data).
+
+        Returns:
+            int: Minimum timestep value (1).
+        """
+        return 1
+
+    @property
+    def tmax(self) -> int:
+        """Maximum valid timestep value (total number of diffusion steps).
+
+        Returns:
+            int: Maximum timestep value (diffusion_steps).
+        """
+        return self._diffusion_steps
+
+    @property
+    def betas(self) -> torch.Tensor:
+        """β values for the noise schedule.
+
+        These control how much noise is added at each timestep.
+
+        Returns:
+            torch.Tensor: β values of shape (diffusion_steps,).
+        """
+        return self._betas_t
+
+    @property
+    def alphas(self) -> torch.Tensor:
+        """α values for the noise schedule, where α_t = 1 - β_t.
+
+        These represent how much of the original signal is preserved at each timestep.
+
+        Returns:
+            torch.Tensor: α values of shape (diffusion_steps,).
+        """
+        return self._alphas_t
+
+    @property
+    def alphas_bar(self) -> torch.Tensor:
+        """Returns the cumulative product of α values: ᾱ_t = Π_{s=1}^t α_s.
+
+        The ᾱ_t values represent the total signal preservation up to timestep t.
+
+        Returns:
+            torch.Tensor: ᾱ_t values of shape (diffusion_steps + 1,), where:
+                - ᾱ_0 = 1.0 (no noise)
+                - ᾱ_1 = α_1 = 1-β_1
+                - ...
+                - ᾱ_T = α_1 * α_2 * ... * α_T
+        """
+        return self._alphas_bar_t
+
+    @property
+    def sigmas(self) -> torch.Tensor:
+        """Returns the noise scale values σ_t = √(1 - ᾱ_t) for all timesteps.
+
+        The σ_t values represent the standard deviation of the noise added up to timestep t.
+
+        Returns:
+            torch.Tensor: σ_t values of shape (diffusion_steps + 1,), where:
+                - σ_0 = 0.0 (no noise)
+                - σ_1 = √(1-ᾱ_1)
+                - ...
+                - σ_T = √(1-ᾱ_T)
+        """
+        return self._sigmas_t
