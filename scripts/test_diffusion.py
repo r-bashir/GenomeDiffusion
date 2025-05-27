@@ -27,60 +27,6 @@ from src import DiffusionModel
 from src.utils import set_seed
 
 
-def visualize_noise_prediction(
-    model, batch, timesteps=[100, 500, 900], output_dir=None
-):
-    """Visualize true vs predicted noise at different timesteps."""
-    model.eval()
-    device = next(model.parameters()).device
-    batch = batch.to(device)
-
-    fig, axes = plt.subplots(len(timesteps), 2, figsize=(12, 4 * len(timesteps)))
-
-    for i, t in enumerate(timesteps):
-        # Create timestep tensor
-        t_tensor = torch.full((batch.shape[0],), t, device=device, dtype=torch.long)
-
-        # Generate true noise
-        true_noise = torch.randn_like(batch)
-
-        # Add noise to data at timestep t
-        noisy_batch = model.forward_diffusion.sample(batch, t_tensor, true_noise)
-
-        # Predict noise
-        with torch.no_grad():
-            pred_noise = model.predict_added_noise(noisy_batch, t_tensor)
-
-        # Plot true noise
-        axes[i, 0].hist(true_noise.cpu().flatten().numpy(), bins=50, alpha=0.7)
-        axes[i, 0].set_title(f"True Noise (t={t})")
-
-        # Plot predicted noise
-        axes[i, 1].hist(pred_noise.cpu().flatten().numpy(), bins=50, alpha=0.7)
-        axes[i, 1].set_title(f"Predicted Noise (t={t})")
-
-        # Add statistics
-        axes[i, 0].text(
-            0.05,
-            0.95,
-            f"Mean: {true_noise.mean():.4f}\nStd: {true_noise.std():.4f}",
-            transform=axes[i, 0].transAxes,
-            verticalalignment="top",
-        )
-        axes[i, 1].text(
-            0.05,
-            0.95,
-            f"Mean: {pred_noise.mean():.4f}\nStd: {pred_noise.std():.4f}",
-            transform=axes[i, 1].transAxes,
-            verticalalignment="top",
-        )
-
-    plt.tight_layout()
-    if output_dir:
-        plt.savefig(output_dir / "noise_prediction.png", dpi=300, bbox_inches="tight")
-    return fig
-
-
 def generate_and_evaluate_samples(
     model, real_data, num_samples=100, denoise_step=10, output_dir=None
 ):
@@ -333,9 +279,6 @@ def visualize_diffusion_process(
 
     # Use only the first sample for visualization
     x0 = batch[0:1]  # Shape: [1, C, seq_len]
-
-    # Get the sequence length for proper reshaping
-    seq_len = x0.shape[-1]
 
     # Create a figure with 5 columns (original, noise, noisy, pred_noise, denoised)
     # and one row per timestep
@@ -623,6 +566,63 @@ def visualize_diffusion_process_lineplot(
     return fig
 
 
+def visualize_marker_trajectory(
+    model, sample, marker_idx=50, timesteps=None, output_dir=None
+):
+    """
+    Visualize the value of a single SNP marker as noise is added and removed at different timesteps.
+    Args:
+        model: The diffusion model
+        sample: Tensor of shape (channels, seq_len) or (1, channels, seq_len)
+        marker_idx: Index of the marker/SNP to track
+        timesteps: List of timesteps to plot (default: [1, 100, 200, 500, 900])
+        output_dir: Optional path to save the figure
+    """
+    if timesteps is None:
+        timesteps = [1, 100, 200, 500, 900]
+    model.eval()
+    device = next(model.parameters()).device
+    if sample.dim() == 2:
+        sample = sample.unsqueeze(0)  # Add batch dimension if needed
+    sample = sample.to(device)
+
+    original_value = sample[0, ..., marker_idx].item()
+    noisy_values = []
+    denoised_values = []
+
+    for t in timesteps:
+        t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
+        true_noise = torch.randn_like(sample)
+        noisy_sample = model.forward_diffusion.sample(sample, t_tensor, true_noise)
+        with torch.no_grad():
+            pred_noise = model.predict_added_noise(noisy_sample, t_tensor)
+
+        # Denoise (reverse process, simplified for DDPM-like models)
+        alpha_bar = model.forward_diffusion.alphas_bar(t_tensor)
+        denoised = (
+            noisy_sample - (1 - alpha_bar).sqrt() * pred_noise
+        ) / alpha_bar.sqrt()
+        noisy_values.append(noisy_sample[0, ..., marker_idx].item())
+        denoised_values.append(denoised[0, ..., marker_idx].item())
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(timesteps, [original_value] * len(timesteps), "k--", label="Original")
+    plt.plot(timesteps, noisy_values, "ro-", label="Noisy")
+    plt.plot(timesteps, denoised_values, "bo-", label="Denoised")
+    plt.xlabel("Timestep")
+    plt.ylabel(f"Marker {marker_idx} Value")
+    plt.title(f"Diffusion Process for Marker {marker_idx}")
+    plt.legend()
+    plt.grid(True)
+    if output_dir is not None:
+        plt.savefig(
+            str(output_dir / f"marker_{marker_idx}_trajectory.png"),
+            dpi=200,
+            bbox_inches="tight",
+        )
+    plt.show()
+
+
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -708,36 +708,45 @@ def main():
     x0 = x0.unsqueeze(1)  # Add channel dimension
     print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
-    # Run analyses
-    # 1. Visualize noise prediction
-    print("\n1. Visualizing noise prediction...")
-    visualize_noise_prediction(model, x0, output_dir=results_dir)
+    # Shared timesteps for all visualizations
+    timesteps = [1, 2, 3, 4, 5]
 
-    # 2. Visualize the diffusion process (heatmap)
-    print("\n2. Visualizing diffusion process (heatmap)...")
+    # 1. Visualize the diffusion process (heatmap)
+    print("\n1. Visualizing diffusion process (heatmap)...")
     visualize_diffusion_process(
         model=model,
         batch=x0,
-        timesteps=[100, 500, 900],  # Low, medium, and high noise levels
+        timesteps=timesteps,
         output_dir=results_dir,
     )
 
-    # 3. Visualize the diffusion process (line plot)
-    print("\n3. Visualizing diffusion process (line plot)...")
+    # 2. Visualize the diffusion process (line plot)
+    print("\n2. Visualizing diffusion process (line plot)...")
     visualize_diffusion_process_lineplot(
         model=model,
         batch=x0,
-        timesteps=[100, 500, 900],  # Low, medium, and high noise levels
+        timesteps=timesteps,
         output_dir=results_dir,
-        sample_points=200,  # Sample 200 points for clearer visualization
+        sample_points=200,
     )
 
-    # 3. Generate and evaluate samples
-    print("\n3. Generating and evaluating samples...")
+    # 3. Visualize marker trajectory for a single sample and marker
+    print("\n3. Visualizing marker trajectory...")
+    # sample = x0[0]  # Take the first sample in the batch
+    # visualize_marker_trajectory(
+    #    model,
+    #    sample,
+    #    marker_idx=args.snp_index,
+    #    timesteps=timesteps,
+    #    output_dir=results_dir,
+    # )
+
+    # 4. Generate and evaluate samples
+    print("\n4. Generating and evaluating samples...")
     metrics = generate_and_evaluate_samples(
         model=model,
         real_data=x0,
-        num_samples=100,  # Generate 100 samples for evaluation
+        num_samples=args.num_samples,
         denoise_step=args.denoise_step,
         output_dir=results_dir,
     )

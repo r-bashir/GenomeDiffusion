@@ -154,14 +154,25 @@ def analyze_noise_prediction_at_timestep(
         if verbose:
             _print_noise_statistics(timestep, stats)
 
-        return {
-            "timestep": timestep,
-            "x0": x0_samples,
-            "xt": xt,
-            "true_noise": true_noise,
-            "pred_noise": pred_noise,
-            "stats": stats,
-        }
+        # Print true_noise and pred_noise for t=1000 for debugging sign flip
+        if timestep == 1000:
+            print("\nDetailed noise vectors at t=1000 (showing first sample):")
+            print("true_noise[0]:", true_noise[0, 0, :10].cpu().numpy())
+            print("pred_noise[0]:", pred_noise[0, 0, :10].cpu().numpy())
+            # Compute and print correlation
+            tn = true_noise[0].flatten().cpu().numpy()
+            pn = pred_noise[0].flatten().cpu().numpy()
+            corr = np.corrcoef(tn, pn)[0, 1]
+            print(f"Pearson correlation (t=1000, first sample): {corr:.4f}")
+
+    return {
+        "timestep": timestep,
+        "x0": x0_samples,
+        "xt": xt,
+        "true_noise": true_noise,
+        "pred_noise": pred_noise,
+        "stats": stats,
+    }
 
 
 def _print_noise_statistics(timestep: int, stats: Dict[str, float]) -> None:
@@ -183,6 +194,259 @@ def _print_noise_statistics(timestep: int, stats: Dict[str, float]) -> None:
     print(f"MAE           : {stats['mae']:.6f}")
     print(f"Max AE        : {stats['max_ae']:.6f}")
     print(f"Signal/Noise  : {stats['signal_to_noise']:.2f}")
+
+
+def save_noise_analysis(
+    results: NoiseAnalysisResults,
+    output_dir: Path,
+    filename: str = "noise_analysis_results.csv",
+) -> None:
+    """Save noise analysis results to a CSV file.
+
+    Args:
+        results: Dictionary mapping timesteps to analysis results
+        output_dir: Directory to save the CSV file
+        filename: Name of the output CSV file
+    """
+    from typing import Any, Dict, List
+
+    import pandas as pd
+
+    # Prepare data for DataFrame
+    rows: List[Dict[str, Any]] = []
+    for t, result in results.items():
+        row = {"timestep": t}
+        row.update(result["stats"])
+        rows.append(row)
+
+    # Create and save DataFrame
+    df = pd.DataFrame(rows)
+    os.makedirs(output_dir, exist_ok=True)
+    csv_path = output_dir / filename
+    df.to_csv(csv_path, index=False, float_format="%.6f")
+
+
+def plot_noise_histogram_grid(
+    results: NoiseAnalysisResults, output_dir: Path, num_bins: int = 50
+):
+    """Plot grid of true and predicted noise histograms at each timestep (top: true, bottom: predicted)."""
+    timesteps = sorted(results.keys())
+    n_timesteps = len(timesteps)
+
+    fig, axes = plt.subplots(2, n_timesteps, figsize=(4 * n_timesteps, 6))
+    # axes[0, :] = true, axes[1, :] = predicted
+
+    for i, t in enumerate(timesteps):
+        # Flatten the noise tensors
+        true_noise = results[t]["true_noise"].flatten().cpu().numpy()
+        pred_noise = results[t]["pred_noise"].flatten().cpu().numpy()
+
+        # Plot true noise (top row)
+        axes[0, i].hist(
+            true_noise, bins=num_bins, alpha=0.7, label="True", density=True
+        )
+        x = np.linspace(
+            min(true_noise.min(), pred_noise.min()),
+            max(true_noise.max(), pred_noise.max()),
+            100,
+        )
+        axes[0, i].plot(x, norm.pdf(x, 0, 1), "k--", label="N(0,1)")
+        axes[0, i].set_title(f"t={t}: True Noise Distribution")
+        axes[0, i].legend()
+
+        # Plot predicted noise (bottom row)
+        axes[1, i].hist(
+            pred_noise,
+            bins=num_bins,
+            alpha=0.7,
+            color="red",
+            label="Predicted",
+            density=True,
+        )
+        axes[1, i].plot(x, norm.pdf(x, 0, 1), "k--", label="N(0,1)")
+        axes[1, i].set_title(f"t={t}: Predicted Noise Distribution")
+        axes[1, i].legend()
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "noise_hist_grid.png", dpi=150)
+    plt.close()
+
+
+def plot_noise_correlation_scatter(results: dict, output_dir: Path):
+    """
+    For each timestep, plot a scatter plot of true_noise vs predicted_noise and show the Pearson correlation coefficient.
+    Saves all subplots in a grid as noise_correlation_scatter.png in output_dir.
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import pearsonr
+
+    timesteps = sorted(results.keys())
+    n_timesteps = len(timesteps)
+    ncols = min(n_timesteps, 5)
+    nrows = (n_timesteps + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
+    axes = axes.flatten() if n_timesteps > 1 else [axes]
+    for i, t in enumerate(timesteps):
+        true_noise = results[t]["true_noise"].flatten().cpu().numpy()
+        pred_noise = results[t]["pred_noise"].flatten().cpu().numpy()
+        ax = axes[i]
+        ax.scatter(true_noise, pred_noise, s=1, alpha=0.3, color="royalblue")
+        r, _ = pearsonr(true_noise, pred_noise)
+        ax.set_title(f"t={t} | r={r:.2f}")
+        ax.set_xlabel("True Noise")
+        ax.set_ylabel("Predicted Noise")
+        ax.grid(True, linestyle=":", alpha=0.5)
+    # Hide unused axes
+    for j in range(i + 1, len(axes)):
+        axes[j].axis("off")
+    plt.tight_layout()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(output_dir / "noise_corr_scatter.png", dpi=200)
+    plt.close()
+
+
+def plot_noise_overlay_with_comparison(
+    results: NoiseAnalysisResults,
+    output_dir: Path,
+    num_bins: int = 50,
+    mode: str = "difference",
+) -> None:
+    """
+    Plot overlaid true and predicted noise histograms with a comparison subplot for each timestep (HEP-style).
+    Each column is a timestep. Top row: overlaid histograms. Bottom row: comparison (difference, ratio, or pull).
+
+    Args:
+        results: Dictionary mapping timesteps to analysis results (must contain 'true_noise' and 'pred_noise')
+        output_dir: Directory to save the plot
+        num_bins: Number of bins for the histograms
+        mode: 'difference', 'ratio', or 'pull' (default: 'difference')
+    """
+    assert mode in (
+        "difference",
+        "ratio",
+        "pull",
+    ), "mode must be one of 'difference', 'ratio', or 'pull'"
+    timesteps = sorted(results.keys())
+    num_timesteps = len(timesteps)
+    fig = plt.figure(figsize=(6 * num_timesteps, 8))
+    gs = fig.add_gridspec(
+        2, num_timesteps, height_ratios=[3, 1], hspace=0.3, wspace=0.4
+    )
+
+    for i, t in enumerate(timesteps):
+        ax_main = fig.add_subplot(gs[0, i])
+        ax_comp = fig.add_subplot(gs[1, i], sharex=ax_main)
+        true_np = results[t]["true_noise"].flatten().cpu().numpy()
+        pred_np = results[t]["pred_noise"].flatten().cpu().numpy()
+        data_min = min(true_np.min(), pred_np.min())
+        data_max = max(true_np.max(), pred_np.max())
+        bins = np.linspace(data_min, data_max, num_bins + 1)
+        hist_true, _ = np.histogram(true_np, bins=bins)
+        hist_pred, _ = np.histogram(pred_np, bins=bins)
+        bin_centers = 0.5 * (bins[1:] + bins[:-1])
+        # Main panel: Plot histograms
+        ax_main.hist(
+            bin_centers,
+            bins=bins,
+            weights=hist_true,
+            histtype="step",
+            color="blue",
+            label="True Noise",
+            lw=2,
+        )
+        ax_main.hist(
+            bin_centers,
+            bins=bins,
+            weights=hist_pred,
+            histtype="step",
+            color="red",
+            label="Predicted Noise",
+            linestyle="--",
+            lw=2,
+        )
+        ax_main.fill_between(
+            bin_centers,
+            hist_true - np.sqrt(hist_true),
+            hist_true + np.sqrt(hist_true),
+            step="mid",
+            color="blue",
+            alpha=0.2,
+        )
+        stats_text = f"t = {t}\nμ_true = {true_np.mean():.3f} ± {true_np.std():.3f}\nμ_pred = {pred_np.mean():.3f} ± {pred_np.std():.3f}"
+        ax_main.text(
+            0.02,
+            0.98,
+            stats_text,
+            transform=ax_main.transAxes,
+            verticalalignment="top",
+            horizontalalignment="left",
+            bbox=dict(facecolor="white", alpha=0.7, edgecolor="none", pad=3.0),
+        )
+        # Comparison subplot
+        if mode == "difference":
+            comp = hist_pred - hist_true
+            comp_err = np.sqrt(np.maximum(hist_pred, 0) + np.maximum(hist_true, 0))
+            ax_comp.axhline(0, color="gray", linestyle="--", alpha=0.5)
+            ax_comp.step(
+                bin_centers, comp, where="mid", color="red", lw=1.5, label="Pred - True"
+            )
+            ax_comp.fill_between(
+                bin_centers,
+                comp - comp_err,
+                comp + comp_err,
+                step="mid",
+                color="red",
+                alpha=0.3,
+                label="Uncertainty (√N)",
+            )
+            if i == 0:
+                ax_comp.set_ylabel("Pred - True")
+        elif mode == "ratio":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                comp = np.divide(hist_pred, hist_true, where=hist_true != 0)
+                comp_err = comp * np.sqrt(
+                    1 / np.maximum(hist_pred, 1e-8) + 1 / np.maximum(hist_true, 1e-8)
+                )
+            ax_comp.axhline(1, color="gray", linestyle="--", alpha=0.5)
+            ax_comp.step(
+                bin_centers, comp, where="mid", color="red", lw=1.5, label="Pred/True"
+            )
+            ax_comp.fill_between(
+                bin_centers,
+                comp - comp_err,
+                comp + comp_err,
+                step="mid",
+                color="red",
+                alpha=0.3,
+                label="Uncertainty",
+            )
+            if i == 0:
+                ax_comp.set_ylabel("Pred / True")
+        elif mode == "pull":
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sigma = np.sqrt(np.maximum(hist_pred, 0) + np.maximum(hist_true, 0))
+                sigma[sigma == 0] = 1e-8
+                comp = (hist_pred - hist_true) / sigma
+            ax_comp.axhline(0, color="gray", linestyle="--", alpha=0.5)
+            ax_comp.step(
+                bin_centers, comp, where="mid", color="red", lw=1.5, label="Pull"
+            )
+            if i == 0:
+                ax_comp.set_ylabel("Pull")
+        if i == 0:
+            ax_main.set_ylabel("Counts")
+        ax_comp.set_xlabel("Noise Value")
+        ax_main.set_title(f"Timestep {t}")
+        if i == 0:
+            ax_main.legend(loc="upper right")
+            ax_comp.legend(loc="upper right")
+    plt.tight_layout()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"noise_hist_{mode}.png"
+    plt.savefig(output_dir / fname, dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def plot_noise_analysis_results(
@@ -251,11 +515,12 @@ def plot_noise_analysis_results(
 
     # Adjust layout and save
     plt.tight_layout()
-    plot_path = output_dir / "noise_analysis_summary.png"
+    plot_path = output_dir / "noise_analysis_results.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
+# Optional noise analysis functions
 def plot_loss_vs_timestep(
     results: NoiseAnalysisResults, output_dir: Path, figsize: Tuple[int, int] = (12, 6)
 ) -> None:
@@ -312,78 +577,6 @@ def plot_loss_vs_timestep(
     plt.tight_layout()
     plot_path = output_dir / "loss_vs_timestep.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-
-def save_noise_analysis(
-    results: NoiseAnalysisResults,
-    output_dir: Path,
-    filename: str = "noise_analysis_results.csv",
-) -> None:
-    """Save noise analysis results to a CSV file.
-
-    Args:
-        results: Dictionary mapping timesteps to analysis results
-        output_dir: Directory to save the CSV file
-        filename: Name of the output CSV file
-    """
-    from typing import Any, Dict, List
-
-    import pandas as pd
-
-    # Prepare data for DataFrame
-    rows: List[Dict[str, Any]] = []
-    for t, result in results.items():
-        row = {"timestep": t}
-        row.update(result["stats"])
-        rows.append(row)
-
-    # Create and save DataFrame
-    df = pd.DataFrame(rows)
-    os.makedirs(output_dir, exist_ok=True)
-    csv_path = output_dir / filename
-    df.to_csv(csv_path, index=False, float_format="%.6f")
-
-
-def plot_noise_distributions(results: NoiseAnalysisResults, output_dir: Path):
-    """Compare true vs predicted noise distributions at different timesteps"""
-    timesteps = sorted(results.keys())
-    n_timesteps = len(timesteps)
-
-    fig, axes = plt.subplots(n_timesteps, 2, figsize=(12, 3 * n_timesteps))
-
-    for i, t in enumerate(timesteps):
-        # Flatten the noise tensors
-        true_noise = results[t]["true_noise"].flatten().cpu().numpy()
-        pred_noise = results[t]["pred_noise"].flatten().cpu().numpy()
-
-        # Plot histograms
-        axes[i, 0].hist(true_noise, bins=100, alpha=0.7, label="True", density=True)
-        axes[i, 1].hist(
-            pred_noise,
-            bins=100,
-            alpha=0.7,
-            color="red",
-            label="Predicted",
-            density=True,
-        )
-
-        # Add Gaussian fit
-        x = np.linspace(
-            min(true_noise.min(), pred_noise.min()),
-            max(true_noise.max(), pred_noise.max()),
-            100,
-        )
-        axes[i, 0].plot(x, norm.pdf(x, 0, 1), "k--", label="N(0,1)")
-        axes[i, 1].plot(x, norm.pdf(x, 0, 1), "k--", label="N(0,1)")
-
-        axes[i, 0].set_title(f"t={t}: True Noise Distribution")
-        axes[i, 1].set_title(f"t={t}: Predicted Noise Distribution")
-        axes[i, 0].legend()
-        axes[i, 1].legend()
-
-    plt.tight_layout()
-    plt.savefig(output_dir / "noise_distributions.png", dpi=150)
     plt.close()
 
 

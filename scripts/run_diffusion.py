@@ -18,6 +18,7 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from scripts.utils.noise_utils import plot_noise_correlation_scatter
 from src import DiffusionModel
 from src.utils import set_seed
 from utils.diff_utils import (
@@ -30,7 +31,8 @@ from utils.noise_utils import (
     plot_error_statistics,
     plot_loss_vs_timestep,
     plot_noise_analysis_results,
-    plot_noise_distributions,
+    plot_noise_histogram_grid,
+    plot_noise_overlay_with_comparison,
     plot_noise_scales,
     run_noise_analysis,
     save_noise_analysis,
@@ -129,26 +131,33 @@ def main():
         noise_analysis_dir.mkdir(exist_ok=True)
 
         # Use provided timesteps or default range
-        timesteps = [1, 10, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        timesteps = [1, 2, 10, 400, 500, 600, 979, 989, 999, 1000]
 
         print(f"Running noise analysis at timesteps: {timesteps}")
         noise_results = run_noise_analysis(
             model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
         )
 
-        # Plot and save noise analysis results
-        plot_noise_analysis_results(noise_results, noise_analysis_dir)
-        plot_loss_vs_timestep(noise_results, noise_analysis_dir)
+        # Save noise analysis results
         save_noise_analysis(noise_results, noise_analysis_dir)
-        plot_noise_distributions(noise_results, noise_analysis_dir)
-        # plot_spatial_correlations(noise_results, noise_analysis_dir)
+
+        # Plot and save noise analysis results
+        plot_noise_histogram_grid(noise_results, noise_analysis_dir, num_bins=50)
+        plot_noise_overlay_with_comparison(
+            noise_results, noise_analysis_dir, num_bins=50, mode="difference"
+        )
+        plot_noise_correlation_scatter(noise_results, noise_analysis_dir)
+        plot_noise_analysis_results(noise_results, noise_analysis_dir)
+
+        # Optional plots
+        plot_loss_vs_timestep(noise_results, noise_analysis_dir)
         plot_error_heatmap(noise_results, noise_analysis_dir)
         plot_noise_scales(noise_results, noise_analysis_dir)
         plot_error_statistics(noise_results, noise_analysis_dir)
         print(f"\nNoise analysis complete! Results saved to {noise_analysis_dir}")
 
     # 2. Run diffusion analysis
-    diffusion_analysis = True
+    diffusion_analysis = False
     if diffusion_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING DIFFUSION ANALYSIS ")
@@ -218,7 +227,7 @@ def main():
         )
 
     # 3. Run SNP-specific analysis
-    snp_analysis = True
+    snp_analysis = False
     if snp_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING SNP-SPECIFIC ANALYSIS ")
