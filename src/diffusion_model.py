@@ -61,16 +61,12 @@ class DiffusionModel(NetworkBase):
         )
 
         # ReverseDiffusion: Reverse diffusion process
-        # Extract reverse diffusion config
-        self.denoise_step = hparams["diffusion"].get("denoise_step", 10)
-        self.discretize = hparams["diffusion"].get("discretize", False)
-
         self.reverse_diffusion = ReverseDiffusion(
             self.forward_diffusion,
             self.unet,
             self._data_shape,
-            denoise_step=self.denoise_step,
-            discretize=self.discretize,
+            denoise_step=hparams["diffusion"].get("denoise_step", 10),
+            discretize=hparams["diffusion"].get("discretize", False),
         )
 
         # Zero noise model
@@ -82,6 +78,7 @@ class DiffusionModel(NetworkBase):
         else:
             print("Warning: `gradient_checkpointing_enable()` not found. Skipping...")
 
+    # ==================== Training Methods ====================
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the diffusion model.
@@ -93,10 +90,6 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: Predicted noise of shape [B, C, seq_len].
         """
-        # Ensure input and timestep are on the same device and have correct shape
-        device = x.device
-        x = prepare_batch_shape(x)
-        t = tensor_to_device(t, device)
         return self.predict_added_noise(x, t)
 
     def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -110,7 +103,7 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: Predicted noise of shape [B, C, seq_len].
         """
-        # Ensure input and timestep are on the same device and have correct shape
+        # Ensure tensors have the correct shape and are on the right device
         device = x.device
         x = prepare_batch_shape(x)
         t = tensor_to_device(t, device)
@@ -118,58 +111,42 @@ class DiffusionModel(NetworkBase):
         # Pass through the UNet model to predict noise
         return self.unet(x, t)
 
-    def diffuse_and_predict(self, batch: torch.Tensor) -> tuple:
-        """
-        Apply forward diffusion and predict noise.
-
-        This method handles the complete process of:
-        1. Sampling timesteps
-        2. Sampling noise
-        3. Adding noise to the input (forward diffusion)
-        4. Predicting the noise
-
-        Args:
-            batch: Clean input batch of shape [B, C, seq_len].
-
-        Returns:
-            tuple: (predicted_noise, true_noise, timesteps, noisy_input)
-        """
-        # Ensure batch has the correct shape and is on the right device
-        device = batch.device
-        batch = prepare_batch_shape(batch)
-
-        # Sample time and noise
-        t = tensor_to_device(self.time_sampler.sample(shape=(batch.shape[0],)), device)
-
-        # Generate Gaussian noise
-        eps = torch.randn_like(batch, device=device)
-
-        # Forward diffusion process (DDPM Eq. 4):
-        #   x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps
-        xt = self.forward_diffusion.sample(batch, t, eps)
-
-        # Predict the noise using the model
-        pred_eps = self.predict_added_noise(xt, t)
-
-        return pred_eps, eps, t, xt
-
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """
-        Compute MSE between true noise and predicted noise.
-        The network's goal is to correctly predict noise (eps) from noisy observations.
+        Compute MSE between true noise and predicted noise for a batch.
+        This method performs the forward diffusion process, predicts noise,
+        and calculates the loss in a single, clear function.
+
         Implements DDPM Eq. 4:
             x_t = sqrt(alpha_bar_t) * x_0 + sqrt(1 - alpha_bar_t) * eps
         and the loss:
             L = E[||eps - eps_theta(x_t, t)||^2]
+
         Args:
             batch: Input batch from dataloader of shape [B, C, seq_len].
         Returns:
             torch.Tensor: MSE loss.
         """
-        pred_eps, eps, _, _ = self.diffuse_and_predict(batch)
-        loss = F.mse_loss(pred_eps, eps)
-        return loss
+        # Ensure batch has the correct shape and is on the right device
+        device = batch.device
+        batch = prepare_batch_shape(batch)
 
+        # Sample random timesteps for each batch element
+        t = tensor_to_device(self.time_sampler.sample(shape=(batch.shape[0],)), device)
+
+        # Generate Gaussian noise
+        eps = torch.randn_like(batch, device=device)
+
+        # Forward diffusion: add noise to the batch
+        xt = self.forward_diffusion.sample(batch, t, eps)
+
+        # Predict the noise using the model
+        pred_eps = self.predict_added_noise(xt, t)
+
+        # Compute and return MSE loss
+        return F.mse_loss(pred_eps, eps)
+
+    # ==================== Inference Methods ====================
     def loss_per_timesteps(
         self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
     ) -> torch.Tensor:
@@ -182,7 +159,7 @@ class DiffusionModel(NetworkBase):
         Returns:
             torch.Tensor: Loss at each timestep.
         """
-        # Ensure inputs have the correct shape and are on the right device
+        # Ensure tensors have the correct shape and are on the right device
         device = x0.device
         x0 = prepare_batch_shape(x0)
         eps = prepare_batch_shape(eps)
@@ -198,7 +175,7 @@ class DiffusionModel(NetworkBase):
             xt = self.forward_diffusion.sample(x0, t_tensor, eps)
 
             # Predict noise and compute loss
-            predicted_noise = self.forward(xt, t_tensor)
+            predicted_noise = self.predict_added_noise(xt, t_tensor)
             loss = F.mse_loss(predicted_noise, eps)
             losses.append(loss)
 
@@ -207,8 +184,8 @@ class DiffusionModel(NetworkBase):
     def generate_samples(
         self,
         num_samples: int = 10,
-        denoise_step: int = None,
-        discretize: bool = None,
+        denoise_step: int = 10,
+        discretize: bool = False,
         seed: int = 42,
         device=None,
     ) -> torch.Tensor:
@@ -239,11 +216,6 @@ class DiffusionModel(NetworkBase):
             )
 
         # Use the reverse diffusion process to generate samples
-        # Use defaults from config if not provided
-        if denoise_step is None:
-            denoise_step = self.denoise_step
-        if discretize is None:
-            discretize = self.discretize
         return self.reverse_diffusion.generate_samples(
             num_samples=num_samples,
             denoise_step=denoise_step,
@@ -255,27 +227,29 @@ class DiffusionModel(NetworkBase):
     def denoise_sample(
         self,
         batch: torch.Tensor,
-        denoise_step: int = None,
-        discretize: bool = None,
+        denoise_step: int = 10,
+        discretize: bool = False,
         seed: int = 42,
         device=None,
     ) -> torch.Tensor:
         """
-        Denoise an existing batch using the reverse diffusion process.
+        Denoise an input batch using the reverse diffusion process.
 
-        This method takes an existing batch (which could be noisy data or even
-        clean data that you want to process through the model) and applies the
-        reverse diffusion process to it.
+        This method starts the reverse diffusion process from the provided batch
+        (which should be noisy or real data). It does not generate new noise, but
+        instead denoises the actual input batch by iteratively applying the reverse
+        diffusion steps. This is useful for denoising specific data samples, e.g.,
+        for evaluation or restoration tasks.
 
         Args:
-            batch: Input batch to denoise, shape [B, C, seq_len].
-            denoise_step: Number of timesteps to skip in reverse diffusion (default: 10).
-            discretize: If True, discretize the output to 0, 0.5, and 1.0 values (SNP genotypes).
-            seed: Optional seed for reproducible sample generation.
-            device: torch.device
+            batch: Input batch to denoise. Shape: [B, C, seq_len]. This can be noisy or real data.
+            denoise_step: Number of timesteps to skip in reverse diffusion. If None, uses the instance default.
+            discretize: If True, discretize output to SNP values. If None, uses the instance default.
+            seed: Random seed for reproducibility (not used in this function, kept for API compatibility).
+            device: Device to run the computation on. If None, uses CUDA if available, else CPU.
 
         Returns:
-            torch.Tensor: Denoised samples of shape [B, C, seq_len].
+            Denoised batch of the same shape as input.
         """
         # Determine device to use
         if device is None:
@@ -286,11 +260,6 @@ class DiffusionModel(NetworkBase):
             )
 
         # Use the reverse diffusion process to denoise the batch
-        # Use defaults from config if not provided
-        if denoise_step is None:
-            denoise_step = self.denoise_step
-        if discretize is None:
-            discretize = self.discretize
         return self.reverse_diffusion.denoise_sample(
             batch=batch,
             denoise_step=denoise_step,

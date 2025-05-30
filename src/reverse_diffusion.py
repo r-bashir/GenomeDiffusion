@@ -44,59 +44,6 @@ class ReverseDiffusion:
         self.denoise_step = denoise_step
         self.discretize = discretize
 
-    # FIXME: Extract function allows to extract appropriate t index for a batch of indices.
-    def extract(a, t, x_shape):
-        batch_size = t.shape[0]
-        out = a.gather(-1, t.cpu())
-        return out.reshape(batch_size, *((1,) * (len(x_shape) - 1))).to(t.device)
-
-    # FIXME: Reverse diffusion: https://huggingface.co/blog/annotated-diffusion
-    def p_sample(self, x_t, t, t_index):
-        betas_t = extract(betas, t, x.shape)
-        sqrt_one_minus_alphas_cumprod_t = extract(
-            sqrt_one_minus_alphas_cumprod, t, x.shape
-        )
-        sqrt_recip_alphas_t = extract(sqrt_recip_alphas, t, x.shape)
-
-        # Equation 11 in the paper
-        # Use our model (noise predictor) to predict the mean
-        model_mean = sqrt_recip_alphas_t * (
-            x - betas_t * model(x, t) / sqrt_one_minus_alphas_cumprod_t
-        )
-
-        if t_index == 0:
-            return model_mean
-        else:
-            posterior_variance_t = extract(posterior_variance, t, x.shape)
-            noise = torch.randn_like(x)
-            # Algorithm 2 line 4:
-            return model_mean + torch.sqrt(posterior_variance_t) * noise
-
-    # FIXME: Algorithm 2 (including returning all images)
-    def p_sample_loop(model, shape):
-        device = next(model.parameters()).device
-
-        b = shape[0]
-        # start from pure noise (for each example in the batch)
-        img = torch.randn(shape, device=device)
-        imgs = []
-
-        for i in tqdm(
-            reversed(range(0, timesteps)),
-            desc="sampling loop time step",
-            total=timesteps,
-        ):
-            img = p_sample(
-                model, img, torch.full((b,), i, device=device, dtype=torch.long), i
-            )
-            imgs.append(img.cpu().numpy())
-        return imgs
-
-    def sample(model, image_size, batch_size=16, channels=3):
-        return p_sample_loop(
-            model, shape=(batch_size, channels, image_size, image_size)
-        )
-
     def reverse_diffusion_step(self, x_t, t):
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
@@ -190,7 +137,7 @@ class ReverseDiffusion:
         return x
 
     def generate_samples(
-        self, num_samples=10, denoise_step=None, discretize=None, seed=42, device=None
+        self, num_samples=10, denoise_step=10, discretize=False, seed=42, device=None
     ):
         """
         Generate new samples from random noise using the reverse diffusion process.
@@ -229,47 +176,48 @@ class ReverseDiffusion:
                 denoise_step = self.denoise_step
             if discretize is None:
                 discretize = self.discretize
+
             # Run the reverse diffusion process
             return self._reverse_diffusion_process(x, denoise_step, discretize)
 
     def denoise_sample(
-        self, batch, denoise_step=None, discretize=None, seed=42, device=None
+        self, batch, denoise_step=10, discretize=False, seed=42, device=None
     ):
         """
-        Denoise an existing batch using the reverse diffusion process.
+        Denoise an input batch using the reverse diffusion process.
 
-        This method takes an existing batch (which could be noisy data or even
-        clean data that you want to process through the model) and applies the
-        reverse diffusion process to it.
+        This method starts the reverse diffusion process from the provided batch
+        (which should be noisy or real data). It does not generate new noise, but
+        instead denoises the actual input batch by iteratively applying the reverse
+        diffusion steps. This is useful for denoising specific data samples, e.g.,
+        for evaluation or restoration tasks.
 
         Args:
-            batch: Input batch to denoise, shape [B, C, seq_len]
-            denoise_step: Number of timesteps to skip in reverse diffusion
-            discretize: If True, discretize output to SNP values
-            seed: Random seed for reproducibility
-            device: torch.device
+            batch: Input batch to denoise. Shape: [B, C, seq_len]. This can be noisy or real data.
+            denoise_step: Number of timesteps to skip in reverse diffusion. If None, uses the instance default.
+            discretize: If True, discretize output to SNP values. If None, uses the instance default.
+            seed: Random seed for reproducibility (not used in this function, kept for API compatibility).
+            device: Device to run the computation on. If None, uses CUDA if available, else CPU.
 
         Returns:
-            Denoised output of shape [B, C, seq_len]
+            Denoised batch of the same shape as input.
         """
-        with torch.no_grad():
-            # Set seed for reproducibility
-            set_seed(seed)
 
-            # Determine device to use
-            if device is None:
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Set seed for reproducibility
+        set_seed(seed)
 
-            # Ensure batch has the correct shape and is on the right device
-            batch = tensor_to_device(prepare_batch_shape(batch), device)
+        # Determine device to use
+        if device is None:
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            # Start from pure noise with the same shape as the input batch
-            x = torch.randn_like(batch)
+        # Ensure batch has the correct shape and is on the right device
+        x = tensor_to_device(prepare_batch_shape(batch), device)
 
-            # Use instance defaults if not provided
-            if denoise_step is None:
-                denoise_step = self.denoise_step
-            if discretize is None:
-                discretize = self.discretize
-            # Run the reverse diffusion process
-            return self._reverse_diffusion_process(x, denoise_step, discretize)
+        # Use instance defaults if not provided
+        if denoise_step is None:
+            denoise_step = self.denoise_step
+        if discretize is None:
+            discretize = self.discretize
+
+        # Run the reverse diffusion process starting from the input batch
+        return self._reverse_diffusion_process(x, denoise_step, discretize)

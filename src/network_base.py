@@ -269,10 +269,6 @@ class NetworkBase(pl.LightningModule):
         """Compute loss for a batch."""
         raise NotImplementedError("Subclasses must implement compute_loss")
 
-    def denoise_batch(self, batch: torch.Tensor) -> torch.Tensor:
-        """Denoise a batch using the model's generative process."""
-        raise NotImplementedError("Subclasses must implement denoise_batch")
-
     def generate_samples(self, num_samples: int = 10) -> torch.Tensor:
         """Generate samples from the model."""
         raise NotImplementedError("Subclasses must implement generate_samples")
