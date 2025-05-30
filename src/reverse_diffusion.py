@@ -30,10 +30,19 @@ class ReverseDiffusion:
         data_shape: Shape of the data (channels, seq_length)
     """
 
-    def __init__(self, forward_diffusion, noise_predictor, data_shape):
+    def __init__(
+        self,
+        forward_diffusion,
+        noise_predictor,
+        data_shape,
+        denoise_step=10,
+        discretize=False,
+    ):
         self.forward_diffusion = forward_diffusion
         self.noise_predictor = noise_predictor
         self.data_shape = data_shape
+        self.denoise_step = denoise_step
+        self.discretize = discretize
 
     # FIXME: Extract function allows to extract appropriate t index for a batch of indices.
     def extract(a, t, x_shape):
@@ -181,7 +190,7 @@ class ReverseDiffusion:
         return x
 
     def generate_samples(
-        self, num_samples=10, denoise_step=10, discretize=False, seed=42, device=None
+        self, num_samples=10, denoise_step=None, discretize=None, seed=42, device=None
     ):
         """
         Generate new samples from random noise using the reverse diffusion process.
@@ -215,11 +224,16 @@ class ReverseDiffusion:
             # Start from pure noise
             x = tensor_to_device(torch.randn(batch_shape), device)
 
+            # Use instance defaults if not provided
+            if denoise_step is None:
+                denoise_step = self.denoise_step
+            if discretize is None:
+                discretize = self.discretize
             # Run the reverse diffusion process
             return self._reverse_diffusion_process(x, denoise_step, discretize)
 
     def denoise_sample(
-        self, batch, denoise_step=10, discretize=False, seed=42, device=None
+        self, batch, denoise_step=None, discretize=None, seed=42, device=None
     ):
         """
         Denoise an existing batch using the reverse diffusion process.
@@ -252,5 +266,10 @@ class ReverseDiffusion:
             # Start from pure noise with the same shape as the input batch
             x = torch.randn_like(batch)
 
+            # Use instance defaults if not provided
+            if denoise_step is None:
+                denoise_step = self.denoise_step
+            if discretize is None:
+                discretize = self.discretize
             # Run the reverse diffusion process
             return self._reverse_diffusion_process(x, denoise_step, discretize)

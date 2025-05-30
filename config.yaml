@@ -13,7 +13,7 @@ data:
 
   # Preprocessing Tasks
   seq_length: 100              # Total length is 160858
-  missing_value: 9             # None to not handle missing values
+  missing_value: 9             # None, to not handle missing values
   normalize: true
   scaling: true
   scale_factor: 0.5
@@ -30,6 +30,8 @@ diffusion:
   beta_start: 0.0001
   beta_end: 0.02
   schedule_type: "cosine"
+  denoise_step: 10
+  discretize: False
 
 # UNet1D
 unet:

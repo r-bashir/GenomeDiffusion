@@ -61,8 +61,16 @@ class DiffusionModel(NetworkBase):
         )
 
         # ReverseDiffusion: Reverse diffusion process
+        # Extract reverse diffusion config
+        self.denoise_step = hparams["diffusion"].get("denoise_step", 10)
+        self.discretize = hparams["diffusion"].get("discretize", False)
+
         self.reverse_diffusion = ReverseDiffusion(
-            self.forward_diffusion, self.unet, self._data_shape
+            self.forward_diffusion,
+            self.unet,
+            self._data_shape,
+            denoise_step=self.denoise_step,
+            discretize=self.discretize,
         )
 
         # Zero noise model
@@ -199,8 +207,8 @@ class DiffusionModel(NetworkBase):
     def generate_samples(
         self,
         num_samples: int = 10,
-        denoise_step: int = 10,
-        discretize: bool = False,
+        denoise_step: int = None,
+        discretize: bool = None,
         seed: int = 42,
         device=None,
     ) -> torch.Tensor:
@@ -231,6 +239,11 @@ class DiffusionModel(NetworkBase):
             )
 
         # Use the reverse diffusion process to generate samples
+        # Use defaults from config if not provided
+        if denoise_step is None:
+            denoise_step = self.denoise_step
+        if discretize is None:
+            discretize = self.discretize
         return self.reverse_diffusion.generate_samples(
             num_samples=num_samples,
             denoise_step=denoise_step,
@@ -242,8 +255,8 @@ class DiffusionModel(NetworkBase):
     def denoise_sample(
         self,
         batch: torch.Tensor,
-        denoise_step: int = 10,
-        discretize: bool = False,
+        denoise_step: int = None,
+        discretize: bool = None,
         seed: int = 42,
         device=None,
     ) -> torch.Tensor:
@@ -273,6 +286,11 @@ class DiffusionModel(NetworkBase):
             )
 
         # Use the reverse diffusion process to denoise the batch
+        # Use defaults from config if not provided
+        if denoise_step is None:
+            denoise_step = self.denoise_step
+        if discretize is None:
+            discretize = self.discretize
         return self.reverse_diffusion.denoise_sample(
             batch=batch,
             denoise_step=denoise_step,
