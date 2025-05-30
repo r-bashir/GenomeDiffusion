@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+
 """Noise Analysis Utilities for Diffusion Models
 
 This module provides tools for analyzing the noise prediction performance of diffusion models
@@ -50,6 +51,7 @@ NoiseAnalysisResult = Dict[str, Any]
 NoiseAnalysisResults = Dict[int, NoiseAnalysisResult]
 
 
+# ==================== Core Noise Analysis ====================
 def run_noise_analysis(
     model: DiffusionModel,
     x0: Tensor,
@@ -81,7 +83,7 @@ def run_noise_analysis(
         print("=" * 70)
 
     for t in timesteps:
-        results[t] = analyze_noise_prediction_at_timestep(
+        results[t] = noise_prediction_at_timestep(
             model=model,
             x0=x0[:num_samples],
             timestep=t,
@@ -94,7 +96,7 @@ def run_noise_analysis(
     return results
 
 
-def analyze_noise_prediction_at_timestep(
+def noise_prediction_at_timestep(
     model: DiffusionModel,
     x0: Tensor,
     timestep: int,
@@ -134,7 +136,12 @@ def analyze_noise_prediction_at_timestep(
         # Sample noise and apply forward diffusion
         true_noise = torch.randn_like(x0_samples)
         xt = model.forward_diffusion.sample(x0_samples, t_tensor, true_noise)
-        pred_noise = model.reverse_diffusion.reverse_diffusion_step(xt, t_tensor)
+        pred_noise = model.predict_added_noise(xt, t_tensor)
+
+        # Use model's own loss function for this timestep
+        mse_loss = (
+            model.loss_per_timesteps(x0_samples, true_noise, t_tensor).mean().item()
+        )
 
         # Calculate errors and statistics
         abs_errors = (pred_noise - true_noise).abs()
@@ -145,7 +152,7 @@ def analyze_noise_prediction_at_timestep(
             "true_noise_std": true_noise.std().item(),
             "pred_noise_mean": pred_noise.mean().item(),
             "pred_noise_std": pred_noise.std().item(),
-            "mse": mse_errors.mean().item(),
+            "mse": mse_loss,  # Use model's loss
             "mae": abs_errors.mean().item(),
             "max_ae": abs_errors.max().item(),
             "signal_to_noise": (xt.norm() / (pred_noise.norm() + 1e-8)).item(),
@@ -175,6 +182,7 @@ def analyze_noise_prediction_at_timestep(
     }
 
 
+# ==================== Utility Functions ====================
 def _print_noise_statistics(timestep: int, stats: Dict[str, float]) -> None:
     """Print formatted noise statistics.
 
@@ -189,7 +197,7 @@ def _print_noise_statistics(timestep: int, stats: Dict[str, float]) -> None:
     print(
         f"Pred noise  : μ = {stats['pred_noise_mean']:8.4f} ± {stats['pred_noise_std']:8.4f}"
     )
-    print(f"\n[Prediction Errors]")
+    print("\n[Prediction Errors]")
     print(f"MSE           : {stats['mse']:.6f}")
     print(f"MAE           : {stats['mae']:.6f}")
     print(f"Max AE        : {stats['max_ae']:.6f}")
@@ -226,6 +234,7 @@ def save_noise_analysis(
     df.to_csv(csv_path, index=False, float_format="%.6f")
 
 
+# ==================== Plotting Functions ====================
 def plot_noise_histogram_grid(
     results: NoiseAnalysisResults, output_dir: Path, num_bins: int = 50
 ):
@@ -520,7 +529,6 @@ def plot_noise_analysis_results(
     plt.close()
 
 
-# Optional noise analysis functions
 def plot_loss_vs_timestep(
     results: NoiseAnalysisResults, output_dir: Path, figsize: Tuple[int, int] = (12, 6)
 ) -> None:
@@ -577,6 +585,29 @@ def plot_loss_vs_timestep(
     plt.tight_layout()
     plot_path = output_dir / "loss_vs_timestep.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_noise_scales(results: NoiseAnalysisResults, output_dir: Path):
+    """Analyze how noise scales with timesteps"""
+    timesteps = sorted(results.keys())
+
+    # Calculate statistics
+    true_scales = [results[t]["true_noise"].std().item() for t in timesteps]
+    pred_scales = [results[t]["pred_noise"].std().item() for t in timesteps]
+
+    # Plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(timesteps, true_scales, "o-", label="True Noise Scale")
+    plt.plot(timesteps, pred_scales, "s-", label="Predicted Noise Scale")
+    plt.axhline(1.0, color="gray", linestyle="--", label="Unit Normal")
+    plt.xlabel("Timestep")
+    plt.ylabel("Noise Scale (Std Dev)")
+    plt.title("Noise Scale vs Timestep")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "noise_scales.png", dpi=150)
     plt.close()
 
 
@@ -727,29 +758,6 @@ def plot_error_heatmap(results: NoiseAnalysisResults, output_dir: Path):
     plt.title("Error Heatmap Across Sequence and Timesteps")
     plt.tight_layout()
     plt.savefig(output_dir / "error_heatmap.png", dpi=150)
-    plt.close()
-
-
-def plot_noise_scales(results: NoiseAnalysisResults, output_dir: Path):
-    """Analyze how noise scales with timesteps"""
-    timesteps = sorted(results.keys())
-
-    # Calculate statistics
-    true_scales = [results[t]["true_noise"].std().item() for t in timesteps]
-    pred_scales = [results[t]["pred_noise"].std().item() for t in timesteps]
-
-    # Plot
-    plt.figure(figsize=(10, 6))
-    plt.plot(timesteps, true_scales, "o-", label="True Noise Scale")
-    plt.plot(timesteps, pred_scales, "s-", label="Predicted Noise Scale")
-    plt.axhline(1.0, color="gray", linestyle="--", label="Unit Normal")
-    plt.xlabel("Timestep")
-    plt.ylabel("Noise Scale (Std Dev)")
-    plt.title("Noise Scale vs Timestep")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_dir / "noise_scales.png", dpi=150)
     plt.close()
 
 
