@@ -13,7 +13,7 @@ CHECKPOINT_DIR=${1:-$DEFAULT_CHECKPOINT}
 echo "Using checkpoint: $CHECKPOINT_DIR"
 
 # WandB API Key
-export WANDB_API_KEY="145f0112a8066d63f7e4856f3ac01edd336afebd"
+export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
 
 # Log Start Time
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
