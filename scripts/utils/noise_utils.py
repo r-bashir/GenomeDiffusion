@@ -65,20 +65,28 @@ def run_noise_analysis(
         model: The diffusion model to analyze
         x0: Clean input tensor of shape [batch_size, channels, seq_length]
         num_samples: Number of samples to analyze per timestep
-        timesteps: List of timesteps to analyze. Defaults to [1, 10, 100, 500, 1000]
+        timesteps: List of timesteps to analyze. If None, uses full range from tmin to tmax in steps of 10
         verbose: Whether to print progress information
 
     Returns:
         Dictionary mapping timesteps to their analysis results
     """
     if timesteps is None:
-        timesteps = [1, 10, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        # Use full range of timesteps from tmin to tmax in steps of 10
+        tmin = model.forward_diffusion.tmin
+        tmax = model.forward_diffusion.tmax
+        timesteps = list(range(tmin, tmax + 1, 10))
+        # Always include tmin and tmax
+        if tmin not in timesteps:
+            timesteps.insert(0, tmin)
+        if tmax not in timesteps:
+            timesteps.append(tmax)
 
     results: NoiseAnalysisResults = {}
 
     if verbose:
         print("\n" + "=" * 70)
-        print(" STARTING DETAILED NOISE ANALYSIS ")
+        print(f" STARTING DETAILED NOISE ANALYSIS (timesteps: {len(timesteps)}) ")
         print("=" * 70)
 
     for t in timesteps:

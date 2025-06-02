@@ -110,20 +110,17 @@ def main():
     # ===================== Run Noise Analysis =====================
 
     # Model Loss vs Timestep
-    loss_vs_timestep = False
+    loss_vs_timestep = True
     if loss_vs_timestep:
         print("\n" + "=" * 70)
         print(" RUNNING LOSS/SCALE VS TIMESTEP ")
         print("=" * 70)
 
-        # timesteps = list(range(1, 1001, 10))
-        timesteps = list(range(1, 1001, 10)) + ([1000] if 1000 % 10 != 1 else [])
-
         print(
-            f"Running noise analysis at all timesteps with {args.num_samples} samples"
+            f"Running noise analysis for all timesteps with {args.num_samples} samples"
         )
         results = run_noise_analysis(
-            model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
+            model, x0, num_samples=args.num_samples, timesteps=None, verbose=False
         )
 
         # Save noise analysis results
@@ -139,7 +136,7 @@ def main():
         )
 
     # Batch Noise Analysis
-    batch_noise_analysis = False
+    batch_noise_analysis = True
     if batch_noise_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING BATCH NOISE ANALYSIS ")
@@ -164,7 +161,7 @@ def main():
         print(f"\nBatch noise analysis complete! Results saved to {output_dir}")
 
     # Sample Noise Analysis
-    sample_noise_analysis = False
+    sample_noise_analysis = True
     if sample_noise_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING SAMPLE NOISE ANALYSIS ")

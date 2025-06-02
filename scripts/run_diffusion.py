@@ -38,6 +38,9 @@ def parse_args():
     parser.add_argument(
         "--checkpoint", type=str, required=True, help="Path to model checkpoint"
     )
+    parser.add_argument(
+        "--num_samples", type=int, default=3, help="Number of samples to analyze"
+    )
     return parser.parse_args()
 
 
@@ -89,8 +92,8 @@ def main():
 
     # ===================== Run Reverse Diffusion =====================
 
-    # FIXME: Call test functions to analyze reverse diffusion process.
-    diffusion_analysis = False
+    # Run diffusion analysis to test the reverse diffusion process
+    diffusion_analysis = True
     if diffusion_analysis:
         print("\n" + "=" * 70)
         print(" RUNNING DIFFUSION ANALYSIS ")
