@@ -18,7 +18,6 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.utils.noise_utils import plot_noise_correlation_scatter
 from src import DiffusionModel
 from src.utils import set_seed
 from utils.diff_utils import (
@@ -26,18 +25,6 @@ from utils.diff_utils import (
     plot_diffusion_process,
     test_diffusion_at_timestep,
 )
-from utils.noise_utils import (
-    plot_error_heatmap,
-    plot_error_statistics,
-    plot_loss_vs_timestep,
-    plot_noise_analysis_results,
-    plot_noise_histogram_grid,
-    plot_noise_overlay_with_comparison,
-    plot_noise_scales,
-    run_noise_analysis,
-    save_noise_analysis,
-)
-from utils.snp_utils import analyze_single_snp, plot_noise_evolution
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -50,24 +37,6 @@ def parse_args():
     )
     parser.add_argument(
         "--checkpoint", type=str, required=True, help="Path to model checkpoint"
-    )
-    parser.add_argument(
-        "--snp_index",
-        type=int,
-        default=50,
-        help="Index of the SNP to monitor (default: 50)",
-    )
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=5,
-        help="Number of samples to analyze (default: 5)",
-    )
-    parser.add_argument(
-        "--num_runs",
-        type=int,
-        default=3,
-        help="Number of runs for variance estimation (default: 3)",
     )
     return parser.parse_args()
 
@@ -100,63 +69,27 @@ def main():
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # Setup output directory structure
+    # Output directory
     checkpoint_path = Path(args.checkpoint)
     base_dir = checkpoint_path.parent.parent
-    print(f"\nResults will be saved to: {base_dir}")
-
-    # Load test dataset
+    output_dir = base_dir / "reverse_diffusion"
+    output_dir.mkdir(exist_ok=True)
+    print(f"\nResults will be saved to: {output_dir}")
+    
+     # Load Dataset (Test)
     print("\nLoading test dataset...")
     model.setup("test")
     test_loader = model.test_dataloader()
 
-    # Get a batch of test data
+    # Prepare Batch
     print("Preparing a batch of test data...")
     x0 = next(iter(test_loader)).to(device)
     x0 = x0.unsqueeze(1)  # Add channel dimension
     print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
-    # Run analyses
-    base_dir = Path(base_dir)
-
-    # 1. Noise analysis
-    noise_analysis = True
-    if noise_analysis:
-        print("\n" + "=" * 70)
-        print(" RUNNING NOISE ANALYSIS ")
-        print("=" * 70)
-
-        # Create output directory
-        noise_analysis_dir = base_dir / "noise_analysis"
-        noise_analysis_dir.mkdir(exist_ok=True)
-
-        # Use provided timesteps or default range
-        timesteps = [1, 2, 10, 400, 500, 600, 979, 989, 999, 1000]
-
-        print(f"Running noise analysis at timesteps: {timesteps}")
-        noise_results = run_noise_analysis(
-            model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
-        )
-
-        # Save noise analysis results
-        save_noise_analysis(noise_results, noise_analysis_dir)
-
-        # Plot and save noise analysis results
-        plot_noise_histogram_grid(noise_results, noise_analysis_dir, num_bins=50)
-        plot_noise_overlay_with_comparison(
-            noise_results, noise_analysis_dir, num_bins=50, mode="difference"
-        )
-        plot_noise_correlation_scatter(noise_results, noise_analysis_dir)
-        plot_noise_analysis_results(noise_results, noise_analysis_dir)
-
-        # Optional plots
-        plot_loss_vs_timestep(noise_results, noise_analysis_dir)
-        plot_error_heatmap(noise_results, noise_analysis_dir)
-        plot_noise_scales(noise_results, noise_analysis_dir)
-        plot_error_statistics(noise_results, noise_analysis_dir)
-        print(f"\nNoise analysis complete! Results saved to {noise_analysis_dir}")
-
-    # 2. Run diffusion analysis
+    # ===================== Run Reverse Diffusion =====================
+    
+    # FIXME: Call test functions to analyze reverse diffusion process.
     diffusion_analysis = False
     if diffusion_analysis:
         print("\n" + "=" * 70)
@@ -225,41 +158,6 @@ def main():
         print(
             f"- Combined process visualizations: {diffusion_analysis_dir / 'diffusion_plots'}"
         )
-
-    # 3. Run SNP-specific analysis
-    snp_analysis = False
-    if snp_analysis:
-        print("\n" + "=" * 70)
-        print(" RUNNING SNP-SPECIFIC ANALYSIS ")
-        print("=" * 70)
-
-        # Create output directory
-        snp_analysis_dir = base_dir / "snp_analysis"
-        snp_analysis_dir.mkdir(exist_ok=True)
-
-        # Run SNP analysis
-        print(f"\nAnalyzing SNP at index {args.snp_index}...")
-        snp_results = analyze_single_snp(
-            model=model,
-            x0=x0,
-            snp_index=args.snp_index,
-            num_runs=args.num_runs,
-            output_dir=snp_analysis_dir,
-        )
-
-        # Plot noise evolution for the first run
-        if snp_results["all_runs"]:
-            first_run = snp_results["all_runs"][0]
-            plot_path = snp_analysis_dir / f"snp_{args.snp_index}_noise_evolution.png"
-            plot_noise_evolution(
-                timesteps=first_run["timesteps"],
-                true_noises=first_run["true_noises"],
-                pred_noises=first_run["pred_noises"],
-                snp_index=args.snp_index,
-                save_path=plot_path,
-            )
-
-        print(f"\nSNP analysis complete! Results saved to {snp_analysis_dir}")
 
 
 if __name__ == "__main__":

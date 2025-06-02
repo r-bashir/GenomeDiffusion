@@ -5,110 +5,229 @@ Script to run detailed noise analysis on a trained diffusion model.
 Initial settings, argument parsing, model/data loading, and reproducibility follow run_diffusion.py.
 """
 import argparse
-import os
-import random
 import sys
 from pathlib import Path
 
-import numpy as np
 import torch
 
-from scripts.utils.noise_batch_utils import (
+# Add project root
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from src import DiffusionModel
+from src.utils import set_seed
+from utils.noise_utils import (
+    plot_error_statistics,
     plot_loss_vs_timestep,
+    plot_noise_analysis_results,
+    plot_noise_correlation_scatter,
+    plot_noise_histogram_grid,
+    plot_noise_overlay_with_comparison,
     plot_noise_scales,
     run_noise_analysis,
     save_noise_analysis,
 )
+from utils.noise_utils_marker import (
+    analyze_marker_noise_trajectory,
+    plot_marker_noise_trajectory,
+    plot_noise_evolution,
+    track_single_run_at_marker,
+)
+from utils.noise_utils_sample import (
+    analyze_sample_error_by_position,
+    analyze_sample_noise_trajectory,
+    plot_sample_error_by_position,
+    plot_sample_noise_trajectory,
+)
 
-# Import model and utils
-from src.diffusion_model import DiffusionModel
+# Set global device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-# ========== Argument Parsing ==========
 def parse_args():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Run noise analysis on a trained diffusion model."
+        description="Test diffusion model noise prediction"
     )
     parser.add_argument(
-        "--model-checkpoint",
-        type=str,
-        required=True,
-        help="Path to model checkpoint (.pt)",
+        "--checkpoint", type=str, required=True, help="Path to model checkpoint"
     )
     parser.add_argument(
-        "--data-path",
-        type=str,
-        required=True,
-        help="Path to input data file (e.g., .npy or .pt)",
+        "--marker_index", type=int, default=50, help="Index of marker to analyze"
     )
     parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="noise_analysis_results",
-        help="Directory to save analysis results",
-    )
-    parser.add_argument(
-        "--num-samples", type=int, default=3, help="Number of samples for analysis"
-    )
-    parser.add_argument(
-        "--timesteps",
-        type=int,
-        nargs="+",
-        default=None,
-        help="Timesteps to analyze (default: preset list)",
-    )
-    parser.add_argument(
-        "--seed", type=int, default=42, help="Random seed for reproducibility"
+        "--num_samples", type=int, default=10, help="Number of samples to analyze"
     )
     return parser.parse_args()
 
 
-# ========== Reproducibility ==========
-def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-# ========== Main ==========
 def main():
+    # Set global seed for reproducibility
+    set_seed(42)
+
+    # Parse Arguments
     args = parse_args()
-    set_seed(args.seed)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        # Load the model from checkpoint
+        print(f"\nLoading model from checkpoint: {args.checkpoint}")
+        model = DiffusionModel.load_from_checkpoint(
+            args.checkpoint,
+            map_location=device,
+            strict=True,
+        )
 
-    # ---- Load Model ----
-    print(f"Loading model from {args.model_checkpoint}")
-    model = DiffusionModel.load_from_checkpoint(args.model_checkpoint)
-    model.eval()
+        # Get model config and move to device
+        config = model.hparams
+        model = model.to(device)
+        model.eval()
 
-    # ---- Load Data ----
-    print(f"Loading data from {args.data_path}")
-    if args.data_path.endswith(".npy"):
-        x0 = torch.from_numpy(np.load(args.data_path))
-    else:
-        x0 = torch.load(args.data_path)
-    x0 = x0.float()
+        print(f"Model loaded successfully from checkpoint on {device}")
+        print("Model config loaded from checkpoint:\n")
+        print(config)
 
-    # ---- Run Noise Analysis ----
-    print("\nRunning noise analysis...")
-    results = run_noise_analysis(
-        model=model,
-        x0=x0,
-        num_samples=args.num_samples,
-        timesteps=args.timesteps,
-        verbose=True,
-        output_dir=output_dir,
-    )
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
-    # ---- Save and Plot Results ----
-    save_noise_analysis(results, output_dir)
-    plot_loss_vs_timestep(results, output_dir)
-    plot_noise_scales(results, output_dir)
-    print(f"\nNoise analysis complete. Results saved to {output_dir}")
+    # Output directory
+    checkpoint_path = Path(args.checkpoint)
+    base_dir = checkpoint_path.parent.parent
+    output_dir = base_dir / "noise_analysis"
+    output_dir.mkdir(exist_ok=True)
+    print(f"\nResults will be saved to: {output_dir}")
+
+    # Load Dataset (Test)
+    print("\nLoading test dataset...")
+    model.setup("test")
+    test_loader = model.test_dataloader()
+
+    # Prepare Batch
+    print("Preparing a batch of test data...")
+    x0 = next(iter(test_loader)).to(device)
+    x0 = x0.unsqueeze(1)  # Add channel dimension
+    print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
+
+    # ===================== Run Noise Analysis =====================
+
+    # Model Loss vs Timestep
+    loss_vs_timestep = False
+    if loss_vs_timestep:
+        print("\n" + "=" * 70)
+        print(" RUNNING LOSS/SCALE VS TIMESTEP ")
+        print("=" * 70)
+
+        # timesteps = list(range(1, 1001, 10))
+        timesteps = list(range(1, 1001, 10)) + ([1000] if 1000 % 10 != 1 else [])
+
+        print(
+            f"Running noise analysis at all timesteps with {args.num_samples} samples"
+        )
+        results = run_noise_analysis(
+            model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
+        )
+
+        # Save noise analysis results
+        save_noise_analysis(results, output_dir)
+
+        # Plot loss and noise scales vs timestep
+        plot_loss_vs_timestep(results, output_dir)
+        plot_noise_scales(results, output_dir)
+        plot_noise_analysis_results(results, output_dir)
+        plot_error_statistics(results, output_dir)
+        print(
+            f"\nLoss and noise scales vs timestep analysis complete! Results saved to {output_dir}"
+        )
+
+    # Batch Noise Analysis
+    batch_noise_analysis = False
+    if batch_noise_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING BATCH NOISE ANALYSIS ")
+        print("=" * 70)
+
+        # Use provided timesteps or default range
+        timesteps = [1, 2, 10, 400, 500, 600, 979, 989, 999, 1000]
+
+        print(
+            f"Running noise analysis at selected timesteps with {args.num_samples} samples"
+        )
+        batch_results = run_noise_analysis(
+            model, x0, num_samples=args.num_samples, timesteps=timesteps, verbose=False
+        )
+
+        # Plot and save noise analysis results
+        plot_noise_histogram_grid(batch_results, output_dir, num_bins=50)
+        plot_noise_overlay_with_comparison(
+            batch_results, output_dir, num_bins=50, mode="difference"
+        )
+        plot_noise_correlation_scatter(batch_results, output_dir)
+        print(f"\nBatch noise analysis complete! Results saved to {output_dir}")
+
+    # Sample Noise Analysis
+    sample_noise_analysis = False
+    if sample_noise_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING SAMPLE NOISE ANALYSIS ")
+        print("=" * 70)
+
+        timesteps = [1, 2, 10, 400, 500, 600, 979, 989, 999, 1000]
+        print(f"\nRunning noise analysis at selected timestep with single sample")
+
+        sample_idx = 0
+
+        noise_trajectory = analyze_sample_noise_trajectory(
+            model, x0, sample_idx, position=None, timesteps=None
+        )
+        plot_sample_noise_trajectory(
+            noise_trajectory, sample_idx, output_dir, position=None
+        )
+
+        errors = analyze_sample_error_by_position(model, x0, sample_idx, timestep=1000)
+        plot_sample_error_by_position(errors, output_dir, sample_idx, timestep=1000)
+
+        print(f"\nSample noise analysis complete! Results saved to {output_dir}")
+
+    # Marker Noise Analysis
+    marker_analysis = True
+    if marker_analysis:
+        print("\n" + "=" * 70)
+        print(" RUNNING MARKER-SPECIFIC ANALYSIS ")
+        print("=" * 70)
+
+        # Run Marker analysis
+        print(f"\nAnalyzing Marker at index {args.marker_index}...")
+
+        marker_noise_trajectory = analyze_marker_noise_trajectory(
+            model=model,
+            x0=x0,
+            sample_idx=0,
+            marker_index=args.marker_index,
+            timesteps=None,
+        )
+        plot_marker_noise_trajectory(
+            marker_noise_trajectory,
+            sample_idx=0,
+            output_dir=output_dir,
+            marker_index=args.marker_index,
+        )
+
+        x0_sample = x0[0:1].to(x0.device)
+        marker_result = track_single_run_at_marker(
+            model=model,
+            x0=x0_sample,
+            marker_index=args.marker_index,
+        )
+
+        # Plot noise evolution for the first run
+        plot_noise_evolution(
+            timesteps=marker_result["timesteps"],
+            true_noises=marker_result["true_noises"],
+            pred_noises=marker_result["pred_noises"],
+            marker_index=args.marker_index,
+            output_dir=output_dir,
+        )
+
+        print(f"\nMarker analysis complete! Results saved to {output_dir}")
 
 
 if __name__ == "__main__":

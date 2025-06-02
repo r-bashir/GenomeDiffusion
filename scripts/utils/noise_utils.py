@@ -58,7 +58,6 @@ def run_noise_analysis(
     num_samples: int = 3,
     timesteps: Optional[List[int]] = None,
     verbose: bool = True,
-    output_dir: Optional[Path] = None,
 ) -> NoiseAnalysisResults:
     """Run detailed noise analysis at specified timesteps.
 
@@ -235,6 +234,88 @@ def save_noise_analysis(
 
 
 # ==================== Plotting Functions ====================
+def plot_loss_vs_timestep(
+    results: NoiseAnalysisResults, output_dir: Path, figsize: Tuple[int, int] = (12, 6)
+) -> None:
+    """Plot the loss as a function of timestep.
+
+    Args:
+        results: Dictionary containing noise analysis results for different timesteps
+        output_dir: Directory to save the plot
+        figsize: Figure size (width, height)
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Extract timesteps and sort them
+    timesteps = sorted(results.keys())
+
+    # Extract metrics
+    mse_losses = [results[t]["stats"]["mse"] for t in timesteps]
+    mae_losses = [results[t]["stats"]["mae"] for t in timesteps]
+
+    # Create figure and primary y-axis
+    fig, ax1 = plt.subplots(figsize=figsize)
+
+    # Plot MSE on primary y-axis
+    color = "tab:blue"
+    ax1.set_xlabel("Timestep (t)")
+    ax1.set_ylabel("MSE Loss", color=color)
+    line1 = ax1.semilogy(timesteps, mse_losses, "o-", color=color, label="MSE")
+    ax1.tick_params(axis="y", labelcolor=color)
+
+    # Create secondary y-axis for MAE
+    ax2 = ax1.twinx()
+    color = "tab:red"
+    ax2.set_ylabel("MAE Loss", color=color)
+    line2 = ax2.semilogy(timesteps, mae_losses, "s--", color=color, label="MAE")
+    ax2.tick_params(axis="y", labelcolor=color)
+
+    # Add a vertical line at t=1000 if it's in the range
+    if max(timesteps) >= 1000:
+        ax1.axvline(x=1000, color="gray", linestyle=":", alpha=0.7, label="t=1000")
+
+    # Add a title and grid
+    plt.title("Noise Prediction Loss vs Timestep (Log Scale)")
+    ax1.grid(True, alpha=0.3)
+
+    # Combine legends from both axes
+    lines = line1 + line2
+    labels = [l.get_label() for l in lines]
+    if max(timesteps) >= 1000:
+        lines.append(plt.Line2D([0], [0], color="gray", linestyle=":", alpha=0.7))
+        labels.append("t=1000")
+    ax1.legend(lines, labels, loc="upper right")
+
+    # Adjust layout and save
+    plt.tight_layout()
+    plot_path = output_dir / "loss_vs_timestep.png"
+    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_noise_scales(results: NoiseAnalysisResults, output_dir: Path):
+    """Analyze how noise scales with timesteps"""
+    timesteps = sorted(results.keys())
+
+    # Calculate statistics
+    true_scales = [results[t]["true_noise"].std().item() for t in timesteps]
+    pred_scales = [results[t]["pred_noise"].std().item() for t in timesteps]
+
+    # Plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(timesteps, true_scales, "o-", label="True Noise Scale")
+    plt.plot(timesteps, pred_scales, "s-", label="Predicted Noise Scale")
+    plt.axhline(1.0, color="gray", linestyle="--", label="Unit Normal")
+    plt.xlabel("Timestep")
+    plt.ylabel("Noise Scale (Std Dev)")
+    plt.title("Noise Scale vs Timestep")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_dir / "noise_scales.png", dpi=150)
+    plt.close()
+
+
 def plot_noise_histogram_grid(
     results: NoiseAnalysisResults, output_dir: Path, num_bins: int = 50
 ):
@@ -526,88 +607,6 @@ def plot_noise_analysis_results(
     plt.tight_layout()
     plot_path = output_dir / "noise_analysis_results.png"
     plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-
-def plot_loss_vs_timestep(
-    results: NoiseAnalysisResults, output_dir: Path, figsize: Tuple[int, int] = (12, 6)
-) -> None:
-    """Plot the loss as a function of timestep.
-
-    Args:
-        results: Dictionary containing noise analysis results for different timesteps
-        output_dir: Directory to save the plot
-        figsize: Figure size (width, height)
-    """
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Extract timesteps and sort them
-    timesteps = sorted(results.keys())
-
-    # Extract metrics
-    mse_losses = [results[t]["stats"]["mse"] for t in timesteps]
-    mae_losses = [results[t]["stats"]["mae"] for t in timesteps]
-
-    # Create figure and primary y-axis
-    fig, ax1 = plt.subplots(figsize=figsize)
-
-    # Plot MSE on primary y-axis
-    color = "tab:blue"
-    ax1.set_xlabel("Timestep (t)")
-    ax1.set_ylabel("MSE Loss", color=color)
-    line1 = ax1.semilogy(timesteps, mse_losses, "o-", color=color, label="MSE")
-    ax1.tick_params(axis="y", labelcolor=color)
-
-    # Create secondary y-axis for MAE
-    ax2 = ax1.twinx()
-    color = "tab:red"
-    ax2.set_ylabel("MAE Loss", color=color)
-    line2 = ax2.semilogy(timesteps, mae_losses, "s--", color=color, label="MAE")
-    ax2.tick_params(axis="y", labelcolor=color)
-
-    # Add a vertical line at t=1000 if it's in the range
-    if max(timesteps) >= 1000:
-        ax1.axvline(x=1000, color="gray", linestyle=":", alpha=0.7, label="t=1000")
-
-    # Add a title and grid
-    plt.title("Noise Prediction Loss vs Timestep (Log Scale)")
-    ax1.grid(True, alpha=0.3)
-
-    # Combine legends from both axes
-    lines = line1 + line2
-    labels = [l.get_label() for l in lines]
-    if max(timesteps) >= 1000:
-        lines.append(plt.Line2D([0], [0], color="gray", linestyle=":", alpha=0.7))
-        labels.append("t=1000")
-    ax1.legend(lines, labels, loc="upper right")
-
-    # Adjust layout and save
-    plt.tight_layout()
-    plot_path = output_dir / "loss_vs_timestep.png"
-    plt.savefig(plot_path, dpi=300, bbox_inches="tight")
-    plt.close()
-
-
-def plot_noise_scales(results: NoiseAnalysisResults, output_dir: Path):
-    """Analyze how noise scales with timesteps"""
-    timesteps = sorted(results.keys())
-
-    # Calculate statistics
-    true_scales = [results[t]["true_noise"].std().item() for t in timesteps]
-    pred_scales = [results[t]["pred_noise"].std().item() for t in timesteps]
-
-    # Plot
-    plt.figure(figsize=(10, 6))
-    plt.plot(timesteps, true_scales, "o-", label="True Noise Scale")
-    plt.plot(timesteps, pred_scales, "s-", label="Predicted Noise Scale")
-    plt.axhline(1.0, color="gray", linestyle="--", label="Unit Normal")
-    plt.xlabel("Timestep")
-    plt.ylabel("Noise Scale (Std Dev)")
-    plt.title("Noise Scale vs Timestep")
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_dir / "noise_scales.png", dpi=150)
     plt.close()
 
 
