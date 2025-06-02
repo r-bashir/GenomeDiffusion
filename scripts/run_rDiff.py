@@ -75,8 +75,8 @@ def main():
     output_dir = base_dir / "reverse_diffusion"
     output_dir.mkdir(exist_ok=True)
     print(f"\nResults will be saved to: {output_dir}")
-    
-     # Load Dataset (Test)
+
+    # Load Dataset (Test)
     print("\nLoading test dataset...")
     model.setup("test")
     test_loader = model.test_dataloader()
@@ -88,7 +88,7 @@ def main():
     print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
     # ===================== Run Reverse Diffusion =====================
-    
+
     # FIXME: Call test functions to analyze reverse diffusion process.
     diffusion_analysis = False
     if diffusion_analysis:

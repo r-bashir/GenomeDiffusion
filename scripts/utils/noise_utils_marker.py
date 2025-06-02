@@ -14,12 +14,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import Tensor
+
 from src import DiffusionModel
 
 # Type aliases
 ArrayLike = Union[np.ndarray, List[float], torch.Tensor]
 RunResult = Dict[str, Any]
 VarianceStats = Dict[str, Any]
+
 
 # Analyze a single sample's noise trajectory over all timesteps
 def analyze_marker_noise_trajectory(
@@ -30,14 +32,14 @@ def analyze_marker_noise_trajectory(
     timesteps: Optional[List[int]] = None,
 ) -> Dict[str, np.ndarray]:
     """Track true and predicted noise for a single sample's position across timesteps.
-    
+
     Args:
         model: The diffusion model
         x0: Input tensor of shape [batch, 1, seq_len]
         sample_idx: Index of the sample to analyze
         marker_index: Specific marker to analyze. If None, aggregates over all markers
         timesteps: List of timesteps to analyze. If None, uses all timesteps
-        
+
     Returns:
         Dictionary containing 'true_noise' and 'pred_noise' trajectories
     """
@@ -45,18 +47,18 @@ def analyze_marker_noise_trajectory(
 
     if timesteps is None:
         timesteps = list(range(1, getattr(model.forward_diffusion, "tmax", 1000) + 1))
-    
+
     true_trajectory = []
     pred_trajectory = []
 
     with torch.no_grad():
         for t in timesteps:
             t_tensor = torch.tensor([t], device=x0.device, dtype=torch.long)
-            x0_sample = x0[sample_idx:sample_idx + 1].to(x0.device)
+            x0_sample = x0[sample_idx : sample_idx + 1].to(x0.device)
             eps = torch.randn_like(x0_sample)
             xt = model.forward_diffusion.sample(x0_sample, t_tensor, eps)
             pred_noise = model.predict_added_noise(xt, t_tensor)
-            
+
             if marker_index is None:
                 # Aggregate over all positions (mean across sequence length)
                 true_trajectory.append(eps[0, 0].mean().cpu().numpy())
@@ -82,7 +84,7 @@ def plot_marker_noise_trajectory(
     timesteps = traj["timesteps"]
     true_noise = traj["true_noise"]
     pred_noise = traj["pred_noise"]
-    
+
     fig, ax = plt.subplots(figsize=(12, 6))
 
     if true_noise.ndim == 2:  # All positions
@@ -91,14 +93,14 @@ def plot_marker_noise_trajectory(
     else:
         ax.plot(timesteps, true_noise, label="True Noise")
         ax.plot(timesteps, pred_noise, label="Pred Noise")
-    
+
     ax.set_xlabel("Timestep")
     ax.set_ylabel("Noise Value")
 
     title = f"Sample {sample_idx}"
     if marker_index is not None:
         title += f", Marker {marker_index}"
-    
+
     ax.set_title(f"Noise Trajectory: {title}")
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -107,7 +109,10 @@ def plot_marker_noise_trajectory(
     fig.savefig(plot_path, dpi=300, bbox_inches="tight")
     plt.close()
 
-def track_single_run_at_marker(model: DiffusionModel, x0: Tensor, marker_index: int) -> Dict[str, Any]:
+
+def track_single_run_at_marker(
+    model: DiffusionModel, x0: Tensor, marker_index: int
+) -> Dict[str, Any]:
     """Track noise at a fixed marker position across all timesteps for a single run.
 
     Args:
@@ -231,5 +236,5 @@ def plot_noise_evolution(
 
     plot_path = output_dir / f"marker_{marker_index}_noise_evolution.png"
     fig.tight_layout()
-    fig.savefig(plot_path,dpi=300, bbox_inches="tight")
+    fig.savefig(plot_path, dpi=300, bbox_inches="tight")
     plt.close()

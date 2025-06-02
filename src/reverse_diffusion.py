@@ -48,8 +48,17 @@ class ReverseDiffusion:
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
         Implements Algorithm 2 from the DDPM paper (Ho et al., 2020):
-            p_θ(x_{t-1}|x_t) = N(x_{t-1}; μ_θ(x_t, t), β_t I)
-            μ_θ(x_t, t) = (1/sqrt(α_t)) * [x_t - (β_t / sqrt(1 - ᾱ_t)) * ε_θ(x_t, t)]
+
+        For t > 1:
+            p_θ(x_{t-1}|x_t) = N(x_{t-1}; μ_θ(x_t, t), σ_t^2 I)
+            μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+            σ_t^2 = β_t
+            z ~ N(0, I)
+
+        For t = 1:
+            p_θ(x_0|x_1) = μ_θ(x_1, 1)  # No noise added (z = 0)
+            μ_θ(x_1, 1) = (1/√α_1) * (x_1 - (β_1/√(1-ᾱ_1)) * ε_θ(x_1, 1))
+
         Args:
             x_t: Noisy sample at timestep t, shape [B, C, seq_len] (must be on correct device)
             t: Current timestep (tensor of shape [B] or scalar int, 1-based)
@@ -69,39 +78,36 @@ class ReverseDiffusion:
         alpha_bar_t = tensor_to_device(
             self.forward_diffusion.alphas_bar[t], device
         )  # ᾱ_t
-        alpha_bar_prev = tensor_to_device(
-            self.forward_diffusion.alphas_bar[t - 1], device
-        )  # ᾱ_{t-1}
 
         # Broadcast parameters to match x_t's dimensions
         ndim = x_t.ndim
         beta_t = bcast_right(beta_t, ndim)
         alpha_t = bcast_right(alpha_t, ndim)
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
-        alpha_bar_prev = bcast_right(alpha_bar_prev, ndim)
 
         # Numerical stability constant
         eps = 1e-7
 
         # Predict noise using the noise prediction model (ε_θ(x_t, t))
-        eps_theta = self.noise_predictor(x_t, t)
+        epsilon_theta = self.noise_predictor(x_t, t)
 
-        # FIXME: Add t=1, t>1 cases
-
-        # Compute mean for p(x_{t-1}|x_t) as in Eq. 7
-        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)  # 1/sqrt(α_t)
-        mean = inv_sqrt_alpha_t * (
-            x_t
-            - (beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)) * eps_theta  # μ_θ(x_t, t)
-        )
+        # Compute mean for p(x_{t-1}|x_t) as in Algorithm 2
+        # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)  # 1/√α_t
+        coef = beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)  # β_t/√(1-ᾱ_t)
+        mean = inv_sqrt_alpha_t * (x_t - coef * epsilon_theta)
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        # Variance is β_t (Eq. 7)
-        std = torch.sqrt(torch.clamp(beta_t, min=1e-6))  # sqrt(β_t)
+        # Compute standard deviation (σ_t = √β_t)
+        sigma_t = torch.sqrt(torch.clamp(beta_t, min=1e-6))  # σ_t
 
-        # Sample from N(mean, std^2 * I)
-        z = torch.randn_like(x_t, device=device)  # Sample from N(0, I)
-        x_prev = mean + std * z  # x_{t-1} ~ N(mean, β_t I)
+        # For t=1, z=0 (no noise); for t>1, z ~ N(0,I) as per Algorithm 2
+        z = torch.zeros_like(x_t, device=device)
+        if (t > 1).all():  # Only add noise if all timesteps are > 1
+            z = torch.randn_like(x_t, device=device)  # z ~ N(0, I)
+
+        # Sample from N(mean, σ_t^2 * I)
+        x_prev = mean + sigma_t * z  # When t=1, z=0 so x_prev = mean
 
         return x_prev
 
