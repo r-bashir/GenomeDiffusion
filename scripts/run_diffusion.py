@@ -22,8 +22,13 @@ from src import DiffusionModel
 from src.utils import set_seed
 from utils.diff_utils import (
     display_diffusion_parameters,
-    plot_diffusion_process,
-    test_diffusion_at_timestep,
+    plot_diffusion_metrics,
+    plot_diffusion_results,
+    run_diffusion_analysis,
+    save_diffusion_analysis,
+    visualize_diffusion_process_heatmap,
+    visualize_diffusion_process_lineplot,
+    visualize_superimposed_comparison,
 )
 
 # Set global device
@@ -92,75 +97,92 @@ def main():
 
     # ===================== Run Reverse Diffusion =====================
 
-    # Run diffusion analysis to test the reverse diffusion process
+    # Timesteps to visualize
+    timesteps = [1, 2, 3, 4, 5]
+    print(f"Running diffusion analysis at timesteps: {timesteps}")
+    print(f"Using {args.num_samples} samples")
+
+    # Visualize the forward and reverse diffusion process at different timesteps
+    print("\nVisualizing the forward and reverse diffusion process...")
+
+    # Visualize the forward and reverse diffusion process at different timesteps
+    visualize_diffusion_process_heatmap(
+        model=model,
+        batch=x0,
+        timesteps=timesteps,
+        output_dir=output_dir,
+    )
+
+    visualize_diffusion_process_lineplot(
+        model=model,
+        batch=x0,
+        timesteps=timesteps,
+        output_dir=output_dir,
+        sample_points=200,
+    )
+
+    visualize_superimposed_comparison(
+        model=model,
+        batch=x0,
+        timesteps=timesteps,
+        output_dir=output_dir,
+        sample_points=200,
+    )
+
+    # Detailed diffusion analysis to test the reverse diffusion process
     diffusion_analysis = True
     if diffusion_analysis:
-        print("\n" + "=" * 70)
-        print(" RUNNING DIFFUSION ANALYSIS ")
-        print("=" * 70)
 
-        # Create output directory
-        diffusion_analysis_dir = base_dir / "diffusion_analysis"
-        diffusion_analysis_dir.mkdir(exist_ok=True)
-
-        # Use provided timesteps or default range (fewer timesteps for diffusion analysis)
-        diff_timesteps = [1, 10, 100, 200, 500, 600, 800, 900, 1000]
-
-        print(f"Running diffusion analysis at timesteps: {diff_timesteps}")
-        print(f"Using {args.num_samples} samples")
-
-        # Run the diffusion analysis
-        print("\nRunning diffusion analysis...")
-
-        # Create results dictionary to store metrics
-        diffusion_results = {}
-
-        # Run analysis for each timestep
-        for t in diff_timesteps:
-            print(f"\n--- Analyzing timestep {t} ---")
-
-            # Run the diffusion step and get results
-            result = test_diffusion_at_timestep(
-                model=model,
-                x0=x0[: args.num_samples],  # Use specified number of samples
-                timestep=t,
-                plot=True,
-                save_plot=True,
-                output_dir=str(diffusion_analysis_dir),
-            )
-
-            # Generate comprehensive diffusion process plot
-            if t in [1, diff_timesteps[len(diff_timesteps) // 2], diff_timesteps[-1]]:
-                plot_diffusion_process(
-                    x0=result["x0"][:1],  # Use x0 from result to ensure consistency
-                    noise=result["noise"][:1],
-                    x_t=result["xt"][:1],  # Changed from "x_t" to "xt"
-                    predicted_noise=result["predicted_noise"][:1],
-                    x_t_minus_1=result["x_t_minus_1"][:1],
-                    timestep=t,
-                    save_dir=str(diffusion_analysis_dir / "diffusion_plots"),
-                )
-
-            # Store results
-            diffusion_results[t] = result
-
-            # Print detailed results
-            print(f"\nResults for timestep {t}:")
-            print("-" * 40)
-            print(f"MSE: {result['metrics']['mse']:.6f}")
-            print(f"Weighted MSE: {result['metrics']['weighted_mse']:.6f}")
-            print(f"Reconstruction MSE: {result['metrics']['x0_diff']:.6f}")
-
-            # Display diffusion parameters for key timesteps
-            if t in [1, diff_timesteps[len(diff_timesteps) // 2], diff_timesteps[-1]]:
-                display_diffusion_parameters(model, t)
-
-        print("\nDiffusion analysis complete!")
-        print(f"Results saved to: {diffusion_analysis_dir}")
-        print(f"- Individual step plots: {diffusion_analysis_dir}")
-        print(
-            f"- Combined process visualizations: {diffusion_analysis_dir / 'diffusion_plots'}"
+        diffusion_results = run_diffusion_analysis(
+            model=model,
+            x0=x0,
+            num_samples=args.num_samples,
+            timesteps=None,
+            verbose=True,
         )
+
+        # Process and visualize the analysis results
+
+        # Create output directory for visualizations
+        viz_dir = output_dir / "diffusion_analysis"
+        viz_dir.mkdir(exist_ok=True, parents=True)
+
+        # Extract metrics across timesteps
+        timesteps = sorted(diffusion_results.keys())
+        mse_values = [diffusion_results[t]["metrics"]["noise_mse"] for t in timesteps]
+        x0_diff_values = [diffusion_results[t]["metrics"]["x0_diff"] for t in timesteps]
+
+        # Print summary of results
+        print("\n" + "=" * 70)
+        print(" DIFFUSION ANALYSIS SUMMARY ")
+        print("=" * 70)
+        print(
+            f"Analyzed {len(timesteps)} timesteps from {min(timesteps)} to {max(timesteps)}"
+        )
+        print(f"Average noise prediction MSE: {sum(mse_values) / len(mse_values):.6f}")
+        print(
+            f"Average reconstruction error: {sum(x0_diff_values) / len(x0_diff_values):.6f}"
+        )
+
+        # Generate plots for key timesteps (beginning, middle, end)
+        key_timesteps = [
+            min(timesteps),
+            timesteps[len(timesteps) // 2],
+            max(timesteps),
+        ]
+        print(f"\nGenerating visualizations for key timesteps: {key_timesteps}")
+
+        for t in key_timesteps:
+            t_dir = viz_dir / f"timestep_{t}"
+            t_dir.mkdir(exist_ok=True, parents=True)
+            plot_diffusion_results(diffusion_results[t], save_dir=t_dir)
+
+        # Generate summary metrics plot across all timesteps
+        print("\nGenerating summary metrics plot across all timesteps")
+        plot_diffusion_metrics(diffusion_results, save_dir=viz_dir)
+
+    print("\nReverse diffusion complete!")
+    print(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

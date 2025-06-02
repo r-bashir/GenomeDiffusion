@@ -377,9 +377,9 @@ def main():
     # Setup output directory structure
     checkpoint_path = Path(args.checkpoint)
     base_dir = checkpoint_path.parent.parent
-    results_dir = base_dir / "evaluation_results"
-    results_dir.mkdir(exist_ok=True, parents=True)
-    print(f"\nResults will be saved to: {results_dir}")
+    output_dir = base_dir / "test_diffusion"
+    output_dir.mkdir(exist_ok=True, parents=True)
+    print(f"\nResults will be saved to: {output_dir}")
 
     # Load test dataset
     print("\nLoading test dataset...")
@@ -403,7 +403,7 @@ def main():
         sample,
         marker_idx=args.snp_index,
         timesteps=timesteps,
-        output_dir=results_dir,
+        output_dir=output_dir,
     )
 
     # 4. Generate and evaluate samples
@@ -413,7 +413,7 @@ def main():
         real_data=x0,
         num_samples=args.num_samples,
         denoise_step=args.denoise_step,
-        output_dir=results_dir,
+        output_dir=output_dir,
     )
 
     # Print summary of metrics
@@ -421,7 +421,7 @@ def main():
     for metric_name, metric_value in metrics.items():
         print(f"  - {metric_name}: {metric_value:.4f}")
 
-    print(f"\nAll evaluation results saved to: {results_dir}")
+    print(f"\nAll evaluation results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

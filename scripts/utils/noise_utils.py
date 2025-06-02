@@ -55,7 +55,7 @@ NoiseAnalysisResults = Dict[int, NoiseAnalysisResult]
 def run_noise_analysis(
     model: DiffusionModel,
     x0: Tensor,
-    num_samples: int = 3,
+    num_samples: int = 10,
     timesteps: Optional[List[int]] = None,
     verbose: bool = True,
 ) -> NoiseAnalysisResults:
@@ -76,12 +76,14 @@ def run_noise_analysis(
         tmin = model.forward_diffusion.tmin
         tmax = model.forward_diffusion.tmax
         timesteps = list(range(tmin, tmax + 1, 10))
+
         # Always include tmin and tmax
         if tmin not in timesteps:
             timesteps.insert(0, tmin)
         if tmax not in timesteps:
             timesteps.append(tmax)
 
+    # Dictionary to store results for each timestep
     results: NoiseAnalysisResults = {}
 
     if verbose:
@@ -90,13 +92,17 @@ def run_noise_analysis(
         print("=" * 70)
 
     for t in timesteps:
+        if verbose:
+            print(f"\nAnalyzing noise prediction at timestep {t}...")
+
         results[t] = noise_prediction_at_timestep(
             model=model,
-            x0=x0[:num_samples],
+            x0=x0,
             timestep=t,
             num_samples=num_samples,
             verbose=verbose,
         )
+
         if verbose:
             print("\n" + "-" * 50 + "\n")
 
@@ -107,8 +113,7 @@ def noise_prediction_at_timestep(
     model: DiffusionModel,
     x0: Tensor,
     timestep: int,
-    num_samples: int = 3,
-    num_positions: int = 5,
+    num_samples: int = 10,
     verbose: bool = True,
 ) -> NoiseAnalysisResult:
     """Analyze noise prediction at a specific timestep.
@@ -118,7 +123,6 @@ def noise_prediction_at_timestep(
         x0: Clean input tensor of shape [batch_size, channels, seq_length]
         timestep: Timestep to analyze
         num_samples: Number of samples to analyze
-        num_positions: Number of positions to show in detailed output
         verbose: Whether to print detailed statistics
 
     Returns:
