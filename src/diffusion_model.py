@@ -143,8 +143,18 @@ class DiffusionModel(NetworkBase):
         # Predict the noise using the model
         pred_eps = self.predict_added_noise(xt, t)
 
+        # Get sigma_t for each timestep
+        sigma_t = self.forward_diffusion.sigma(t)
+
+        # Broadcast sigma_t to match dimensions of pred_eps
+        sigma_t = bcast_right(sigma_t, pred_eps.ndim)
+
+        # Scale predicted noise by 1/sigma_t before computing MSE
+        # This implements the supervisor's recommendation: MSE(true_noise, predicted_noise / sigma_t)
+        scaled_pred_eps = pred_eps / sigma_t
+
         # Compute and return MSE loss
-        return F.mse_loss(pred_eps, eps)
+        return F.mse_loss(scaled_pred_eps, eps)
 
     # ==================== Inference Methods ====================
     def loss_per_timesteps(
@@ -174,9 +184,19 @@ class DiffusionModel(NetworkBase):
             # Apply forward diffusion at timestep t
             xt = self.forward_diffusion.sample(x0, t_tensor, eps)
 
-            # Predict noise and compute loss
+            # Predict noise
             predicted_noise = self.predict_added_noise(xt, t_tensor)
-            loss = F.mse_loss(predicted_noise, eps)
+
+            # Get sigma_t for the current timestep
+            sigma_t = self.forward_diffusion.sigma(t_tensor)
+            # Broadcast sigma_t to match dimensions of predicted_noise
+            sigma_t = bcast_right(sigma_t, predicted_noise.ndim)
+
+            # Scale predicted noise by 1/sigma_t before computing MSE
+            scaled_pred_noise = predicted_noise / sigma_t
+
+            # Compute loss using scaled predicted noise
+            loss = F.mse_loss(scaled_pred_noise, eps)
             losses.append(loss)
 
         return torch.stack(losses)
