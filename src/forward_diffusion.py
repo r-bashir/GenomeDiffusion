@@ -211,9 +211,13 @@ class ForwardDiffusion:
         # Ensure t is within valid range
         t = torch.clamp(t, min=self.tmin, max=self.tmax)
 
+        # Move betas to the same device as t before indexing
+        device = t.device
+        betas = tensor_to_device(self._betas_t, device)
+
         # Convert to 0-indexed for tensor access (t=1 -> index 0)
         t_idx = t.long() - 1
-        return tensor_to_device(self._betas_t[t_idx], t.device)
+        return betas[t_idx]
 
     def alpha(self, t: torch.Tensor) -> torch.Tensor:
         """Retrieves α_t = 1-β_t for the given timesteps.
@@ -232,9 +236,13 @@ class ForwardDiffusion:
         # Ensure t is within valid range
         t = torch.clamp(t, min=self.tmin, max=self.tmax)
 
+        # Move alphas to the same device as t before indexing
+        device = t.device
+        alphas = tensor_to_device(self._alphas_t, device)
+
         # Convert to 0-indexed for tensor access (t=1 -> index 0)
         t_idx = t.long() - 1
-        return tensor_to_device(self._alphas_t[t_idx], t.device)
+        return alphas[t_idx]
 
     def alpha_bar(self, t: torch.Tensor) -> torch.Tensor:
         """Retrieves ᾱ_t = Π_{s=1}^t α_s for the given timesteps.
@@ -253,8 +261,13 @@ class ForwardDiffusion:
         """
         # Ensure t is within valid range (note: valid range includes 0 for alpha_bar)
         t = torch.clamp(t, min=0, max=self.tmax)
-        # Get alpha_bar values directly from precomputed tensor
-        return tensor_to_device(self._alphas_bar_t[t.long()], t.device)
+
+        # Move alphas_bar to the same device as t before indexing
+        device = t.device
+        alphas_bar = tensor_to_device(self._alphas_bar_t, device)
+
+        # Index with t on the same device
+        return alphas_bar[t.long()]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
         """Retrieves σ_t = sqrt(1-ᾱ_t) for the given timesteps.
@@ -273,8 +286,13 @@ class ForwardDiffusion:
         """
         # Ensure t is within valid range (note: valid range includes 0 for sigma)
         t = torch.clamp(t, min=0, max=self.tmax)
-        # Get sigma values directly from precomputed tensor
-        return tensor_to_device(self._sigmas_t[t.long()], t.device)
+
+        # Move sigmas to the same device as t before indexing
+        device = t.device
+        sigmas = tensor_to_device(self._sigmas_t, device)
+
+        # Index with t on the same device
+        return sigmas[t.long()]
 
     # ====================== Properties ======================
     @property
