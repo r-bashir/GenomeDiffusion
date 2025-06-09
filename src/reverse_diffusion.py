@@ -74,7 +74,7 @@ class ReverseDiffusion:
 
         # Get diffusion parameters for timestep t
         beta_t = tensor_to_device(self.forward_diffusion.betas[t - 1], device)  # β_t
-        alpha_t = tensor_to_device(self.forward_diffusion.alpha(t), device)  # α_t
+        alpha_t = tensor_to_device(self.forward_diffusion.alphas[t - 1], device)  # α_t
         alpha_bar_t = tensor_to_device(
             self.forward_diffusion.alphas_bar[t], device
         )  # ᾱ_t
