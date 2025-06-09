@@ -98,7 +98,7 @@ def main():
     # ===================== Run Reverse Diffusion =====================
 
     # Timesteps to visualize
-    timesteps = [1, 2, 3, 4, 5]
+    timesteps = [1, 2, 3, 100, 500, 700, 900, 1000]
     print(f"Running diffusion analysis at timesteps: {timesteps}")
     print(f"Using {args.num_samples} samples")
 

@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from .all_models import UniformContinuousTimeSampler
 from .forward_diffusion import ForwardDiffusion
-from .mlp import MLP, zero_out_model_parameters
+from .mlp import MLP, SimpleLinearModel, zero_out_model_parameters
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .unet import UNet1D
@@ -41,8 +41,8 @@ class DiffusionModel(NetworkBase):
             tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
 
-        # UNet1D or MLP for noise prediction
-        self.unet = MLP(
+        # UNet1D or MLP or SimpleLinearModel for noise prediction
+        self.unet = SimpleLinearModel(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],

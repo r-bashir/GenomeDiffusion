@@ -119,10 +119,6 @@ class MLP(nn.Module):
             nn.Linear(out_dim, out_dim),
         )
 
-    def gradient_checkpointing_enable(self):
-        """Dummy method for compatibility with UNet1D interface."""
-        pass
-
     def forward(self, x, time):
         """Forward pass for DeepMLP.
 
@@ -165,6 +161,96 @@ class MLP(nn.Module):
 
         # Reshape back to original dimensions
         return output.view(batch_size, channels, seq_len)
+
+    def gradient_checkpointing_enable(self):
+        """Dummy method for compatibility with UNet1D interface."""
+        pass
+
+
+# Simple Linear Model
+class SimpleLinearModel(nn.Module):
+    """Simple linear model for noise prediction in diffusion models.
+
+    A minimal implementation that uses a single linear layer without activation functions.
+    Maintains the same interface as UNet1D and MLP for easy swapping in the diffusion model.
+
+    This model follows the reviewer's suggestion to test with "the most simple single dense layer
+    for n SNP inputs to n SNP outputs, no activation function" to evaluate baseline performance.
+    """
+
+    def __init__(
+        self,
+        embedding_dim=64,  # Unused but kept for interface compatibility
+        dim_mults=(1, 2, 4, 8),  # Unused but kept for interface compatibility
+        channels=1,  # Input channels (SNP data has a single channel)
+        with_time_emb=False,  # Whether to include time embeddings
+        with_pos_emb=False,  # Unused but kept for interface compatibility
+        resnet_block_groups=8,  # Unused but kept for interface compatibility
+        seq_length=1000,  # Expected sequence length (number of SNP markers)
+    ):
+        super().__init__()
+
+        self.channels = channels
+        self.seq_length = seq_length
+        self.with_time_emb = with_time_emb
+
+        print(f"Initializing SimpleLinearModel with sequence length: {seq_length}")
+
+        # Calculate input dimension
+        self.input_dim = channels * seq_length
+
+        # Time embedding network (optional)
+        if with_time_emb:
+            self.time_dim = embedding_dim
+            self.time_mlp = nn.Sequential(
+                SinusoidalTimeEmbeddings(embedding_dim),
+                nn.Linear(embedding_dim, embedding_dim),
+            )
+        else:
+            self.time_dim = 0
+            self.time_mlp = None
+
+        # Flatten layer
+        self.flatten = nn.Flatten()
+
+        # Simple linear transformation
+        # If time embedding is used, we add its dimensions to the input
+        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
+
+    def forward(self, x, time):
+        """Forward pass for SimpleLinearModel.
+
+        Args:
+            x (torch.Tensor): Input SNP data of shape [batch, channels, seq_len].
+            time (torch.Tensor): Diffusion timesteps of shape [batch].
+
+        Returns:
+            torch.Tensor: Predicted noise with same shape as input.
+        """
+        batch_size, channels, seq_len = x.shape
+
+        # Flatten the input
+        x_flat = self.flatten(x)  # [batch, channels*seq_len]
+
+        # Process time embedding if enabled
+        if self.with_time_emb and self.time_mlp is not None:
+            t_emb = self.time_mlp(time)  # [batch, time_dim]
+            # Concatenate flattened input with time embedding
+            x_t = torch.cat(
+                [x_flat, t_emb], dim=1
+            )  # [batch, channels*seq_len + time_dim]
+        else:
+            x_t = x_flat
+
+        # Apply linear transformation
+        output = self.linear(x_t)
+
+        # Reshape back to original dimensions
+        return output.view(batch_size, channels, seq_len)
+
+    def gradient_checkpointing_enable(self):
+        """Dummy method for compatibility with UNet1D interface."""
+        pass
 
 
 def zero_out_model_parameters(model):
