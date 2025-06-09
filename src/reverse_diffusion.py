@@ -72,11 +72,16 @@ class ReverseDiffusion:
         # Ensure x_t has the correct shape [B, C, L]
         x_t = prepare_batch_shape(x_t)
 
-        # Get diffusion parameters for timestep t
-        beta_t = tensor_to_device(self.forward_diffusion.betas[t - 1], device)  # β_t
-        alpha_t = tensor_to_device(self.forward_diffusion.alphas[t - 1], device)  # α_t
+        # Get diffusion parameters for timestep t, either use properties with manual indexing
+        # beta_t = tensor_to_device(self.forward_diffusion.betas[t - 1], device)  # β_t
+        # alpha_t = tensor_to_device(self.forward_diffusion.alphas[t - 1], device)  # α_t
+        # alpha_bar_t = tensor_to_device(self.forward_diffusion.alphas_bar[t], device)  # ᾱ_t
+
+        # or use instance methods that handle indexing internally
+        beta_t = tensor_to_device(self.forward_diffusion.beta(t), device)  # β_t
+        alpha_t = tensor_to_device(self.forward_diffusion.alpha(t), device)  # α_t
         alpha_bar_t = tensor_to_device(
-            self.forward_diffusion.alphas_bar[t], device
+            self.forward_diffusion.alpha_bar(t), device
         )  # ᾱ_t
 
         # Broadcast parameters to match x_t's dimensions
