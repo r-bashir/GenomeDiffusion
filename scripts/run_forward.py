@@ -141,8 +141,10 @@ def main():
 
     print("\nPlots with boundary timesteps...")
     plot_forward_diffusion_sample(boundary_results, x0=x0, save_dir=output_dir)
-    plot_signal_noise_ratio(boundary_results, save_dir=output_dir, verbose=False)
-    plot_diffusion_parameters(boundary_results, x0=x0, save_dir=output_dir)
+    plot_signal_noise_ratio(
+        boundary_results, x0=None, save_dir=output_dir, verbose=False
+    )
+    plot_diffusion_parameters(boundary_results, x0=None, save_dir=output_dir)
 
     # Additional plots
     additional_plots = False

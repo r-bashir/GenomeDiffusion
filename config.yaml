@@ -26,11 +26,11 @@ time_sampler:
 
 # DDPM
 diffusion:
-  timesteps: 1000
-  beta_start: 0.0001
-  beta_end: 0.02
-  max_beta: 0.8                # Maximum value for beta in any schedule
-  schedule_type: "cosine"
+  timesteps: 1000              # Diffusion steps, should match tmax?
+  beta_start: 0.0001           # Start value for linear beta scheduler
+  beta_end: 0.02               # End value for linear beta scheduler
+  max_beta: 0.999              # Maximum value for cosine beta scheduler
+  schedule_type: "cosine"      # Schedule type (linear/cosine)
   denoise_step: 10
   discretize: False
 

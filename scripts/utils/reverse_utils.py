@@ -829,15 +829,15 @@ def visualize_diffusion_process_lineplot(
             # 1. Original sig
             axes[i, 0].plot(x_axis, x0_vis, "b-", linewidth=1)
             axes[i, 0].set_ylabel(f"t={t}")
-            axes[i, 0].set_ylim(y_min_signal, y_max_signal)  # Consistent y-axis
+            axes[i, 0].set_ylim(-2.5, 2.5)  # Consistent y-axis
 
             # 2. Added Noise
             axes[i, 1].plot(x_axis, eps_vis, "r-", linewidth=1)
-            axes[i, 1].set_ylim(-4, 4)  # Consistent y-axis for noise
+            axes[i, 1].set_ylim(-2.5, 2.5)  # Consistent y-axis for noise
 
             # 3. Noisy Signal
             axes[i, 2].plot(x_axis, x_t_vis, "g-", linewidth=1)
-            axes[i, 2].set_ylim(y_min_signal, y_max_signal)  # Consistent y-axis
+            axes[i, 2].set_ylim(-2.5, 2.5)  # Consistent y-axis
 
             # 4. Predicted Noise
             axes[i, 3].plot(x_axis, pred_eps_vis, "k-", linewidth=1, label="Predicted")
@@ -852,7 +852,7 @@ def visualize_diffusion_process_lineplot(
                 alpha=0.7,
                 label="Scaled (1/σ)",
             )
-            # axes[i, 3].set_ylim(-4, 4)  # Consistent y-axis for noise
+            axes[i, 3].set_ylim(-2.5, 2.5)  # Consistent y-axis for noise
             axes[i, 3].legend(fontsize=6)
 
             # 5. Denoised
