@@ -25,8 +25,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src import DiffusionModel
 from src.utils import set_seed
 from utils.reverse_utils import (
+    generate_timesteps,
     plot_diffusion_metrics,
     plot_diffusion_results,
+    print_reverse_statistics,
     run_reverse_process,
     visualize_diffusion_process_heatmap,
     visualize_diffusion_process_lineplot,
@@ -98,27 +100,40 @@ def main():
     print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
     # ===================== Run Reverse Diffusion =====================
+    # Generate timesteps for analysis
+    tmin = model.forward_diffusion.tmin
+    tmax = model.forward_diffusion.tmax
+    print(f"\nGenerating timesteps between {tmin} to {tmax}.")
+    timestep_sets = generate_timesteps(tmin, tmax)
 
-    # Timesteps to visualize
-    timesteps = [1, 2, 3, 100, 500, 700, 800, 995, 999, 1000]
-    print(f"Running diffusion analysis at timesteps: {timesteps}")
-    print(f"Using {args.num_samples} samples")
+    # Run reverse diffusion process with boundary timesteps
+    print("Reverse diffusion process with boundary timesteps...")
+    boundary_results = run_reverse_process(
+        model=model,
+        x0=x0,
+        num_samples=args.num_samples,
+        timesteps=timestep_sets["boundary"],
+        verbose=False,
+    )
 
-    # Visualize the forward and reverse diffusion process at different timesteps
-    print("\nVisualizing the forward and reverse diffusion process...")
+    # Print statistics for key timesteps
+    print("Statistics for key timesteps...")
+    key_timesteps = [tmin, tmin + 1, tmax // 2, tmax - 1, tmax]
+    print_reverse_statistics(boundary_results, key_timesteps)
 
-    # Visualize the forward and reverse diffusion process at different timesteps
+    # Plots with boundary timesteps
+    print("\nPlots with boundary timesteps...")
     visualize_diffusion_process_heatmap(
         model=model,
         batch=x0,
-        timesteps=timesteps,
+        timesteps=key_timesteps,
         output_dir=output_dir,
     )
 
     visualize_diffusion_process_lineplot(
         model=model,
         batch=x0,
-        timesteps=timesteps,
+        timesteps=key_timesteps,
         output_dir=output_dir,
         sample_points=200,
     )
@@ -126,33 +141,24 @@ def main():
     visualize_superimposed_comparison(
         model=model,
         batch=x0,
-        timesteps=timesteps,
+        timesteps=key_timesteps,
         output_dir=output_dir,
         sample_points=200,
     )
 
-    # Detailed diffusion analysis to test the reverse diffusion process
-    diffusion_analysis = True
-    if diffusion_analysis:
-
-        diffusion_results = run_reverse_process(
-            model=model,
-            x0=x0,
-            num_samples=args.num_samples,
-            timesteps=None,
-            verbose=True,
-        )
-
-        # Process and visualize the analysis results
+    # Additional plots
+    additional_plots = False
+    if additional_plots:
+        print("\nExtra plots...")
 
         # Create output directory for visualizations
         viz_dir = output_dir / "diffusion_analysis"
         viz_dir.mkdir(exist_ok=True, parents=True)
 
         # Extract metrics across timesteps
-        timesteps = sorted(diffusion_results.keys())
-        mse_values = [diffusion_results[t]["metrics"]["noise_mse"] for t in timesteps]
-        x0_diff_values = [diffusion_results[t]["metrics"]["x0_diff"] for t in timesteps]
+        timesteps = sorted(boundary_results.keys())
+        mse_values = [boundary_results[t]["metrics"]["noise_mse"] for t in timesteps]
+        x0_diff_values = [boundary_results[t]["metrics"]["x0_diff"] for t in timesteps]
 
         # Print summary of results
         print("\n" + "=" * 70)
@@ -177,11 +183,11 @@ def main():
         for t in key_timesteps:
             t_dir = viz_dir / f"timestep_{t}"
             t_dir.mkdir(exist_ok=True, parents=True)
-            plot_diffusion_results(diffusion_results[t], save_dir=t_dir)
+            plot_diffusion_results(boundary_results[t], save_dir=t_dir)
 
         # Generate summary metrics plot across all timesteps
         print("\nGenerating summary metrics plot across all timesteps")
-        plot_diffusion_metrics(diffusion_results, save_dir=viz_dir)
+        plot_diffusion_metrics(boundary_results, save_dir=viz_dir)
 
     print("\nReverse diffusion complete!")
     print(f"Results saved to: {output_dir}")

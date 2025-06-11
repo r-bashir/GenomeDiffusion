@@ -122,23 +122,25 @@ def main():
     forward_diff = forward_diff.to(device)
     print(f"Using device: {device}")
 
+    # ===================== Run Forward Diffusion =====================
     # Generate timesteps for analysis
     tmin = forward_diff.tmin
     tmax = forward_diff.tmax
-    print(f"Generating timesteps between {tmin} to {tmax}.")
+    print(f"\nGenerating timesteps between {tmin} to {tmax}.")
     timestep_sets = generate_timesteps(tmin, tmax)
 
     # Run forward diffusion process with boundary timesteps
-    print("\nForward diffusion process with boundary timesteps...")
+    print("Forward diffusion process with boundary timesteps...")
     boundary_results = run_forward_process(
         forward_diff, x0, timestep_sets["boundary"], verbose=False
     )
 
     # Print statistics for key timesteps
-    print("\nStatistics for key timesteps...")
+    print("Statistics for key timesteps...")
     key_timesteps = [tmin, tmin + 1, tmax // 2, tmax - 1, tmax]
     print_forward_statistics(boundary_results, key_timesteps)
 
+    # Plots with boundary timesteps
     print("\nPlots with boundary timesteps...")
     plot_forward_diffusion_sample(boundary_results, x0=x0, save_dir=output_dir)
     plot_signal_noise_ratio(
@@ -170,8 +172,8 @@ def main():
         )
         plot_diffusion_parameters(log_results, x0=x0, save_dir=log_output_dir)
 
-    print(f"\nAll results saved to {output_dir}")
-    return 0
+    print("\nForward diffusion complete!")
+    print(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

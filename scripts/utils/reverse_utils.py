@@ -14,8 +14,9 @@ from torch import Tensor
 from src import DiffusionModel
 
 # Type aliases for better readability
-DiffusionAnalysisResult = Dict[str, Any]
-DiffusionAnalysisResults = Dict[int, DiffusionAnalysisResult]
+ReverseDiffusionResult = Dict[str, Any]
+ReverseDiffusionResults = Dict[int, ReverseDiffusionResult]
+TimestepDict = Dict[str, List[int]]
 
 
 def weighted_mse_loss(predicted_noise, true_noise, t, model=None):
@@ -64,7 +65,7 @@ def run_reverse_process(
     num_samples: int = 10,
     timesteps: Optional[List[int]] = None,
     verbose: bool = True,
-) -> DiffusionAnalysisResults:
+) -> ReverseDiffusionResults:
     """Run diffusion process analysis at specified timesteps.
 
     This function automates running the diffusion process analysis across multiple timesteps,
@@ -98,7 +99,7 @@ def run_reverse_process(
             timesteps.append(tmax)
 
     # Dictionary to store results for each timestep
-    results: DiffusionAnalysisResults = {}
+    results: ReverseDiffusionResults = {}
 
     if verbose:
         print("\n" + "=" * 70)
@@ -111,9 +112,7 @@ def run_reverse_process(
             print(f"\nAnalyzing diffusion process at timestep {t}...")
 
         # Run reverse process at this timestep
-        results[t] = run_reverse_process_at_timestep(
-            model, x0, num_samples, t, verbose=verbose
-        )
+        results[t] = run_reverse_process_at_timestep(model, x0, num_samples, t)
 
         if verbose:
             print("\n" + "-" * 50 + "\n")
@@ -126,15 +125,13 @@ def run_reverse_process_at_timestep(
     x0: Tensor,
     num_samples: int,
     timestep: int,
-    verbose: bool = True,
-) -> DiffusionAnalysisResult:
+) -> ReverseDiffusionResults:
     """Test the diffusion process at a specific timestep.
 
     Args:
         model: The diffusion model
         x0: Input data [B, C, seq_len]
         timestep: Timestep to test at
-        verbose: Whether to print detailed statistics
 
     Returns:
         Dictionary containing analysis results including:
@@ -192,9 +189,6 @@ def run_reverse_process_at_timestep(
             "signal_to_noise": signal_to_noise,
         }
 
-        if verbose:
-            print_reverse_statistics(timestep, metrics)
-
     # Return all computed values
     return {
         "timestep": timestep,
@@ -209,25 +203,42 @@ def run_reverse_process_at_timestep(
 
 
 # ==================== Utility Functions ====================
-def print_reverse_statistics(timestep: int, metrics: Dict[str, float]) -> None:
+def print_reverse_statistics(
+    results: ReverseDiffusionResults, timesteps: Optional[List[int]] = None
+) -> None:
     """Print formatted diffusion statistics.
 
     Args:
         timestep: Current timestep
         metrics: Dictionary of computed statistics
     """
-    print(f"\n[Diffusion Statistics at t={timestep}]")
-    print(f"- Sigma_t: {metrics['sigma_t']:.6f}")
-    print(f"- Noise MSE: {metrics['noise_mse']:.6f}")
-    print(f"- Weighted MSE: {metrics['weighted_mse']:.6f}")
-    print(f"- Reconstruction MSE (x0 vs x_t-1): {metrics['x0_diff']:.6f}")
-    print(f"- Signal-to-Noise Ratio: {metrics['signal_to_noise']:.6f}")
-    print(f"- True Noise Magnitude: {metrics['noise_magnitude']:.6f}")
-    print(f"- Predicted Noise Magnitude: {metrics['pred_noise_magnitude']:.6f}")
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to those available in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
+    print("\n" + "=" * 80)
+    print("REVERSE DIFFUSION STATISTICS")
+    print("=" * 80)
+
+    for t in timesteps:
+        r = results[t]
+        print(f"\nTimestep t = {t}:")
+        print(f"- Sigma_t: {r['metrics']['sigma_t']:.6f}")
+        print(f"- Noise MSE: {r['metrics']['noise_mse']:.6f}")
+        print(f"- Weighted MSE: {r['metrics']['weighted_mse']:.6f}")
+        print(f"- Reconstruction MSE (x0 vs x_t-1): {r['metrics']['x0_diff']:.6f}")
+        print(f"- Signal-to-Noise Ratio: {r['metrics']['signal_to_noise']:.6f}")
+        print(f"- True Noise Magnitude: {r['metrics']['noise_magnitude']:.6f}")
+        print(
+            f"- Predicted Noise Magnitude: {r['metrics']['pred_noise_magnitude']:.6f}"
+        )
 
 
 def save_reverse_analysis(
-    results: DiffusionAnalysisResults,
+    results: ReverseDiffusionResults,
     output_dir: Path,
     filename: str = "diffusion_analysis_results.csv",
 ) -> None:
@@ -258,9 +269,65 @@ def save_reverse_analysis(
     print(f"Saved diffusion analysis results to {csv_path}")
 
 
+def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
+    """
+    Generate different sets of timesteps for analysis.
+
+    Args:
+        tmin: Minimum timestep (usually 1)
+        tmax: Maximum timestep (usually 1000)
+
+    Returns:
+        Dictionary with different timestep sets
+    """
+
+    # Generate linearly spaced timesteps
+    linear_steps = np.linspace(tmin, tmax, num=20, dtype=int).tolist()
+
+    # Generate logarithmically spaced timesteps for better coverage
+    log_steps = np.unique(
+        np.logspace(np.log10(tmin), np.log10(tmax), num=20, dtype=int)
+    ).tolist()
+
+    # Enhanced boundary timesteps with more points at beginning, middle and end
+    # Include more steps at the beginning to see the progression from pure signal
+    early_steps = [
+        tmin,
+        tmin + 1,
+        tmin + 2,
+        tmin + 3,
+        tmin + 10,
+        tmin + 20,
+        tmin + 50,
+        tmin + 100,
+        tmin + 200,
+    ]
+
+    # Include steps in the middle to see the transition
+    middle_steps = [tmax // 4, tmax // 3, tmax // 2, 2 * tmax // 3, 3 * tmax // 4]
+
+    # Include more steps at the end to see the progression to pure noise
+    late_steps = [
+        tmax - 200,
+        tmax - 100,
+        tmax - 50,
+        tmax - 20,
+        tmax - 10,
+        tmax - 3,
+        tmax - 2,
+        tmax - 1,
+        tmax,
+    ]
+
+    # Combine all steps and remove duplicates
+    boundary_steps = sorted(list(set(early_steps + middle_steps + late_steps)))
+
+    return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
+
+
 # ==================== Visualization Functions ====================
 def plot_diffusion_results(
-    result: DiffusionAnalysisResult, save_dir: Optional[str] = None
+    result: ReverseDiffusionResult, save_dir: Optional[str] = None
 ) -> None:
     """Plot diffusion process results for a single timestep.
 
@@ -304,7 +371,7 @@ def plot_diffusion_results(
 
 
 def plot_diffusion_metrics(
-    results: DiffusionAnalysisResults, save_dir: Optional[str] = None
+    results: ReverseDiffusionResults, save_dir: Optional[str] = None
 ) -> None:
     """Plot diffusion metrics across multiple timesteps.
 

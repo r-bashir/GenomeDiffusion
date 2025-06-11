@@ -403,7 +403,6 @@ def plot_forward_diffusion_sample(
         save_path = Path(save_dir)
         save_path.mkdir(exist_ok=True, parents=True)
         fig.savefig(save_path / "forward_diffusion_sample.png")
-        print(f"Saved plot to {save_path / 'forward_diffusion_sample.png'}")
         plt.close()
     else:
         plt.show()
