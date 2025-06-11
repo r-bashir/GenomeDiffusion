@@ -64,6 +64,7 @@ class ForwardDiffusion:
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
         schedule_type: str = "cosine",
+        max_beta: float = 0.999,
     ) -> None:
         """
         Initialize the diffusion process with specified noise schedule parameters.
@@ -73,6 +74,7 @@ class ForwardDiffusion:
             beta_start (float, optional): Starting value for β schedule. Defaults to 0.0001.
             beta_end (float, optional): Final value for β schedule. Defaults to 0.02.
             schedule_type (str, optional): Type of β schedule to use ('cosine' or 'linear'). Defaults to 'cosine'.
+            max_beta (float, optional): Maximum value for beta in any schedule. Defaults to 0.999.
 
         Raises:
             ValueError: If schedule_type is not 'cosine' or 'linear'.
@@ -83,6 +85,7 @@ class ForwardDiffusion:
         self._beta_start = beta_start
         self._beta_end = beta_end
         self._schedule_type = schedule_type
+        self._max_beta = max_beta
 
         # Select beta schedule
         if schedule_type == "linear":
@@ -90,7 +93,9 @@ class ForwardDiffusion:
                 self._diffusion_steps, self._beta_start, self._beta_end
             )
         elif schedule_type == "cosine":
-            betas_np = self._cosine_beta_schedule(self._diffusion_steps)
+            betas_np = self._cosine_beta_schedule(
+                self._diffusion_steps, max_beta=self._max_beta
+            )
         else:
             raise ValueError(
                 f"Unknown schedule_type '{schedule_type}'. Use 'cosine' or 'linear'."
@@ -367,7 +372,9 @@ class ForwardDiffusion:
 
     # ====================== Static Methods ======================
     @staticmethod
-    def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> np.ndarray:
+    def _cosine_beta_schedule(
+        timesteps: int, s: float = 0.008, max_beta: float = 0.999
+    ) -> np.ndarray:
         """Generate a cosine beta schedule as proposed in 'Improved DDPM' (arXive:2102.09672, 2021).
 
         This schedule reduces training time and improves sample quality by using a cosine
@@ -376,10 +383,11 @@ class ForwardDiffusion:
 
         Args:
             timesteps (int): Total number of diffusion timesteps T.
-            s (float, optional): Offset parameter to prevent β from being too small near t=0.
+            s (float, optional): Offset parameter to prevent β from being too small near t=0. Defaults to 0.008.
+            max_beta (float, optional): Maximum value for beta. Defaults to 0.999.
 
         Returns:
-            np.ndarray: Array of β values with shape (timesteps,), clipped to [0, 0.999].
+            np.ndarray: Array of β values with shape (timesteps,), clipped to [0, max_beta].
         """
         # Add 1 to timesteps to account for t=0
         steps = timesteps + 1
@@ -394,8 +402,8 @@ class ForwardDiffusion:
         # Compute betas from alphas_cumprod
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
 
-        # Clip betas to [0, 0.999]
-        return np.clip(betas, 0, 0.999)
+        # Clip betas to [0, max_beta]
+        return np.clip(betas, 0, max_beta)
 
     @staticmethod
     def _linear_beta_schedule(

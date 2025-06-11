@@ -285,7 +285,8 @@ class SNPDataset(torch.utils.data.Dataset):
         self.config = config
         self.data = load_data(config)
         self.validate_data()
-        logger.info(f"SNPDataset loaded with {len(self)} samples")
+        logger.info(f"SNPDataset samples: {len(self)}")
+        logger.info(f"SNPDataset shape: {self.data.shape}")
 
     def validate_data(self) -> None:
         """Validate that data was loaded correctly."""

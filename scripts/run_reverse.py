@@ -18,14 +18,16 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# All imports after path modification
+# We need to disable the import-not-at-top lint rule
+# ruff: noqa: E402
+
 from src import DiffusionModel
 from src.utils import set_seed
-from utils.diff_utils import (
-    display_diffusion_parameters,
+from utils.reverse_utils import (
     plot_diffusion_metrics,
     plot_diffusion_results,
-    run_diffusion_analysis,
-    save_diffusion_analysis,
+    run_reverse_process,
     visualize_diffusion_process_heatmap,
     visualize_diffusion_process_lineplot,
     visualize_superimposed_comparison,
@@ -133,7 +135,7 @@ def main():
     diffusion_analysis = True
     if diffusion_analysis:
 
-        diffusion_results = run_diffusion_analysis(
+        diffusion_results = run_reverse_process(
             model=model,
             x0=x0,
             num_samples=args.num_samples,

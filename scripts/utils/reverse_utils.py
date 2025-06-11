@@ -57,8 +57,8 @@ def weighted_mse_loss(predicted_noise, true_noise, t, model=None):
     return weighted_loss.item()
 
 
-# ==================== Core Diffusion Analysis ====================
-def run_diffusion_analysis(
+# ==================== Core Reverse Process Analysis ====================
+def run_reverse_process(
     model: DiffusionModel,
     x0: Tensor,
     num_samples: int = 10,
@@ -110,9 +110,9 @@ def run_diffusion_analysis(
         if verbose:
             print(f"\nAnalyzing diffusion process at timestep {t}...")
 
-        # Run diffusion analysis at this timestep
-        results[t] = diffusion_at_timestep(
-            model=model, x0=x0, num_samples=num_samples, timestep=t, verbose=verbose
+        # Run reverse process at this timestep
+        results[t] = run_reverse_process_at_timestep(
+            model, x0, num_samples, t, verbose=verbose
         )
 
         if verbose:
@@ -121,7 +121,7 @@ def run_diffusion_analysis(
     return results
 
 
-def diffusion_at_timestep(
+def run_reverse_process_at_timestep(
     model: DiffusionModel,
     x0: Tensor,
     num_samples: int,
@@ -193,7 +193,7 @@ def diffusion_at_timestep(
         }
 
         if verbose:
-            _print_diffusion_statistics(timestep, metrics)
+            print_reverse_statistics(timestep, metrics)
 
     # Return all computed values
     return {
@@ -209,7 +209,7 @@ def diffusion_at_timestep(
 
 
 # ==================== Utility Functions ====================
-def _print_diffusion_statistics(timestep: int, metrics: Dict[str, float]) -> None:
+def print_reverse_statistics(timestep: int, metrics: Dict[str, float]) -> None:
     """Print formatted diffusion statistics.
 
     Args:
@@ -226,7 +226,7 @@ def _print_diffusion_statistics(timestep: int, metrics: Dict[str, float]) -> Non
     print(f"- Predicted Noise Magnitude: {metrics['pred_noise_magnitude']:.6f}")
 
 
-def save_diffusion_analysis(
+def save_reverse_analysis(
     results: DiffusionAnalysisResults,
     output_dir: Path,
     filename: str = "diffusion_analysis_results.csv",
