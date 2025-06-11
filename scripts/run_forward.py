@@ -111,7 +111,7 @@ def main():
     # Run forward diffusion process
     print("\nInitializing forward diffusion model...")
     forward_diff = ForwardDiffusion(
-        diffusion_steps=config.get("diffusion", {}).get("diffusion_steps", 1000),
+        diffusion_steps=config.get("diffusion", {}).get("timesteps", 1000),
         beta_start=config.get("diffusion", {}).get("beta_start", 0.0001),
         beta_end=config.get("diffusion", {}).get("beta_end", 0.02),
         schedule_type=config.get("diffusion", {}).get("schedule_type", "cosine"),
