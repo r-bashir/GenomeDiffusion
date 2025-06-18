@@ -59,6 +59,62 @@ def weighted_mse_loss(predicted_noise, true_noise, t, model=None):
 
 
 # ==================== Core Reverse Process Analysis ====================
+def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
+    """
+    Generate different sets of timesteps for analysis.
+
+    Args:
+        tmin: Minimum timestep (usually 1)
+        tmax: Maximum timestep (usually 1000)
+
+    Returns:
+        Dictionary with different timestep sets
+    """
+
+    # Generate linearly spaced timesteps
+    linear_steps = np.linspace(tmin, tmax, num=20, dtype=int).tolist()
+
+    # Generate logarithmically spaced timesteps for better coverage
+    log_steps = np.unique(
+        np.logspace(np.log10(tmin), np.log10(tmax), num=20, dtype=int)
+    ).tolist()
+
+    # Enhanced boundary timesteps with more points at beginning, middle and end
+    # Include more steps at the beginning to see the progression from pure signal
+    early_steps = [
+        tmin,
+        tmin + 1,
+        tmin + 2,
+        tmin + 3,
+        tmin + 10,
+        tmin + 20,
+        tmin + 50,
+        tmin + 100,
+        tmin + 200,
+    ]
+
+    # Include steps in the middle to see the transition
+    middle_steps = [tmax // 4, tmax // 3, tmax // 2, 2 * tmax // 3, 3 * tmax // 4]
+
+    # Include more steps at the end to see the progression to pure noise
+    late_steps = [
+        tmax - 200,
+        tmax - 100,
+        tmax - 50,
+        tmax - 20,
+        tmax - 10,
+        tmax - 3,
+        tmax - 2,
+        tmax - 1,
+        tmax,
+    ]
+
+    # Combine all steps and remove duplicates
+    boundary_steps = sorted(list(set(early_steps + middle_steps + late_steps)))
+
+    return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
+
+
 def run_reverse_process(
     model: DiffusionModel,
     x0: Tensor,
@@ -164,10 +220,11 @@ def run_reverse_process_at_timestep(
         # Reverse diffusion step
         x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step(xt, t_tensor)
 
-        # Get sigma_t for the current timestep
-        sigma_t = model.forward_diffusion._sigmas_t[timestep].item()
+        # Get sigma_t for the current timestep using the proper method
+        sigma_t = model.forward_diffusion.sigma(t_tensor)[0].item()
 
         # Scale predicted noise by 1/sigma_t to match true noise distribution
+        # This ensures consistency with how noise is scaled in the forward process
         scaled_pred_noise = predicted_noise / sigma_t
 
         # Calculate metrics with scaled predicted noise
@@ -176,7 +233,17 @@ def run_reverse_process_at_timestep(
         x0_diff = F.mse_loss(x_t_minus_1, x0_samples).item()
         noise_magnitude = torch.mean(torch.abs(noise)).item()
         pred_noise_magnitude = torch.mean(torch.abs(predicted_noise)).item()
-        signal_to_noise = (xt.norm() / (predicted_noise.norm() + 1e-8)).item()
+
+        # Calculate SNR using the same formula as in forward diffusion
+        # SNR = |√(ᾱ_t) * x_0|² / |√(1-ᾱ_t) * ε|²
+        alpha_bar_t = model.forward_diffusion.alpha_bar(t_tensor)[0].item()
+        signal_power = torch.mean(
+            (torch.sqrt(torch.tensor(alpha_bar_t)) * x0_samples) ** 2
+        ).item()
+        noise_power = torch.mean(
+            (torch.sqrt(torch.tensor(1 - alpha_bar_t)) * noise) ** 2
+        ).item()
+        signal_to_noise = signal_power / (noise_power + 1e-8)
 
         # Compile metrics
         metrics = {
@@ -219,110 +286,395 @@ def print_reverse_statistics(
         timesteps = [t for t in timesteps if t in results]
         timesteps.sort()
 
-    print("\n" + "=" * 80)
-    print("REVERSE DIFFUSION STATISTICS")
-    print("=" * 80)
-
     for t in timesteps:
         r = results[t]
         print(f"\nTimestep t = {t}:")
-        print(f"- Sigma_t: {r['metrics']['sigma_t']:.6f}")
-        print(f"- Noise MSE: {r['metrics']['noise_mse']:.6f}")
-        print(f"- Weighted MSE: {r['metrics']['weighted_mse']:.6f}")
-        print(f"- Reconstruction MSE (x0 vs x_t-1): {r['metrics']['x0_diff']:.6f}")
-        print(f"- Signal-to-Noise Ratio: {r['metrics']['signal_to_noise']:.6f}")
-        print(f"- True Noise Magnitude: {r['metrics']['noise_magnitude']:.6f}")
+        print(f"- Sigma_t: {r['metrics']['sigma_t']:.8f}")
+        print(f"- Noise MSE: {r['metrics']['noise_mse']:.8f}")
+        print(f"- Weighted MSE: {r['metrics']['weighted_mse']:.8f}")
+        print(f"- Reconstruction MSE (x0 vs x_t-1): {r['metrics']['x0_diff']:.8f}")
+        print(f"- Signal-to-Noise Ratio: {r['metrics']['signal_to_noise']:.8f}")
+        print(f"- True Noise Magnitude: {r['metrics']['noise_magnitude']:.8f}")
         print(
-            f"- Predicted Noise Magnitude: {r['metrics']['pred_noise_magnitude']:.6f}"
+            f"- Predicted Noise Magnitude: {r['metrics']['pred_noise_magnitude']:.8f}"
         )
 
 
-def save_reverse_analysis(
-    results: ReverseDiffusionResults,
-    output_dir: Path,
-    filename: str = "diffusion_analysis_results.csv",
-) -> None:
-    """Save diffusion analysis results to a CSV file.
+# ==================== Evolution of Denoising ====================
+def calculate_diffusion_data(model, batch, timesteps=[100, 500, 900], device=None):
+    """Calculate diffusion process data for visualization.
 
     Args:
-        results: Dictionary mapping timesteps to analysis results
-        output_dir: Directory to save the CSV file
-        filename: Name of the output CSV file
-    """
-    from typing import Any, Dict, List
-
-    import pandas as pd
-
-    # Prepare data for DataFrame
-    rows: List[Dict[str, Any]] = []
-    for t, result in results.items():
-        row = {"timestep": t}
-        row.update(result["metrics"])
-        rows.append(row)
-
-    # Create and save DataFrame
-    df = pd.DataFrame(rows)
-    os.makedirs(output_dir, exist_ok=True)
-    csv_path = output_dir / filename
-    df.to_csv(csv_path, index=False)
-
-    print(f"Saved diffusion analysis results to {csv_path}")
-
-
-def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
-    """
-    Generate different sets of timesteps for analysis.
-
-    Args:
-        tmin: Minimum timestep (usually 1)
-        tmax: Maximum timestep (usually 1000)
+        model: The diffusion model
+        batch: Batch of real data samples
+        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        device: Device to run calculations on
 
     Returns:
-        Dictionary with different timestep sets
+        Dictionary containing calculated data for each timestep:
+        {
+            timestep: {
+                'x0': Original sample,
+                'eps': Original noise,
+                'x_t': Noisy sample,
+                'pred_eps': Predicted noise,
+                'x_0_pred': Denoised sample,
+                'sigma_t': Sigma at timestep t,
+                'noise_reduction': Noise reduction metric,
+                'noise_reduction_percent': Noise reduction percentage,
+                'loss': Loss at timestep t
+            }
+        }
     """
+    if device is None:
+        device = next(model.parameters()).device
 
-    # Generate linearly spaced timesteps
-    linear_steps = np.linspace(tmin, tmax, num=20, dtype=int).tolist()
+    # Move batch to device and ensure correct shape
+    x0 = batch.to(device)
+    if x0.dim() == 2:
+        x0 = x0.unsqueeze(1)  # Add channel dimension if needed
 
-    # Generate logarithmically spaced timesteps for better coverage
-    log_steps = np.unique(
-        np.logspace(np.log10(tmin), np.log10(tmax), num=20, dtype=int)
-    ).tolist()
+    # Use only the first sample for visualization if it's a batch
+    if x0.size(0) > 1:
+        x0 = x0[0:1]  # Shape: [1, C, seq_len]
 
-    # Enhanced boundary timesteps with more points at beginning, middle and end
-    # Include more steps at the beginning to see the progression from pure signal
-    early_steps = [
-        tmin,
-        tmin + 1,
-        tmin + 2,
-        tmin + 3,
-        tmin + 10,
-        tmin + 20,
-        tmin + 50,
-        tmin + 100,
-        tmin + 200,
+    results = {}
+    model.eval()  # Ensure model is in eval mode
+
+    with torch.no_grad():
+        for t in timesteps:
+            # Important: t is 1-indexed (1 to 1000)
+            # For beta and alpha parameters, use t-1 (0 to 999)
+            # For alpha_bar and sigma parameters, use t directly
+            t_tensor = torch.tensor(
+                [t], device=device
+            )  # Keep 1-indexed for parameter access
+            t_idx_tensor = torch.tensor(
+                [t - 1], device=device
+            )  # 0-indexed for model operations
+
+            # Expand tensors to match batch size if needed
+            if x0.size(0) > 1:
+                t_tensor = t_tensor.expand(x0.size(0))
+                t_idx_tensor = t_idx_tensor.expand(x0.size(0))
+
+            # Generate random noise
+            eps = torch.randn_like(x0, device=device)
+
+            # Forward process: add noise to create x_t
+            # Use t_idx_tensor (0-indexed) for model operations
+            x_t = model.forward_diffusion.sample(x0, t_idx_tensor, eps)
+
+            # Get sigma_t for this timestep
+            # Use t_tensor (1-indexed) for parameter access
+            sigma_t = model.forward_diffusion.sigma(t_tensor).item()
+
+            # Predict noise and calculate denoised sample
+            # Use t_idx_tensor (0-indexed) for model operations
+            pred_eps = model.predict_added_noise(x_t, t_idx_tensor)
+            x_0_pred = model.reverse_diffusion.reverse_diffusion_step(x_t, t_idx_tensor)
+
+            # Calculate noise reduction metrics
+            initial_noise = torch.mean(torch.abs(x_t - x0)).item()
+            final_noise = torch.mean(torch.abs(x_0_pred - x0)).item()
+            noise_reduction = initial_noise - final_noise
+            noise_reduction_percent = (
+                (noise_reduction / initial_noise * 100) if initial_noise > 0 else 0
+            )
+
+            # Calculate loss
+            # Use t_idx_tensor (0-indexed) for model operations
+            loss = model.loss_per_timesteps(x0, eps, t_idx_tensor)[0].item()
+
+            # Store results
+            results[t] = {
+                "x0": x0,
+                "eps": eps,
+                "x_t": x_t,
+                "pred_eps": pred_eps,
+                "x_0_pred": x_0_pred,
+                "sigma_t": sigma_t,
+                "noise_reduction": noise_reduction,
+                "noise_reduction_percent": noise_reduction_percent,
+                "loss": loss,
+            }
+
+    return results
+
+
+def visualize_diffusion_process_heatmap(
+    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+):
+    """Visualize the forward and reverse diffusion process at different timesteps using heatmaps.
+
+    For each timestep, shows:
+    1. Original sample
+    2. Added noise
+    3. Noisy sample (forward diffusion)
+    4. Predicted noise (both raw and scaled)
+    5. Denoised sample (reverse diffusion)
+
+    Args:
+        model: The diffusion model
+        batch: Batch of real data samples
+        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        output_dir: Directory to save visualizations
+        sample_points: Number of points to sample for visualization
+    """
+    # Create figure
+    n_rows = len(timesteps)
+    fig, axes = plt.subplots(n_rows, 5, figsize=(15, 3 * n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+
+    # Set column titles
+    titles = [
+        "Original x₀",
+        "Added Noise ε",
+        "Noisy x_t",
+        "Predicted Noise",
+        "Denoised x_{t-1}",
     ]
+    for ax, title in zip(axes[0], titles):
+        ax.set_title(title)
 
-    # Include steps in the middle to see the transition
-    middle_steps = [tmax // 4, tmax // 3, tmax // 2, 2 * tmax // 3, 3 * tmax // 4]
+    # Plot data for each timestep
+    for i, t in enumerate(timesteps):
+        # Set seed for reproducible results across different visualization functions
+        torch.manual_seed(42 + t)
+        # Run reverse process at this timestep
+        result = run_reverse_process_at_timestep(
+            model, batch, num_samples=1, timestep=t
+        )
 
-    # Include more steps at the end to see the progression to pure noise
-    late_steps = [
-        tmax - 200,
-        tmax - 100,
-        tmax - 50,
-        tmax - 20,
-        tmax - 10,
-        tmax - 3,
-        tmax - 2,
-        tmax - 1,
-        tmax,
+        # Extract data
+        x0_vis = to_numpy(result["x0"])[:sample_points]
+        eps_vis = to_numpy(result["noise"])[:sample_points]
+        x_t_vis = to_numpy(result["xt"])[:sample_points]
+        pred_eps_vis = to_numpy(result["predicted_noise"])[:sample_points]
+        scaled_pred_eps_vis = to_numpy(result["scaled_pred_noise"])[:sample_points]
+        x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
+
+        # Plot heatmaps
+        axes[i, 0].imshow(x0_vis.reshape(1, -1), aspect="auto", cmap="viridis")
+        axes[i, 1].imshow(eps_vis.reshape(1, -1), aspect="auto", cmap="viridis")
+        axes[i, 2].imshow(x_t_vis.reshape(1, -1), aspect="auto", cmap="viridis")
+
+        # Combined predicted noise heatmap (show both raw and scaled)
+        combined_pred = np.vstack(
+            [pred_eps_vis.reshape(1, -1), scaled_pred_eps_vis.reshape(1, -1)]
+        )
+        axes[i, 3].imshow(combined_pred, aspect="auto", cmap="viridis")
+        axes[i, 3].set_yticks([0, 1])
+        axes[i, 3].set_yticklabels(["Raw", "Scaled"], fontsize=8)
+
+        axes[i, 4].imshow(x_t_minus_1_vis.reshape(1, -1), aspect="auto", cmap="viridis")
+
+        # Add statistics
+        for j, (ax, arr) in enumerate(
+            zip(axes[i, :4], [x0_vis, eps_vis, x_t_vis, pred_eps_vis])
+        ):
+            ax.text(
+                0.5,
+                -0.15,
+                f"Mean: {arr.mean():.3f}\nStd: {arr.std():.3f}",
+                transform=ax.transAxes,
+                ha="center",
+                fontsize=8,
+            )
+            if j == 0:
+                ax.set_ylabel(f"t={t}")
+
+        # Add statistics for denoised sample
+        axes[i, 4].text(
+            0.5,
+            -0.15,
+            f"Mean: {x_t_minus_1_vis.mean():.3f}\nStd: {x_t_minus_1_vis.std():.3f}",
+            transform=axes[i, 4].transAxes,
+            ha="center",
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    if output_dir:
+        fig.savefig(f"{output_dir}/diffusion_heatmap.png")
+        plt.close()
+    else:
+        plt.show()
+
+
+def visualize_diffusion_process_lineplot(
+    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+):
+    """Visualize the forward and reverse diffusion process at different timesteps using line plots.
+
+    For each timestep, shows:
+    1. Original sample
+    2. Added noise
+    3. Noisy sample (forward diffusion)
+    4. Predicted noise (both raw and scaled)
+    5. Denoised sample (reverse diffusion)
+
+    Args:
+        model: The diffusion model
+        batch: Batch of real data samples
+        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        output_dir: Directory to save visualizations
+        sample_points: Number of points to sample for visualization
+    """
+    # Create figure
+    n_rows = len(timesteps)
+    fig, axes = plt.subplots(n_rows, 5, figsize=(15, 3 * n_rows))
+    if n_rows == 1:
+        axes = axes.reshape(1, -1)
+
+    # Set column titles
+    titles = [
+        "Original x₀",
+        "Added Noise ε",
+        "Noisy x_t",
+        "Predicted Noise",
+        "Denoised x_{t-1}",
     ]
+    for ax, title in zip(axes[0], titles):
+        ax.set_title(title)
 
-    # Combine all steps and remove duplicates
-    boundary_steps = sorted(list(set(early_steps + middle_steps + late_steps)))
+    # Plot data for each timestep
+    for i, t in enumerate(timesteps):
+        # Set seed for reproducible results across different visualization functions
+        torch.manual_seed(42 + t)
+        # Run reverse process at this timestep
+        result = run_reverse_process_at_timestep(
+            model, batch, num_samples=1, timestep=t
+        )
 
-    return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
+        # Extract data
+        x0_vis = to_numpy(result["x0"])[:sample_points]
+        eps_vis = to_numpy(result["noise"])[:sample_points]
+        x_t_vis = to_numpy(result["xt"])[:sample_points]
+        pred_eps_vis = to_numpy(result["predicted_noise"])[:sample_points]
+        scaled_pred_eps_vis = to_numpy(result["scaled_pred_noise"])[:sample_points]
+        x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
+
+        x_axis = np.arange(len(x0_vis))
+
+        # 1. Original
+        axes[i, 0].plot(x_axis, x0_vis, "b-", linewidth=1)
+        axes[i, 0].set_ylim(-3, 3)
+
+        # 2. Added Noise
+        axes[i, 1].plot(x_axis, eps_vis, "r-", linewidth=1)
+        axes[i, 1].set_ylim(-3, 3)
+
+        # 3. Noisy Signal
+        axes[i, 2].plot(x_axis, x_t_vis, "g-", linewidth=1)
+        axes[i, 2].set_ylim(-3, 3)
+
+        # 4. Predicted Noise (both raw and scaled)
+        axes[i, 3].plot(x_axis, pred_eps_vis, "k-", linewidth=1, label="Raw", alpha=0.8)
+        axes[i, 3].plot(
+            x_axis, scaled_pred_eps_vis, "m-", linewidth=1, label="Scaled", alpha=0.8
+        )
+        if i == 0:
+            axes[i, 3].legend(fontsize=8)
+        axes[i, 3].set_ylim(-3, 3)
+
+        # 5. Denoised Sample
+        axes[i, 4].plot(x_axis, x_t_minus_1_vis, "c-", linewidth=1)
+        # Special case for t=1000: set wider y-axis limits for denoised sample
+        if t == 1000:
+            axes[i, 4].set_ylim(-80, 80)
+        # axes[i, 4].set_ylim(-3, 3)
+
+        # Add timestep label
+        axes[i, 0].set_ylabel(f"t={t}")
+
+    fig.tight_layout()
+    if output_dir:
+        fig.savefig(f"{output_dir}/diffusion_lineplot.png")
+        plt.close()
+    else:
+        plt.show()
+
+
+def visualize_diffusion_process_superimposed(
+    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+):
+    """Visualize the superimposed comparison of original, noisy, and denoised signals at different timesteps.
+
+    For each timestep (as columns), shows superimposed plots of:
+    - Original sample (blue)
+    - Noisy sample (red)
+    - Denoised sample (green)
+
+    Args:
+        model: The diffusion model
+        batch: Batch of real data samples
+        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        output_dir: Directory to save visualizations
+        sample_points: Number of points to sample for visualization
+    """
+    # Create figure - timesteps as columns
+    n_cols = len(timesteps)
+    fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 4))
+    if n_cols == 1:
+        axes = [axes]
+
+    # Plot data for each timestep
+    for i, t in enumerate(timesteps):
+        # Set seed for reproducible results across different visualization functions
+        torch.manual_seed(42 + t)
+        # Run reverse process at this timestep
+        result = run_reverse_process_at_timestep(
+            model, batch, num_samples=1, timestep=t
+        )
+
+        # Extract data
+        x0_vis = to_numpy(result["x0"])[:sample_points]
+        x_t_vis = to_numpy(result["xt"])[:sample_points]
+        x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
+
+        x_axis = np.arange(len(x0_vis))
+
+        # Superimposed plot: Original, Noisy, Denoised
+        axes[i].plot(x_axis, x0_vis, "b-", linewidth=2, label="Original", alpha=0.8)
+        axes[i].plot(x_axis, x_t_vis, "r-", linewidth=2, label="Noisy", alpha=0.7)
+        axes[i].plot(
+            x_axis, x_t_minus_1_vis, "g-", linewidth=2, label="Denoised", alpha=0.7
+        )
+
+        axes[i].set_title(f"t={t}")
+        axes[i].legend(fontsize=10)
+        # Special case for t=1000: set wider y-axis limits for denoised sample
+        if t == 1000:
+            axes[i].set_ylim(-80, 80)
+        # axes[i].set_ylim(-3, 3)
+        axes[i].grid(True, alpha=0.3)
+
+        # Calculate and add metrics annotation
+        initial_noise = torch.mean(torch.abs(result["xt"] - result["x0"])).item()
+        final_noise = torch.mean(torch.abs(result["x_t_minus_1"] - result["x0"])).item()
+        noise_reduction = initial_noise - final_noise
+        noise_reduction_percent = (
+            (noise_reduction / initial_noise * 100) if initial_noise > 0 else 0
+        )
+
+        axes[i].annotate(
+            f"Noise reduction:\n{noise_reduction:.3f} ({noise_reduction_percent:.1f}%)",
+            xy=(0.02, 0.98),
+            xycoords="axes fraction",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
+            fontsize=8,
+            ha="left",
+            va="top",
+        )
+
+    fig.tight_layout()
+    if output_dir:
+        fig.savefig(f"{output_dir}/diffusion_superimposed.png")
+        plt.close()
+    else:
+        plt.show()
 
 
 # ==================== Visualization Functions ====================
@@ -635,489 +987,6 @@ def plot_denoising_comparison(x0, x_t_minus_1, timestep, save_dir=None):
         plt.show()
 
 
-def visualize_diffusion_process_heatmap(
-    model, batch, timesteps=[100, 500, 900], output_dir=None
-):
-    """Visualize the forward and reverse diffusion process at different timesteps.
-
-    For each timestep, shows:
-    1. Original sample
-    2. Added noise
-    3. Noisy sample (forward diffusion)
-    4. Predicted noise
-    5. Denoised sample (reverse diffusion)
-
-    Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize
-        output_dir: Directory to save visualizations
-    """
-    model.eval()
-    device = next(model.parameters()).device
-
-    # Ensure batch has the right shape and is on the correct device
-    batch = batch.to(device)
-    if batch.dim() == 2:
-        batch = batch.unsqueeze(1)  # Add channel dimension if needed
-
-    # Use only the first sample for visualization
-    x0 = batch[0:1]  # Shape: [1, C, seq_len]
-
-    # Create a figure with 5 columns (original, noise, noisy, pred_noise, denoised)
-    # and one row per timestep
-    fig, axes = plt.subplots(len(timesteps), 5, figsize=(20, 4 * len(timesteps)))
-
-    # Handle the case of a single timestep
-    if len(timesteps) == 1:
-        axes = axes.reshape(1, -1)  # Reshape to 2D array with 1 row
-
-    # Set column titles
-    axes[0, 0].set_title("Original Sample")
-    axes[0, 1].set_title("Added Noise")
-    axes[0, 2].set_title("Noisy Sample")
-    axes[0, 3].set_title("Predicted Noise")
-    axes[0, 4].set_title("Denoised Sample")
-
-    with torch.no_grad():
-        for i, t in enumerate(timesteps):
-            # Create timestep tensor
-            t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
-
-            # 1. Original sample (x0)
-            # Already have x0
-
-            # 2. Generate noise
-            eps = torch.randn_like(x0)
-
-            # 3. Forward diffusion: Add noise to get x_t
-            x_t = model.forward_diffusion.sample(x0, t_tensor, eps)
-
-            # 4. Predict noise
-            pred_eps = model.predict_added_noise(x_t, t_tensor)
-
-            # 5. Reverse diffusion: Denoise x_t to get x_0_pred
-            # For a single step denoising, we'll use the reverse_diffusion_step method
-            x_0_pred = model.reverse_diffusion.reverse_diffusion_step(x_t, t_tensor)
-
-            # Prepare data for visualization - reshape to 2D
-            # For 1D data, we'll reshape to [1, seq_len] for imshow
-            x0_vis = x0.cpu().squeeze().numpy().reshape(1, -1)
-            eps_vis = eps.cpu().squeeze().numpy().reshape(1, -1)
-            x_t_vis = x_t.cpu().squeeze().numpy().reshape(1, -1)
-            pred_eps_vis = pred_eps.cpu().squeeze().numpy().reshape(1, -1)
-            x_0_pred_vis = x_0_pred.cpu().squeeze().numpy().reshape(1, -1)
-
-            # Plot results
-            # 1. Original
-            im0 = axes[i, 0].imshow(x0_vis, aspect="auto", cmap="viridis")
-            axes[i, 0].set_ylabel(f"t={t}")
-            axes[i, 0].set_xticks([])
-            axes[i, 0].set_yticks([])
-
-            # 2. Noise
-            im1 = axes[i, 1].imshow(eps_vis, aspect="auto", cmap="viridis")
-            axes[i, 1].set_xticks([])
-            axes[i, 1].set_yticks([])
-
-            # 3. Noisy
-            im2 = axes[i, 2].imshow(x_t_vis, aspect="auto", cmap="viridis")
-            axes[i, 2].set_xticks([])
-            axes[i, 2].set_yticks([])
-
-            # 4. Predicted Noise
-            im3 = axes[i, 3].imshow(pred_eps_vis, aspect="auto", cmap="viridis")
-            axes[i, 3].set_xticks([])
-            axes[i, 3].set_yticks([])
-
-            # 5. Denoised
-            im4 = axes[i, 4].imshow(x_0_pred_vis, aspect="auto", cmap="viridis")
-            axes[i, 4].set_xticks([])
-            axes[i, 4].set_yticks([])
-
-            # Add text with stats
-            axes[i, 0].text(
-                0.5,
-                -0.15,
-                f"Mean: {x0.mean():.3f}\nStd: {x0.std():.3f}",
-                transform=axes[i, 0].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 1].text(
-                0.5,
-                -0.15,
-                f"Mean: {eps.mean():.3f}\nStd: {eps.std():.3f}",
-                transform=axes[i, 1].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 2].text(
-                0.5,
-                -0.15,
-                f"Mean: {x_t.mean():.3f}\nStd: {x_t.std():.3f}",
-                transform=axes[i, 2].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 3].text(
-                0.5,
-                -0.15,
-                f"Mean: {pred_eps.mean():.3f}\nStd: {pred_eps.std():.3f}",
-                transform=axes[i, 3].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 4].text(
-                0.5,
-                -0.15,
-                f"Mean: {x_0_pred.mean():.3f}\nStd: {x_0_pred.std():.3f}",
-                transform=axes[i, 4].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-
-    plt.tight_layout()
-    if output_dir:
-        plt.savefig(
-            output_dir / "diffusion_process_heatmap.png", dpi=300, bbox_inches="tight"
-        )
-        plt.close()
-    return fig
-
-
-def visualize_diffusion_process_lineplot(
-    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
-):
-    """Visualize the forward and reverse diffusion process at different timesteps using line plots.
-
-    For each timestep, shows:
-    1. Original sample
-    2. Added noise
-    3. Noisy sample (forward diffusion)
-    4. Predicted noise
-    5. Denoised sample (reverse diffusion)
-
-    Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize
-        output_dir: Directory to save visualizations
-        sample_points: Number of points to sample for visualization (to avoid overcrowded plots)
-    """
-    model.eval()
-    device = next(model.parameters()).device
-
-    # Ensure batch has the right shape and is on the correct device
-    batch = batch.to(device)
-    if batch.dim() == 2:
-        batch = batch.unsqueeze(1)  # Add channel dimension if needed
-
-    # Use only the first sample for visualization
-    x0 = batch[0:1]  # Shape: [1, C, seq_len]
-
-    # Get the sequence length
-    seq_len = x0.shape[-1]
-
-    # If sequence is too long, sample points for visualization
-    if seq_len > sample_points:
-        indices = np.linspace(0, seq_len - 1, sample_points, dtype=int)
-    else:
-        indices = np.arange(seq_len)
-
-    # Create a figure with 5 columns (original, noise, noisy, pred_noise, denoised)
-    # and one row per timestep
-    fig, axes = plt.subplots(len(timesteps), 5, figsize=(20, 4 * len(timesteps)))
-
-    # Handle the case of a single timestep
-    if len(timesteps) == 1:
-        axes = axes.reshape(1, -1)  # Reshape to 2D array with 1 row
-
-    # Set column titles
-    axes[0, 0].set_title("Original Sample")
-    axes[0, 1].set_title("Added Noise")
-    axes[0, 2].set_title("Noisy Sample")
-    axes[0, 3].set_title("Predicted Noise")
-    axes[0, 4].set_title("Denoised Sample")
-
-    with torch.no_grad():
-        for i, t in enumerate(timesteps):
-            # Create timestep tensor
-            t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
-
-            # 1. Original sample (x0)
-            # Already have x0
-
-            # 2. Generate noise
-            eps = torch.randn_like(x0)
-
-            # 3. Forward diffusion: Add noise to get x_t
-            x_t = model.forward_diffusion.sample(x0, t_tensor, eps)
-
-            # 4. Predict noise
-            pred_eps = model.predict_added_noise(x_t, t_tensor)
-
-            # Get sigma_t for scaling
-            sigma_t = model.forward_diffusion.sigma(t_tensor).item()
-
-            # 5. Reverse diffusion: Denoise x_t to get x_0_pred
-            # For a single step denoising, we'll use the reverse_diffusion_step method
-            x_0_pred = model.reverse_diffusion.reverse_diffusion_step(x_t, t_tensor)
-
-            # Prepare data for visualization - convert to numpy and sample points
-            x0_vis = x0.cpu().squeeze().numpy()[indices]
-            eps_vis = eps.cpu().squeeze().numpy()[indices]
-            x_t_vis = x_t.cpu().squeeze().numpy()[indices]
-            pred_eps_vis = pred_eps.cpu().squeeze().numpy()[indices]
-            x_0_pred_vis = x_0_pred.cpu().squeeze().numpy()[indices]
-
-            # Create x-axis for plotting
-            x_axis = np.arange(len(indices))
-
-            # Calculate global min/max for consistent y-axis scale for signal plots
-            all_signal_data = np.concatenate([x0_vis, x_t_vis, x_0_pred_vis])
-            y_min_signal, y_max_signal = np.min(all_signal_data), np.max(
-                all_signal_data
-            )
-            # Add a small margin
-            y_range_signal = y_max_signal - y_min_signal
-            y_min_signal -= 0.1 * y_range_signal
-            y_max_signal += 0.1 * y_range_signal
-
-            # Calculate global min/max for consistent y-axis scale for noise plots
-            all_noise_data = np.concatenate([eps_vis, pred_eps_vis])
-            y_min_noise, y_max_noise = np.min(all_noise_data), np.max(all_noise_data)
-            # Add a small margin
-            y_range_noise = y_max_noise - y_min_noise
-            y_min_noise -= 0.1 * y_range_noise
-            y_max_noise += 0.1 * y_range_noise
-
-            # Plot results
-            # 1. Original sig
-            axes[i, 0].plot(x_axis, x0_vis, "b-", linewidth=1)
-            axes[i, 0].set_ylabel(f"t={t}")
-            axes[i, 0].set_ylim(-2.5, 2.5)  # Consistent y-axis
-
-            # 2. Added Noise
-            axes[i, 1].plot(x_axis, eps_vis, "r-", linewidth=1)
-            axes[i, 1].set_ylim(-2.5, 2.5)  # Consistent y-axis for noise
-
-            # 3. Noisy Signal
-            axes[i, 2].plot(x_axis, x_t_vis, "g-", linewidth=1)
-            axes[i, 2].set_ylim(-2.5, 2.5)  # Consistent y-axis
-
-            # 4. Predicted Noise
-            axes[i, 3].plot(x_axis, pred_eps_vis, "k-", linewidth=1, label="Predicted")
-
-            # Also plot scaled predicted noise
-            scaled_pred_eps_vis = pred_eps_vis / sigma_t
-            axes[i, 3].plot(
-                x_axis,
-                scaled_pred_eps_vis,
-                "m-",
-                linewidth=1,
-                alpha=0.7,
-                label="Scaled (1/σ)",
-            )
-            axes[i, 3].set_ylim(-2.5, 2.5)  # Consistent y-axis for noise
-            axes[i, 3].legend(fontsize=6)
-
-            # 5. Denoised
-            axes[i, 4].plot(x_axis, x_0_pred_vis, "c-", linewidth=1)
-            axes[i, 4].set_ylim(y_min_signal, y_max_signal)  # Consistent y-axis
-
-            # Calculate noise reduction metrics for statistics (not displayed in this plot)
-            noise_magnitude = np.mean(np.abs(x_t_vis - x0_vis))
-            denoised_error = np.mean(np.abs(x_0_pred_vis - x0_vis))
-            noise_reduction = noise_magnitude - denoised_error
-            noise_reduction_percent = (
-                (noise_reduction / noise_magnitude) * 100 if noise_magnitude > 0 else 0
-            )
-
-            # Add text with stats
-            axes[i, 0].text(
-                0.5,
-                -0.15,
-                f"Mean: {x0.mean():.3f}\nStd: {x0.std():.3f}",
-                transform=axes[i, 0].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 1].text(
-                0.5,
-                -0.15,
-                f"Mean: {eps.mean():.3f}\nStd: {eps.std():.3f}",
-                transform=axes[i, 1].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 2].text(
-                0.5,
-                -0.15,
-                f"Mean: {x_t.mean():.3f}\nStd: {x_t.std():.3f}\nσ_t: {sigma_t:.3f}",
-                transform=axes[i, 2].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 3].text(
-                0.5,
-                -0.15,
-                f"Mean: {pred_eps.mean():.3f}\nStd: {pred_eps.std():.3f}",
-                transform=axes[i, 3].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-            axes[i, 4].text(
-                0.5,
-                -0.15,
-                f"Mean: {x_0_pred.mean():.3f}\nStd: {x_0_pred.std():.3f}",
-                transform=axes[i, 4].transAxes,
-                ha="center",
-                fontsize=8,
-            )
-
-            # Hide x-axis ticks except for the last row
-            if i < len(timesteps) - 1:
-                for j in range(5):
-                    axes[i, j].set_xticks([])
-
-    plt.tight_layout()
-    if output_dir:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(exist_ok=True, parents=True)
-        plt.savefig(
-            output_dir / "diffusion_process_lineplot.png", dpi=300, bbox_inches="tight"
-        )
-        plt.close()
-    return fig
-
-
-def visualize_superimposed_comparison(
-    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
-):
-    """Visualize the superimposed comparison of original, noisy, and denoised signals at different timesteps.
-
-    This function creates a dedicated visualization that superimposes the original, noisy, and denoised signals
-    in the same plot for each timestep, making it easier to see how well the model denoises the data.
-
-    Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize
-        output_dir: Directory to save visualizations
-        sample_points: Number of points to sample for visualization (to avoid overcrowded plots)
-    """
-    model.eval()
-    device = next(model.parameters()).device
-
-    # Ensure batch has the right shape and is on the correct device
-    batch = batch.to(device)
-    if batch.dim() == 2:
-        batch = batch.unsqueeze(1)  # Add channel dimension if needed
-
-    # Use only the first sample for visualization
-    x0 = batch[0:1]  # Shape: [1, C, seq_len]
-
-    # Get the sequence length
-    seq_len = x0.shape[-1]
-
-    # If sequence is too long, sample points for visualization
-    if seq_len > sample_points:
-        indices = np.linspace(0, seq_len - 1, sample_points, dtype=int)
-    else:
-        indices = np.arange(seq_len)
-
-    # Create a figure with one column per timestep
-    fig, axes = plt.subplots(1, len(timesteps), figsize=(5 * len(timesteps), 5))
-
-    # Handle the case of a single timestep
-    if len(timesteps) == 1:
-        axes = np.array([axes])  # Convert to array for consistent indexing
-
-    # Set figure title
-    fig.suptitle(
-        "Superimposed Comparison of Original, Noisy, and Denoised Signals", fontsize=14
-    )
-
-    with torch.no_grad():
-        for i, t in enumerate(timesteps):
-            # Create timestep tensor
-            t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
-
-            # Generate noise
-            eps = torch.randn_like(x0)
-
-            # Forward diffusion: Add noise to get x_t
-            x_t = model.forward_diffusion.sample(x0, t_tensor, eps)
-
-            # Get sigma_t for scaling
-            sigma_t = model.forward_diffusion.sigma(t_tensor).item()
-
-            # Reverse diffusion: Denoise x_t to get x_0_pred
-            x_0_pred = model.reverse_diffusion.reverse_diffusion_step(x_t, t_tensor)
-
-            # Prepare data for visualization
-            x0_vis = x0.cpu().squeeze().numpy()[indices]
-            x_t_vis = x_t.cpu().squeeze().numpy()[indices]
-            x_0_pred_vis = x_0_pred.cpu().squeeze().numpy()[indices]
-
-            # Create x-axis for plotting
-            x_axis = np.arange(len(indices))
-
-            # Calculate global min/max for consistent y-axis scale
-            all_signal_data = np.concatenate([x0_vis, x_t_vis, x_0_pred_vis])
-            y_min, y_max = np.min(all_signal_data), np.max(all_signal_data)
-            # Add a small margin
-            y_range = y_max - y_min
-            y_min -= 0.1 * y_range
-            y_max += 0.1 * y_range
-
-            # Plot superimposed comparison
-            axes[i].plot(x_axis, x0_vis, "b-", linewidth=1.5, label="Original")
-            axes[i].plot(
-                x_axis, x_t_vis, "r:", linewidth=1, alpha=0.6, label=f"Noisy (t={t})"
-            )
-            axes[i].plot(x_axis, x_0_pred_vis, "g-", linewidth=1.5, label="Denoised")
-            axes[i].set_ylim(y_min, y_max)  # Consistent y-axis
-            axes[i].legend(fontsize=8)
-            axes[i].set_title(f"Timestep {t}")
-
-            # Calculate noise reduction metrics
-            noise_magnitude = np.mean(np.abs(x_t_vis - x0_vis))
-            denoised_error = np.mean(np.abs(x_0_pred_vis - x0_vis))
-            noise_reduction = noise_magnitude - denoised_error
-            noise_reduction_percent = (
-                (noise_reduction / noise_magnitude) * 100 if noise_magnitude > 0 else 0
-            )
-
-            # Calculate loss using model's loss_per_timesteps method for the specific timestep
-            with torch.enable_grad():  # Temporarily enable gradients for loss computation
-                # Use the same noise that was used for visualization
-                loss = model.loss_per_timesteps(
-                    x0, eps, torch.tensor([t], device=device)
-                )[0].item()
-
-            # Add annotation showing noise reduction and loss
-            axes[i].annotate(
-                f"Noise reduction: {noise_reduction:.4f} ({noise_reduction_percent:.1f}%)\nLoss at t={t}: {loss:.6f}\n\u03c3_t: {sigma_t:.3f}",
-                xy=(0.5, 0.02),
-                xycoords="axes fraction",
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
-                fontsize=8,
-                ha="center",
-            )
-
-    plt.tight_layout()
-    if output_dir:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(exist_ok=True, parents=True)
-        plt.savefig(
-            output_dir / "superimposed_comparison.png", dpi=300, bbox_inches="tight"
-        )
-        plt.close()
-    return fig
-
-
 def display_diffusion_parameters(model, timestep):
     """Display diffusion process parameters for a specific timestep.
 
@@ -1125,11 +994,12 @@ def display_diffusion_parameters(model, timestep):
         model: The diffusion model
         timestep: Timestep to display parameters for
     """
-    # Get parameters directly
-    alpha_t = model.forward_diffusion._alphas_t[timestep - 1].item()
-    alpha_bar_t = model.forward_diffusion._alphas_bar_t[timestep].item()
-    sigma_t = model.forward_diffusion._sigmas_t[timestep].item()
-    beta_t = 1.0 - alpha_t
+    # Get parameters using proper methods
+    t_tensor = torch.tensor([timestep], device=model.device)
+    beta_t = model.forward_diffusion.beta(t_tensor).item()
+    alpha_t = model.forward_diffusion.alpha(t_tensor).item()
+    alpha_bar_t = model.forward_diffusion.alpha_bar(t_tensor).item()
+    sigma_t = model.forward_diffusion.sigma(t_tensor).item()
 
     # Print formatted parameters
     print(f"\n--- Diffusion Parameters at t={timestep} ---")

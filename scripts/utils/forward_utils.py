@@ -38,6 +38,62 @@ TimestepDict = Dict[str, List[int]]
 
 
 # ==================== Core Forward Process Analysis ====================
+def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
+    """
+    Generate different sets of timesteps for analysis.
+
+    Args:
+        tmin: Minimum timestep (usually 1)
+        tmax: Maximum timestep (usually 1000)
+
+    Returns:
+        Dictionary with different timestep sets
+    """
+
+    # Generate linearly spaced timesteps
+    linear_steps = np.linspace(tmin, tmax, num=20, dtype=int).tolist()
+
+    # Generate logarithmically spaced timesteps for better coverage
+    log_steps = np.unique(
+        np.logspace(np.log10(tmin), np.log10(tmax), num=20, dtype=int)
+    ).tolist()
+
+    # Enhanced boundary timesteps with more points at beginning, middle and end
+    # Include more steps at the beginning to see the progression from pure signal
+    early_steps = [
+        tmin,
+        tmin + 1,
+        tmin + 2,
+        tmin + 3,
+        tmin + 10,
+        tmin + 20,
+        tmin + 50,
+        tmin + 100,
+        tmin + 200,
+    ]
+
+    # Include steps in the middle to see the transition
+    middle_steps = [tmax // 4, tmax // 3, tmax // 2, 2 * tmax // 3, 3 * tmax // 4]
+
+    # Include more steps at the end to see the progression to pure noise
+    late_steps = [
+        tmax - 200,
+        tmax - 100,
+        tmax - 50,
+        tmax - 20,
+        tmax - 10,
+        tmax - 3,
+        tmax - 2,
+        tmax - 1,
+        tmax,
+    ]
+
+    # Combine all steps and remove duplicates
+    boundary_steps = sorted(list(set(early_steps + middle_steps + late_steps)))
+
+    return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
+
+
 def run_forward_process(
     forward_diff: ForwardDiffusion,
     x0: Tensor,
@@ -152,11 +208,11 @@ def run_forward_process_at_timestep(
     # Noise component: σ_t * ε = √(1-ᾱ_t) * ε
     noise_component = torch.tensor(sigma_t, device=device) * eps
 
-    # Signal-to-noise ratio (SNR): |√(ᾱ_t) * x_0| / |√(1-ᾱ_t) * ε|
-    # As t increases, ᾱ_t decreases and SNR decreases
-    snr = torch.mean(
-        torch.abs(signal_component) / (torch.abs(noise_component) + 1e-8)
-    ).item()
+    # Signal-to-noise ratio (SNR): |√(ᾱ_t) * x_0|² / |√(1-ᾱ_t) * ε|²
+    # This matches the literature definition (Nichol & Dhariwal, 2021)
+    signal_power = torch.mean(signal_component**2).item()
+    noise_power = torch.mean(noise_component**2).item()
+    snr = signal_power / (noise_power + 1e-8) if alpha_bar_t < 1 else 1000.0
 
     # Calculate metrics for analysis
     # Average magnitude of noise component: |σ_t * ε|
@@ -181,12 +237,8 @@ def run_forward_process_at_timestep(
         "noise_magnitude": noise_magnitude,
         "signal_magnitude": signal_magnitude,
         "x_t_magnitude": x_t_magnitude,
-        "signal_percentage": signal_magnitude
-        / (signal_magnitude + noise_magnitude)
-        * 100,
-        "noise_percentage": noise_magnitude
-        / (signal_magnitude + noise_magnitude)
-        * 100,
+        "signal_percentage": signal_power / (signal_power + noise_power) * 100,
+        "noise_percentage": noise_power / (signal_power + noise_power) * 100,
     }
 
 
@@ -219,22 +271,18 @@ def print_forward_statistics(
         timesteps = [t for t in timesteps if t in results]
         timesteps.sort()
 
-    print("\n" + "=" * 80)
-    print("FORWARD DIFFUSION STATISTICS")
-    print("=" * 80)
-
     for t in timesteps:
         r = results[t]
         print(f"\nTimestep t = {t}:")
-        print(f"  α_t = {r['alpha_t']:.6f}  (signal retention rate at step t)")
-        print(f"  ᾱ_t = {r['alpha_bar_t']:.6f}  (cumulative product of alphas up to t)")
+        print(f"  α_t = {r['alpha_t']:.8f}  (signal retention rate at step t)")
+        print(f"  ᾱ_t = {r['alpha_bar_t']:.8f}  (cumulative product of alphas up to t)")
         print(
-            f"  σ_t = {r['sigma_t']:.6f}  (noise standard deviation at step t = √(1-ᾱ_t))"
+            f"  σ_t = {r['sigma_t']:.8f}  (noise standard deviation at step t = √(1-ᾱ_t))"
         )
-        print(f"  β_t = {r['beta_t']:.6f}  (noise schedule at step t = 1-α_t)")
-        print(f"  SNR = {r['snr']:.6f}  (signal-to-noise ratio = |√(ᾱ_t)*x_0|/|σ_t*ε|)")
-        print(f"  Signal Magnitude = {r['signal_magnitude']:.6f}  (|√(ᾱ_t)*x_0|)")
-        print(f"  Noise Magnitude = {r['noise_magnitude']:.6f}  (|σ_t*ε|)")
+        print(f"  β_t = {r['beta_t']:.8f}  (noise schedule at step t = 1-α_t)")
+        print(f"  SNR = {r['snr']:.8f}  (signal-to-noise ratio = |√(ᾱ_t)*x_0|/|σ_t*ε|)")
+        print(f"  Signal Magnitude = {r['signal_magnitude']:.8f}  (|√(ᾱ_t)*x_0|)")
+        print(f"  Noise Magnitude = {r['noise_magnitude']:.8f}  (|σ_t*ε|)")
         print(
             f"  Signal Percentage = {r['signal_percentage']:.2f}%  (signal proportion in x_t)"
         )
@@ -273,62 +321,6 @@ def save_forward_analysis(
     df.to_csv(csv_path, index=False)
 
     print(f"Saved forward analysis results to {csv_path}")
-
-
-def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
-    """
-    Generate different sets of timesteps for analysis.
-
-    Args:
-        tmin: Minimum timestep (usually 1)
-        tmax: Maximum timestep (usually 1000)
-
-    Returns:
-        Dictionary with different timestep sets
-    """
-
-    # Generate linearly spaced timesteps
-    linear_steps = np.linspace(tmin, tmax, num=20, dtype=int).tolist()
-
-    # Generate logarithmically spaced timesteps for better coverage
-    log_steps = np.unique(
-        np.logspace(np.log10(tmin), np.log10(tmax), num=20, dtype=int)
-    ).tolist()
-
-    # Enhanced boundary timesteps with more points at beginning, middle and end
-    # Include more steps at the beginning to see the progression from pure signal
-    early_steps = [
-        tmin,
-        tmin + 1,
-        tmin + 2,
-        tmin + 3,
-        tmin + 10,
-        tmin + 20,
-        tmin + 50,
-        tmin + 100,
-        tmin + 200,
-    ]
-
-    # Include steps in the middle to see the transition
-    middle_steps = [tmax // 4, tmax // 3, tmax // 2, 2 * tmax // 3, 3 * tmax // 4]
-
-    # Include more steps at the end to see the progression to pure noise
-    late_steps = [
-        tmax - 200,
-        tmax - 100,
-        tmax - 50,
-        tmax - 20,
-        tmax - 10,
-        tmax - 3,
-        tmax - 2,
-        tmax - 1,
-        tmax,
-    ]
-
-    # Combine all steps and remove duplicates
-    boundary_steps = sorted(list(set(early_steps + middle_steps + late_steps)))
-
-    return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
 
 
 # ==================== Plotting Functions ====================
@@ -408,160 +400,225 @@ def plot_forward_diffusion_sample(
         plt.show()
 
 
-# Signal Noise Ratio
-def plot_signal_noise_ratio(
+# Sample Evolution through Timesteps
+def plot_sample_evolution(
+    forward_diff: ForwardDiffusion,
     results: ForwardDiffusionResults,
-    x0: Optional[Tensor] = None,
+    x0: Tensor,
+    timesteps: Optional[List[int]] = None,
     save_dir: Optional[Union[str, Path]] = None,
-    verbose: bool = True,
 ) -> None:
     """
-    Plot signal-to-noise ratio and other metrics across timesteps.
+    Plot how a sample evolves through forward diffusion timesteps.
+
+    Layout: Time progresses down rows, components across columns
+    - Column 1: Original sample x₀ (always the same)
+    - Column 2: Added noise ε at each timestep
+    - Column 3: Resulting noisy sample x_t
 
     Args:
+        forward_diff: ForwardDiffusion instance
         results: Results from run_forward_process
-        x0: Original clean sample [batch_size, channels, seq_length]
-        save_dir: Directory to save the plot (if None, display plot)
-        verbose: Whether to print additional information
+        x0: Original clean sample
+        timesteps: Timesteps to visualize (default: all available)
+        save_dir: Save directory (default: display plot)
     """
-    # Sort timesteps
-    timesteps = sorted(results.keys())
-
-    # Add t=0 (pure signal) to the visualization
-    # For t=0, we have 100% signal and 0% noise
-    all_timesteps = [0] + timesteps
-
-    # For t=0, SNR is theoretically infinite, but we'll use a large value for visualization
-    # For signal and noise percentages, t=0 is 100% signal, 0% noise
-    snrs = [1000.0] + [results[t]["snr"] for t in timesteps]
-    signal_percentages = [100.0] + [results[t]["signal_percentage"] for t in timesteps]
-    noise_percentages = [0.0] + [results[t]["noise_percentage"] for t in timesteps]
-
-    # Print numerical values for comparison, especially near t=1000
-    if verbose:
-        print("\nTimesteps for visualization:")
-        print(f"  All timesteps: {all_timesteps}")
-        print(f"  Signal percentages: {[round(p, 1) for p in signal_percentages]}")
-        print(f"  Noise percentages: {[round(p, 1) for p in noise_percentages]}")
-
-        # Print detailed comparison between t=0 and t=1
-        print("\nComparison between t=0 (pure signal) and t=1 (first diffusion step):")
-        print(
-            f"  t=0: Signal={signal_percentages[0]:.2f}%, Noise={noise_percentages[0]:.2f}%, SNR={snrs[0]:.2f}"
-        )
-        print(
-            f"  t=1: Signal={signal_percentages[1]:.2f}%, Noise={noise_percentages[1]:.2f}%, SNR={snrs[1]:.2f}"
-        )
-        print(
-            f"  Difference: Signal={signal_percentages[0]-signal_percentages[1]:.2f}%, Noise={noise_percentages[1]-noise_percentages[0]:.2f}%, SNR={snrs[0]-snrs[1]:.2f}"
-        )
-
-        # Print values for the last few timesteps to examine the drop near t=1000
-        print("\nValues for the last few timesteps:")
-        last_indices = [-5, -4, -3, -2, -1]  # Last 5 timesteps
-        for i in last_indices:
-            t = all_timesteps[i]
-            print(
-                f"  t={t}: Signal={signal_percentages[i]:.4f}%, Noise={noise_percentages[i]:.4f}%, SNR={snrs[i]:.6f}"
-            )
-
-    # Create figure with subplots
-    if x0 is not None:
-        fig, axs = plt.subplots(3, 1, figsize=(10, 16))
+    # Get timesteps to plot
+    if timesteps is None:
+        timesteps = sorted(results.keys())
     else:
-        fig, axs = plt.subplots(2, 1, figsize=(10, 12))
+        timesteps = [t for t in timesteps if t in results]
 
-    # Plot SNR
-    axs[0].plot(all_timesteps, snrs, "b-", marker="o")
-    axs[0].set_title("Signal-to-Noise Ratio (SNR) vs. Timestep")
-    axs[0].set_xlabel("Timestep")
-    axs[0].set_ylabel("SNR")
-    axs[0].set_yscale("log")  # Log scale for better visualization
-    axs[0].grid(True)
+    if not timesteps:
+        print("No valid timesteps found.")
+        return
 
-    # Add vertical line at t=1 to highlight difference between t=0 and t=1
-    axs[0].axvline(
-        x=1, color="r", linestyle="--", alpha=0.7, label="t=1 (First diffusion step)"
-    )
+    # Prepare original sample
+    x0_np = x0.squeeze().detach().cpu().numpy()
+    if x0_np.ndim == 0:
+        x0_np = np.array([x0_np])
 
-    # Highlight t=0 and t=1 points
-    axs[0].plot(0, snrs[0], "ro", markersize=8, label="t=0 (Pure signal)")
-    axs[0].plot(1, snrs[1], "go", markersize=8, label="t=1")
+    n_timesteps = len(timesteps)
+    # Layout: n_timesteps rows × 3 columns (original, noise, noisy)
+    fig, axes = plt.subplots(n_timesteps, 3, figsize=(12, 2.5 * n_timesteps))
 
-    # Set x-axis limits
-    axs[0].set_xlim(-5, max(all_timesteps) + 5)  # Add some padding
+    # Handle single timestep case
+    if n_timesteps == 1:
+        axes = axes.reshape(1, 3)
 
-    # Add legend
-    axs[0].legend()
+    # Get consistent y-axis limits
+    all_values = [x0_np]
+    for t in timesteps:
+        x_t = results[t]["x_t"].squeeze().detach().cpu().numpy()
+        noise = results[t]["noise"].squeeze().detach().cpu().numpy()
+        if x_t.ndim == 0:
+            x_t = np.array([x_t])
+        if noise.ndim == 0:
+            noise = np.array([noise])
+        all_values.extend([x_t, noise])
 
-    # Plot signal and noise percentages
-    axs[1].stackplot(
-        all_timesteps,
-        signal_percentages,
-        noise_percentages,
-        labels=["Signal %", "Noise %"],
-        alpha=0.7,
-    )
+    y_min = min(np.min(vals) for vals in all_values)
+    y_max = max(np.max(vals) for vals in all_values)
+    y_range = y_max - y_min
+    y_min -= 0.1 * y_range
+    y_max += 0.1 * y_range
 
-    # Use consistent x-axis limits with the first plot
-    axs[1].set_xlim(-5, max(all_timesteps) + 5)  # Same padding as first plot
+    # Plot each timestep (rows)
+    for i, t in enumerate(timesteps):
+        # Get data
+        x_t = results[t]["x_t"].squeeze().detach().cpu().numpy()
+        noise = results[t]["noise"].squeeze().detach().cpu().numpy()
+        snr = results[t]["snr"]
 
-    # Add vertical line at t=1 in the second plot as well
-    axs[1].axvline(
-        x=1, color="r", linestyle="--", alpha=0.7, label="t=1 (First diffusion step)"
-    )
+        if x_t.ndim == 0:
+            x_t = np.array([x_t])
+        if noise.ndim == 0:
+            noise = np.array([noise])
 
-    # Highlight t=0 and t=1 points
-    axs[1].plot(0, signal_percentages[0], "ro", markersize=8, label="t=0 (Pure signal)")
-    axs[1].plot(1, signal_percentages[1], "go", markersize=8, label="t=1")
+        # Column 1: Original sample
+        axes[i, 0].plot(x0_np, "b-", linewidth=1.5)
+        axes[i, 0].set_ylim(y_min, y_max)
+        axes[i, 0].grid(True, alpha=0.3)
+        if i == 0:
+            axes[i, 0].set_title("Original x₀", fontsize=12)
 
-    axs[1].set_title("Signal and Noise Percentage vs. Timestep")
-    axs[1].set_xlabel("Timestep")
-    axs[1].set_ylabel("Percentage (%)")
-    axs[1].set_ylim(0, 100)
-    axs[1].legend()
-    axs[1].grid(True)
+        # Column 2: Added noise
+        axes[i, 1].plot(noise, "r-", linewidth=1.5)
+        axes[i, 1].set_ylim(y_min, y_max)
+        axes[i, 1].grid(True, alpha=0.3)
+        if i == 0:
+            axes[i, 1].set_title("Added Noise ε", fontsize=12)
 
-    # Plot sample progression if x0 is provided
-    if x0 is not None:
-        # Get original sample
-        # Handle dimensions: squeeze unnecessary dimensions and convert to numpy
-        x0_np = x0.squeeze().detach().cpu().numpy()
+        # Column 3: Noisy sample
+        axes[i, 2].plot(x_t, "g-", linewidth=1.5)
+        axes[i, 2].set_ylim(y_min, y_max)
+        axes[i, 2].grid(True, alpha=0.3)
+        if i == 0:
+            axes[i, 2].set_title("Noisy Sample x_t", fontsize=12)
 
-        # Ensure x0_np is at least 1D
-        if x0_np.ndim == 0:
-            x0_np = np.array([x0_np])
+        # Add timestep and SNR info on the left
+        axes[i, 0].set_ylabel(f"t={t}\nSNR={snr:.2f}", fontsize=10)
 
-        # Plot original sample
-        axs[2].plot(x0_np, "b-", label="Original (t=0)")
+        # Add x-axis label only for bottom row
+        if i == n_timesteps - 1:
+            for col in range(3):
+                axes[i, col].set_xlabel("Position")
 
-        # Plot a few key timesteps
-        key_timesteps = [
-            min(timesteps),
-            timesteps[len(timesteps) // 4],
-            timesteps[len(timesteps) // 2],
-            timesteps[3 * len(timesteps) // 4],
-            max(timesteps),
-        ]
+    plt.suptitle("Sample Evolution Through Forward Diffusion", fontsize=14)
+    plt.tight_layout()
 
-        for t in key_timesteps:
-            x_t_np = results[t]["x_t"].squeeze().detach().cpu().numpy()
-            if x_t_np.ndim == 0:
-                x_t_np = np.array([x_t_np])
-            axs[2].plot(x_t_np, alpha=0.7, label=f"t={t}")
-
-        axs[2].set_title("Sample Progression at Key Timesteps")
-        axs[2].set_xlabel("Position")
-        axs[2].set_ylabel("Value")
-        axs[2].legend()
-        axs[2].grid(True)
-
-    fig.tight_layout(pad=0.5)
-
+    # Save or show
     if save_dir:
         save_path = Path(save_dir)
         save_path.mkdir(exist_ok=True, parents=True)
-        fig.savefig(save_path / "signal_noise_ratio.png", dpi=300)
+        plt.savefig(save_path / "sample_evolution.png", dpi=300, bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
+
+
+# Signal Noise Ratio (SNR)
+def plot_snr(
+    forward_diff: ForwardDiffusion,
+    results: ForwardDiffusionResults,
+    save_dir: Optional[Union[str, Path]] = None,
+    verbose: bool = False,
+) -> None:
+    """
+    Plot a simplified view of signal-to-noise ratio during forward diffusion.
+
+    This function focuses on clearly showing how SNR changes as noise is added
+    during the forward diffusion process, comparing actual measured values with theoretical
+    values from the noise schedule.
+
+    Args:
+        forward_diff: ForwardDiffusion instance for theoretical values
+        results: Results from run_forward_process for actual values
+        save_dir: Directory to save the plot (if None, display plot)
+        verbose: Whether to print additional information
+    """
+    # Sort timesteps (t=1 to T)
+    timesteps = sorted(results.keys())
+
+    # Calculate theoretical SNR for all timesteps using proper indexing
+    # Get the number of diffusion steps from the length of the alphas array
+    num_steps = len(forward_diff.alphas)
+    # Get device from one of the tensors
+    device = forward_diff.alphas.device
+    t_tensor = torch.arange(0, num_steps + 1, device=device)
+    alpha_bar_values = forward_diff.alpha_bar(t_tensor).cpu().numpy()
+
+    # Calculate theoretical SNR: α_bar_t / (1-α_bar_t)
+    # For t=0, SNR is infinite (set to a large value for visualization)
+    theoretical_snr = np.zeros_like(alpha_bar_values)
+    theoretical_snr[0] = 1000.0  # Large value for t=0
+    theoretical_snr[1:] = alpha_bar_values[1:] / (
+        1 - alpha_bar_values[1:] + 1e-8
+    )  # Add epsilon for numerical stability
+
+    # Prepare actual SNR values from results
+    actual_timesteps = [0] + timesteps  # Include t=0
+    actual_snr = [1000.0]  # t=0 SNR (infinite, set to large value)
+
+    for t in timesteps:
+        actual_snr.append(results[t]["snr"])
+
+    # Print comparison if verbose
+    if verbose:
+        print("\nSNR Comparison (Theoretical vs Actual):")
+        for i, t in enumerate(actual_timesteps):
+            if t == 0:
+                print(f"  t={t}: Theoretical=∞, Actual=∞ (pure signal)")
+            else:
+                theo_snr = theoretical_snr[t]
+                act_snr = actual_snr[i]
+                print(
+                    f"  t={t}: Theoretical={theo_snr:.4f}, Actual={act_snr:.4f}, Diff={act_snr-theo_snr:.4f}"
+                )
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot theoretical SNR curve
+    t_values = np.arange(0, num_steps + 1)
+    ax.plot(
+        t_values, theoretical_snr, "b-", alpha=0.7, linewidth=2, label="Theoretical SNR"
+    )
+
+    # Plot actual SNR points
+    ax.plot(actual_timesteps, actual_snr, "ro", markersize=6, label="Measured SNR")
+
+    # Enhance plot appearance
+    ax.set_title("Signal-to-Noise Ratio During Forward Diffusion", fontsize=14)
+    ax.set_xlabel("Timestep (t)", fontsize=12)
+    ax.set_ylabel("SNR (log scale)", fontsize=12)
+    ax.set_yscale("log")  # Log scale for better visualization
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=12)
+
+    # Add annotations for key timesteps
+    for i, t in enumerate([1, num_steps // 2, num_steps]):
+        if t in actual_timesteps:
+            idx = actual_timesteps.index(t)
+            snr_val = actual_snr[idx]
+            ax.annotate(
+                f"t={t}\nSNR={snr_val:.2f}",
+                xy=(t, snr_val),
+                xytext=(10, 10 if i % 2 == 0 else -30),
+                textcoords="offset points",
+                arrowprops=dict(arrowstyle="->", connectionstyle="arc3,rad=.2"),
+            )
+
+    # Set appropriate limits
+    ax.set_xlim(-5, num_steps + 5)
+
+    plt.tight_layout()
+
+    # Save or show the plot
+    if save_dir:
+        save_path = Path(save_dir)
+        save_path.mkdir(exist_ok=True, parents=True)
+        plt.savefig(save_path / "snr_plot.png", dpi=300)
         plt.close()
     else:
         plt.show()
@@ -590,66 +647,99 @@ def plot_diffusion_parameters(
     sigma_ts = [results[t]["sigma_t"] for t in timesteps]
     beta_ts = [results[t]["beta_t"] for t in timesteps]
 
-    # Create figure with subplots
+    # Create figure
+    fig = plt.figure(figsize=(12, 8))
+    gs = fig.add_gridspec(2, 3)
+
+    # Create time arrays for different parameters
+    # Note: beta and alpha are defined for t=1 to T
+    #       alpha_bar and sigma are defined for t=0 to T
+    t_diff = np.array(timesteps)  # t=1 to T for beta, alpha
+    t_cumul = np.array([0] + timesteps)  # t=0 to T for alpha_bar, sigma
+
+    # Main parameter plot (spans two columns)
+    ax_main = fig.add_subplot(gs[0, :2])
+    lines = []
+    # Plot parameters with distinct styles (only for t≥1)
+    l1 = ax_main.plot(
+        t_diff, beta_ts, "b-", marker="o", markersize=4, label="β (noise)"
+    )
+    l2 = ax_main.plot(
+        t_diff, alpha_ts, "g-", marker="s", markersize=4, label="α (signal)"
+    )
+    lines.extend([l1[0], l2[0]])
+    ax_main.set_xlabel("Timestep (t)")
+    ax_main.set_ylabel("Parameter Value")
+    ax_main.grid(True)
+    ax_main.set_title("Diffusion Parameters Evolution (t=1→T)", pad=10)
+
+    # Alpha bar plot (log scale)
+    ax_alpha = fig.add_subplot(gs[0, 2])
+    # For alpha_bar, include t=0 value (=1.0) and t=1 to T values
+    alpha_bar_full = np.concatenate(([1.0], alpha_bar_ts))
+    l3 = ax_alpha.semilogy(
+        t_cumul, alpha_bar_full, "r-", marker="^", markersize=4, label="ᾱ (cumulative)"
+    )
+    lines.append(l3[0])
+    ax_alpha.set_xlabel("Timestep (t)")
+    ax_alpha.set_ylabel("ᾱ (log scale)")
+    ax_alpha.grid(True)
+    ax_alpha.set_title("Cumulative Signal (t=0→T)", pad=10)
+
+    # Sigma plot
+    ax_sigma = fig.add_subplot(gs[1, 0])
+    # For sigma, include t=0 value (=0.0) and t=1 to T values
+    sigma_full = np.concatenate(([0.0], sigma_ts))
+    l4 = ax_sigma.plot(
+        t_cumul, sigma_full, "m-", marker="x", markersize=4, label="σ (noise std)"
+    )
+    lines.append(l4[0])
+    ax_sigma.set_xlabel("Timestep (t)")
+    ax_sigma.set_ylabel("σ")
+    ax_sigma.grid(True)
+    ax_sigma.set_title("Noise Level (t=0→T)", pad=10)
+
+    # Sample progression if x0 is provided
     if x0 is not None:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 12))
-    else:
-        fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    # Plot parameters
-    ax1.plot(timesteps, alpha_ts, "b-", marker="o", markersize=4, label="α_t")
-    ax1.plot(timesteps, alpha_bar_ts, "g-", marker="s", markersize=4, label="ᾱ_t")
-    ax1.plot(timesteps, sigma_ts, "r-", marker="^", markersize=4, label="σ_t")
-    ax1.plot(timesteps, beta_ts, "c-", marker="x", markersize=4, label="β_t")
-
-    ax1.set_title("Diffusion Parameters vs. Timestep")
-    ax1.set_xlabel("Timestep")
-    ax1.set_ylabel("Parameter Value")
-    ax1.legend()
-    ax1.grid(True)
-
-    # Plot sample progression if x0 is provided
-    if x0 is not None:
-        # Get original sample
+        ax_sample = fig.add_subplot(gs[1, 1:])
         x0_np = x0[0].squeeze().detach().cpu().numpy()
-
-        # Ensure x0_np is at least 1D
         if x0_np.ndim == 0:
             x0_np = np.array([x0_np])
 
-        # Plot original sample
-        ax2.plot(x0_np, "b-", label="Original (t=0)")
-
-        # Plot samples at key parameter values
-        key_timesteps = [
-            min(timesteps),
-            timesteps[len(timesteps) // 4],
-            timesteps[len(timesteps) // 2],
-            timesteps[3 * len(timesteps) // 4],
-            max(timesteps),
-        ]
-
-        for t in key_timesteps:
+        # Plot original and key samples
+        ax_sample.plot(x0_np, "k-", label="Original", alpha=0.8)
+        key_ts = [min(timesteps), timesteps[len(timesteps) // 2], max(timesteps)]
+        for t in key_ts:
             if t in results:
-                x_t_np = results[t]["x_t"].squeeze().detach().cpu().numpy()
-                if x_t_np.ndim == 0:
-                    x_t_np = np.array([x_t_np])
-                ax2.plot(
-                    x_t_np, alpha=0.7, label=f't={t}, α_t={results[t]["alpha_t"]:.4f}'
-                )
+                x_t = results[t]["x_t"].squeeze().detach().cpu().numpy()
+                if x_t.ndim == 0:
+                    x_t = np.array([x_t])
+                ax_sample.plot(x_t, alpha=0.6, label=f"t={t}")
+        ax_sample.set_title("Sample Evolution", pad=10)
+        ax_sample.set_xlabel("Position")
+        ax_sample.set_ylabel("Value")
+        ax_sample.legend()
+        ax_sample.grid(True)
 
-        ax2.set_title("Sample Progression with Diffusion Parameters")
-        ax2.set_xlabel("Position")
-        ax2.set_ylabel("Value")
-        ax2.legend()
-        ax2.grid(True)
+    # Create a unified legend for all parameters
+    fig.legend(
+        lines,
+        [l.get_label() for l in lines],
+        loc="center right",
+        bbox_to_anchor=(0.98, 0.5),
+    )
 
-    fig.tight_layout(pad=0.5)
+    # Adjust layout
+    plt.tight_layout()
+    # Make room for the unified legend
+    plt.subplots_adjust(right=0.85)
 
     if save_dir:
         save_path = Path(save_dir)
         save_path.mkdir(exist_ok=True, parents=True)
-        fig.savefig(save_path / "diffusion_parameters.png", dpi=300)
+        fig.savefig(
+            save_path / "diffusion_parameters.png", dpi=300, bbox_inches="tight"
+        )
         plt.close()
     else:
         plt.show()

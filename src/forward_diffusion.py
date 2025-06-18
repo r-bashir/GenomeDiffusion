@@ -214,7 +214,7 @@ class ForwardDiffusion:
                 - The returned values are on the same device as the internal tensors
         """
         # Ensure t is within valid range
-        t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # t = torch.clamp(t, min=self.tmin, max=self.tmax)
 
         # Move betas to the same device as t before indexing
         device = t.device
@@ -239,7 +239,7 @@ class ForwardDiffusion:
                 - The returned values are on the same device as the internal tensors
         """
         # Ensure t is within valid range
-        t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # t = torch.clamp(t, min=self.tmin, max=self.tmax)
 
         # Move alphas to the same device as t before indexing
         device = t.device
@@ -265,7 +265,7 @@ class ForwardDiffusion:
                 - The returned values are on the same device as the internal tensors
         """
         # Ensure t is within valid range (note: valid range includes 0 for alpha_bar)
-        t = torch.clamp(t, min=0, max=self.tmax)
+        # t = torch.clamp(t, min=0, max=self.tmax)
 
         # Move alphas_bar to the same device as t before indexing
         device = t.device
@@ -290,7 +290,7 @@ class ForwardDiffusion:
                 - The returned values are on the same device as the internal tensors
         """
         # Ensure t is within valid range (note: valid range includes 0 for sigma)
-        t = torch.clamp(t, min=0, max=self.tmax)
+        # t = torch.clamp(t, min=0, max=self.tmax)
 
         # Move sigmas to the same device as t before indexing
         device = t.device

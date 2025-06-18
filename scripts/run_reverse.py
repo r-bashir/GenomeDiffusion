@@ -32,7 +32,7 @@ from utils.reverse_utils import (
     run_reverse_process,
     visualize_diffusion_process_heatmap,
     visualize_diffusion_process_lineplot,
-    visualize_superimposed_comparison,
+    visualize_diffusion_process_superimposed,
 )
 
 # Set global device
@@ -101,8 +101,7 @@ def main():
 
     # ===================== Run Reverse Diffusion =====================
     # Generate timesteps for analysis
-    tmin = model.forward_diffusion.tmin
-    tmax = model.forward_diffusion.tmax
+    tmin, tmax = model.forward_diffusion.tmin, model.forward_diffusion.tmax
     print(f"\nGenerating timesteps between {tmin} to {tmax}.")
     timestep_sets = generate_timesteps(tmin, tmax)
 
@@ -116,20 +115,21 @@ def main():
         verbose=False,
     )
 
-    # Print statistics for key timesteps
-    print("Statistics for key timesteps...")
-    key_timesteps = [tmin, tmin + 1, tmax // 2, tmax - 1, tmax]
-    print_reverse_statistics(boundary_results, key_timesteps)
+    # Print statistics for boundary timesteps
+    print(f"\nStatistics for boundary timesteps: {timestep_sets['boundary']}")
+    print_reverse_statistics(boundary_results, timestep_sets["boundary"])
 
-    # Plots with boundary timesteps
-    print("\nPlots with boundary timesteps...")
+    # Diffusion evolution with key timesteps
+    key_timesteps = [1, 2, 500, 998, 999, 1000]
+    print(f"\nDiffusion evolution with key timesteps: {key_timesteps}")
+
     visualize_diffusion_process_heatmap(
         model=model,
         batch=x0,
         timesteps=key_timesteps,
         output_dir=output_dir,
+        sample_points=200,
     )
-
     visualize_diffusion_process_lineplot(
         model=model,
         batch=x0,
@@ -137,8 +137,7 @@ def main():
         output_dir=output_dir,
         sample_points=200,
     )
-
-    visualize_superimposed_comparison(
+    visualize_diffusion_process_superimposed(
         model=model,
         batch=x0,
         timesteps=key_timesteps,

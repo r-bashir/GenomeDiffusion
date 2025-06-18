@@ -28,13 +28,17 @@ sys.path.append(str(project_root))
 import torch
 
 from scripts.utils.forward_utils import (
-    create_animation_frames,
     generate_timesteps,
     plot_diffusion_parameters,
-    plot_forward_diffusion_sample,
-    plot_signal_noise_ratio,
+    plot_sample_evolution,
+    plot_snr,
     print_forward_statistics,
     run_forward_process,
+)
+from scripts.utils.schedule_utils import (
+    analyze_schedule_parameters,
+    compare_schedule_parameters,
+    print_parameter_comparison,
 )
 from src.dataset import SNPDataset
 from src.forward_diffusion import ForwardDiffusion
@@ -108,24 +112,43 @@ def main():
     print(f"Sample unique values: {torch.unique(x0)}")
     print(f"First 10 values: {x0[0, 0, :10]}")
 
-    # Run forward diffusion process
-    print("\nInitializing forward diffusion model...")
-    forward_diff = ForwardDiffusion(
+    # ===================== Analyze Schedules =====================
+    print("\nAnalyzing diffusion schedules...")
+
+    # Analyze linear schedule
+    print("\nAnalyzing linear schedule...")
+    forward_diff_linear = ForwardDiffusion(
         diffusion_steps=config.get("diffusion", {}).get("timesteps", 1000),
         beta_start=config.get("diffusion", {}).get("beta_start", 0.0001),
         beta_end=config.get("diffusion", {}).get("beta_end", 0.02),
-        schedule_type=config.get("diffusion", {}).get("schedule_type", "cosine"),
+        schedule_type="linear",
         max_beta=config.get("diffusion", {}).get("max_beta", 0.999),
     )
+    forward_diff_linear = forward_diff_linear.to(device)
+    # analyze_schedule_parameters(forward_diff_linear, output_dir, schedule_type="linear")
 
-    # Move to GPU if available
-    forward_diff = forward_diff.to(device)
-    print(f"Using device: {device}")
+    # Analyze cosine schedule
+    print("\nAnalyzing cosine schedule...")
+    forward_diff_cosine = ForwardDiffusion(
+        diffusion_steps=config.get("diffusion", {}).get("timesteps", 1000),
+        beta_start=config.get("diffusion", {}).get("beta_start", 0.0001),
+        beta_end=config.get("diffusion", {}).get("beta_end", 0.02),
+        schedule_type="cosine",
+        max_beta=config.get("diffusion", {}).get("max_beta", 0.999),
+    )
+    forward_diff_cosine = forward_diff_cosine.to(device)
+    analyze_schedule_parameters(forward_diff_cosine, output_dir, schedule_type="cosine")
+
+    # Continue with the main analysis using the configured schedule
+    schedule_type = config.get("diffusion", {}).get("schedule_type", "cosine")
+    forward_diff = (
+        forward_diff_cosine if schedule_type == "cosine" else forward_diff_linear
+    )
+    print(f"\nContinuing analysis with {schedule_type} schedule...")
 
     # ===================== Run Forward Diffusion =====================
     # Generate timesteps for analysis
-    tmin = forward_diff.tmin
-    tmax = forward_diff.tmax
+    tmin, tmax = forward_diff.tmin, forward_diff.tmax
     print(f"\nGenerating timesteps between {tmin} to {tmax}.")
     timestep_sets = generate_timesteps(tmin, tmax)
 
@@ -135,42 +158,39 @@ def main():
         forward_diff, x0, timestep_sets["boundary"], verbose=False
     )
 
-    # Print statistics for key timesteps
-    print("Statistics for key timesteps...")
-    key_timesteps = [tmin, tmin + 1, tmax // 2, tmax - 1, tmax]
-    print_forward_statistics(boundary_results, key_timesteps)
+    # Print statistics for boundary timesteps
+    print(f"\nStatistics for boundary timesteps: {timestep_sets['boundary']}")
+    print_forward_statistics(boundary_results, timestep_sets["boundary"])
 
-    # Plots with boundary timesteps
-    print("\nPlots with boundary timesteps...")
-    plot_forward_diffusion_sample(boundary_results, x0=x0, save_dir=output_dir)
-    plot_signal_noise_ratio(
-        boundary_results, x0=None, save_dir=output_dir, verbose=False
+    # Compare schedule parameters with actual values
+    print("\nComparing schedule parameters...")
+    compare_schedule_parameters(
+        forward_diff, boundary_results, output_dir, schedule_type
     )
-    plot_diffusion_parameters(boundary_results, x0=None, save_dir=output_dir)
 
-    # Additional plots
-    additional_plots = False
-    if additional_plots:
-        print("\nExtra plots...")
+    # Print parameter comparison
+    print("\nParameter comparison...")
+    print_parameter_comparison(
+        forward_diff, boundary_results, timestep_sets["boundary"]
+    )
 
-        # Create animation frames
-        print("\nAnimation frames...")
-        create_animation_frames(x0, boundary_results, save_dir=output_dir)
+    # Plot signal noise ratio
+    print("\nSignal noise ratio (SNR)...")
+    plot_snr(forward_diff, boundary_results, save_dir=output_dir, verbose=False)
 
-        # Also run forward process with logarithmic timesteps for more comprehensive analysis
-        print("\nLogarithmic timesteps...")
-        log_results = run_forward_process(
-            forward_diff, x0, timestep_sets["log"], verbose=False
-        )
+    # Plot diffusion superposition
+    print("\nSample evolution through timesteps...")
+    plot_sample_evolution(
+        forward_diff,
+        boundary_results,
+        x0,
+        timesteps=[1, 2, 500, 999, 1000],
+        save_dir=output_dir,
+    )
 
-        # Save results to output directory
-        log_output_dir = output_dir / "log_timesteps"
-        log_output_dir.mkdir(exist_ok=True, parents=True)
-        plot_forward_diffusion_sample(log_results, x0, save_dir=log_output_dir)
-        plot_signal_noise_ratio(
-            log_results, x0=x0, save_dir=log_output_dir, verbose=False
-        )
-        plot_diffusion_parameters(log_results, x0=x0, save_dir=log_output_dir)
+    # Plot diffusion parameters
+    print("\nDiffusion parameters...")
+    plot_diffusion_parameters(boundary_results, x0, save_dir=output_dir)
 
     print("\nForward diffusion complete!")
     print(f"Results saved to: {output_dir}")
