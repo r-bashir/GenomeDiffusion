@@ -1,5 +1,5 @@
 # Project name
-project_name: "XYZ"
+project_name: "LinDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -29,9 +29,9 @@ diffusion:
   timesteps: 1000              # Diffusion steps, should match tmax?
   beta_start: 0.0001           # Start value for linear beta scheduler
   beta_end: 0.02               # End value for linear beta scheduler
-  max_beta: 0.90               # Maximum value for cosine beta scheduler
+  max_beta: 0.999              # Maximum value for cosine beta scheduler
   schedule_type: "cosine"      # Schedule type (linear/cosine)
-  denoise_step: 10
+  denoise_step: 1
   discretize: False
 
 # UNet1D
@@ -39,8 +39,8 @@ unet:
   embedding_dim: 128           # Reduced from 128
   dim_mults: [1, 2, 4, 8]      # Reduced from [1, 2, 4, 8]
   channels: 1
-  with_time_emb: true
-  with_pos_emb: true
+  with_time_emb: false
+  with_pos_emb: false
   resnet_block_groups: 8
 
 # Training

@@ -199,6 +199,13 @@ class ForwardDiffusion:
         return self
 
     # ====================== Methods ======================
+    def _check_timestep(self, t: torch.Tensor) -> None:
+        """Ensure t is within valid bounds [1, diffusion_steps]."""
+        if torch.any(t < 1) or torch.any(t > self._diffusion_steps):
+            raise ValueError(
+                f"Timestep t={t} out of valid range [1, {self._diffusion_steps}]"
+            )
+
     def beta(self, t: torch.Tensor) -> torch.Tensor:
         """Retrieves β_t for the given timesteps.
 
@@ -213,8 +220,8 @@ class ForwardDiffusion:
                 - t=1 corresponds to the first diffusion step (β_1)
                 - The returned values are on the same device as the internal tensors
         """
-        # Ensure t is within valid range
-        # t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # Check if t is within valid range
+        self._check_timestep(t)
 
         # Move betas to the same device as t before indexing
         device = t.device
@@ -238,8 +245,8 @@ class ForwardDiffusion:
                 - t=1 corresponds to the first diffusion step (β_1)
                 - The returned values are on the same device as the internal tensors
         """
-        # Ensure t is within valid range
-        # t = torch.clamp(t, min=self.tmin, max=self.tmax)
+        # Check if t is within valid range
+        self._check_timestep(t)
 
         # Move alphas to the same device as t before indexing
         device = t.device
@@ -264,8 +271,8 @@ class ForwardDiffusion:
                 - t=1 corresponds to the first diffusion step (ᾱ_1 = α_1)
                 - The returned values are on the same device as the internal tensors
         """
-        # Ensure t is within valid range (note: valid range includes 0 for alpha_bar)
-        # t = torch.clamp(t, min=0, max=self.tmax)
+        # Check if t is within valid range
+        self._check_timestep(t)
 
         # Move alphas_bar to the same device as t before indexing
         device = t.device
@@ -275,7 +282,7 @@ class ForwardDiffusion:
         return alphas_bar[t.long()]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
-        """Retrieves σ_t = sqrt(1-ᾱ_t) for the given timesteps.
+        """Retrieves σ_t = √(1-ᾱ_t) for the given timesteps.
 
         The σ_t values represent the standard deviation of the noise added at each timestep.
 
@@ -284,13 +291,13 @@ class ForwardDiffusion:
 
         Returns:
             torch.Tensor: σ_t values of shape (batch_size,), where:
-                - For timestep t, returns σ_t = sqrt(1-ᾱ_t)
+                - For timestep t, returns σ_t = √(1-ᾱ_t)
                 - t=0 corresponds to the original data (σ_0 = 0.0)
-                - t=1 corresponds to the first diffusion step (σ_1 = sqrt(1-ᾱ_1))
+                - t=1 corresponds to the first diffusion step (σ_1 = √(1-ᾱ_1))
                 - The returned values are on the same device as the internal tensors
         """
-        # Ensure t is within valid range (note: valid range includes 0 for sigma)
-        # t = torch.clamp(t, min=0, max=self.tmax)
+        # Check if t is within valid range
+        self._check_timestep(t)
 
         # Move sigmas to the same device as t before indexing
         device = t.device
@@ -393,7 +400,7 @@ class ForwardDiffusion:
         steps = timesteps + 1
 
         # Generate linearly spaced values from 0 to steps
-        x = np.linspace(0, steps, steps)
+        x = np.linspace(0, timesteps, steps)  # <-- FIXED LINE
 
         # Compute alphas_cumprod using cosine function
         alphas_cumprod = np.cos(((x / steps) + s) / (1 + s) * np.pi * 0.5) ** 2

@@ -141,6 +141,19 @@ class TestForwardDiffusion(unittest.TestCase):
             )
         )
 
+    def test_invalid_timesteps(self):
+        """Test that invalid timesteps raise appropriate errors."""
+        for invalid_t in [0, self.diffusion_steps + 1]:
+            t = torch.tensor([invalid_t])
+            for fn in [
+                self.forward_diff.beta,
+                self.forward_diff.alpha,
+                self.forward_diff.alpha_bar,
+                self.forward_diff.sigma,
+            ]:
+                with self.assertRaises(ValueError):
+                    _ = fn(t)
+
 
 if __name__ == "__main__":
     unittest.main()

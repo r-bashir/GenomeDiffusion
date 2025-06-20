@@ -582,9 +582,8 @@ def visualize_diffusion_process_lineplot(
         # 5. Denoised Sample
         axes[i, 4].plot(x_axis, x_t_minus_1_vis, "c-", linewidth=1)
         # Special case for t=1000: set wider y-axis limits for denoised sample
-        if t == 1000:
-            axes[i, 4].set_ylim(-80, 80)
-        # axes[i, 4].set_ylim(-3, 3)
+        if t == 999 or t == 1000:
+            axes[i, 4].set_ylim(-6, 6)
 
         # Add timestep label
         axes[i, 0].set_ylabel(f"t={t}")
@@ -646,9 +645,8 @@ def visualize_diffusion_process_superimposed(
         axes[i].set_title(f"t={t}")
         axes[i].legend(fontsize=10)
         # Special case for t=1000: set wider y-axis limits for denoised sample
-        if t == 1000:
-            axes[i].set_ylim(-80, 80)
-        # axes[i].set_ylim(-3, 3)
+        if t == 999 or t == 1000:
+            axes[i].set_ylim(-6, 6)
         axes[i].grid(True, alpha=0.3)
 
         # Calculate and add metrics annotation
