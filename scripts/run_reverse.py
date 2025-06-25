@@ -23,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # ruff: noqa: E402
 
 from src import DiffusionModel
-from src.utils import set_seed
+from src.utils import set_seed, setup_logging
 from utils.reverse_utils import (
     generate_timesteps,
     plot_diffusion_metrics,
@@ -54,15 +54,19 @@ def parse_args():
 
 
 def main():
-    # Set global seed for reproducibility
-    set_seed(42)
-
     # Parse Arguments
     args = parse_args()
 
+    # Setup logging
+    logger = setup_logging(name="reverse")
+    logger.info("Starting run_reverse script.")
+
+    # Set global seed
+    set_seed(seed=42)
+
     try:
         # Load the model from checkpoint
-        print(f"\nLoading model from checkpoint: {args.checkpoint}")
+        logger.info(f"Loading model from checkpoint: {args.checkpoint}")
         model = DiffusionModel.load_from_checkpoint(
             args.checkpoint,
             map_location=device,
@@ -74,9 +78,9 @@ def main():
         model = model.to(device)
         model.eval()
 
-        print(f"Model loaded successfully from checkpoint on {device}")
-        print("Model config loaded from checkpoint:\n")
-        print(config)
+        logger.info("Model loaded successfully from checkpoint on {device}")
+        logger.info("Model config loaded from checkpoint:")
+        print(f"\n{config}\n")
 
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
@@ -86,60 +90,59 @@ def main():
     base_dir = checkpoint_path.parent.parent
     output_dir = base_dir / "reverse_diffusion"
     output_dir.mkdir(exist_ok=True)
-    print(f"\nResults will be saved to: {output_dir}")
 
     # Load Dataset (Test)
-    print("\nLoading test dataset...")
+    logger.info("Loading test dataset...")
     model.setup("test")
     test_loader = model.test_dataloader()
 
     # Prepare Batch
-    print("Preparing a batch of test data...")
+    logger.info("Preparing a batch of test data...")
     x0 = next(iter(test_loader)).to(device)
     x0 = x0.unsqueeze(1)  # Add channel dimension
-    print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
+    logger.info(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
     # ===================== Run Reverse Diffusion =====================
     # Generate timesteps for analysis
     tmin, tmax = model.forward_diffusion.tmin, model.forward_diffusion.tmax
-    print(f"\nGenerating timesteps between {tmin} to {tmax}.")
+    logger.info(f"Generating timesteps between {tmin} to {tmax}.")
     timestep_sets = generate_timesteps(tmin, tmax)
 
+    # Select timesteps for analysis
+    timesteps = timestep_sets["boundary"]
+    logger.info(f"Selected timesteps: {timesteps}")
+
     # Run reverse diffusion process with boundary timesteps
-    print("Reverse diffusion process with boundary timesteps...")
-    boundary_results = run_reverse_process(
+    logger.info("Reverse diffusion process with boundary timesteps...")
+    results = run_reverse_process(
         model=model,
         x0=x0,
+        timesteps=timesteps,
         num_samples=args.num_samples,
-        timesteps=timestep_sets["boundary"],
-        verbose=False,
     )
 
     # Print statistics for boundary timesteps
-    print(f"\nStatistics for boundary timesteps: {timestep_sets['boundary']}")
-    print_reverse_statistics(boundary_results, timestep_sets["boundary"])
+    logger.info(f"Statistics for boundary timesteps: {timesteps}")
+    print_reverse_statistics(results, timesteps)
 
     # Diffusion evolution with key timesteps
     key_timesteps = [1, 2, 500, 998, 999, 1000]
-    print(f"\nDiffusion evolution with key timesteps: {key_timesteps}")
+    logger.info(f"Diffusion evolution with key timesteps: {key_timesteps}")
 
     visualize_diffusion_process_heatmap(
-        model=model,
-        batch=x0,
+        results=results,
         timesteps=key_timesteps,
         output_dir=output_dir,
         sample_points=200,
     )
     visualize_diffusion_process_lineplot(
-        model=model,
-        batch=x0,
+        results=results,
         timesteps=key_timesteps,
         output_dir=output_dir,
         sample_points=200,
     )
     visualize_diffusion_process_superimposed(
-        model=model,
-        batch=x0,
+        results=results,
         timesteps=key_timesteps,
         output_dir=output_dir,
         sample_points=200,
@@ -148,16 +151,16 @@ def main():
     # Additional plots
     additional_plots = False
     if additional_plots:
-        print("\nExtra plots...")
+        logger.info("Extra plots...")
 
         # Create output directory for visualizations
         viz_dir = output_dir / "diffusion_analysis"
         viz_dir.mkdir(exist_ok=True, parents=True)
 
         # Extract metrics across timesteps
-        timesteps = sorted(boundary_results.keys())
-        mse_values = [boundary_results[t]["metrics"]["noise_mse"] for t in timesteps]
-        x0_diff_values = [boundary_results[t]["metrics"]["x0_diff"] for t in timesteps]
+        timesteps = sorted(results.keys())
+        mse_values = [results[t]["metrics"]["noise_mse"] for t in timesteps]
+        x0_diff_values = [results[t]["metrics"]["x0_diff"] for t in timesteps]
 
         # Print summary of results
         print("\n" + "=" * 70)
@@ -177,19 +180,19 @@ def main():
             timesteps[len(timesteps) // 2],
             max(timesteps),
         ]
-        print(f"\nGenerating visualizations for key timesteps: {key_timesteps}")
+        logger.info(f"Generating visualizations for key timesteps: {key_timesteps}")
 
         for t in key_timesteps:
             t_dir = viz_dir / f"timestep_{t}"
             t_dir.mkdir(exist_ok=True, parents=True)
-            plot_diffusion_results(boundary_results[t], save_dir=t_dir)
+            plot_diffusion_results(results[t], save_dir=t_dir)
 
         # Generate summary metrics plot across all timesteps
-        print("\nGenerating summary metrics plot across all timesteps")
-        plot_diffusion_metrics(boundary_results, save_dir=viz_dir)
+        logger.info("Generating summary metrics plot across all timesteps")
+        plot_diffusion_metrics(results, save_dir=viz_dir)
 
-    print("\nReverse diffusion complete!")
-    print(f"Results saved to: {output_dir}")
+    logger.info("Reverse diffusion complete!")
+    logger.info(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

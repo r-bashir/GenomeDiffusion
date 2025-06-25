@@ -11,7 +11,7 @@ from src.diffusion_model import DiffusionModel
 def get_dummy_config():
     return {
         "diffusion": {
-            "diffusion_steps": 10,
+            "time_steps": 10,
             "beta_start": 0.0001,
             "beta_end": 0.02,
             "schedule_type": "linear",

@@ -214,11 +214,10 @@ def main():
 
     # Forward Diffusion
     forward_diff = ForwardDiffusion(
-        diffusion_steps=config["diffusion"]["timesteps"],
+        time_steps=config["diffusion"]["timesteps"],
         beta_start=config["diffusion"]["beta_start"],
         beta_end=config["diffusion"]["beta_end"],
         schedule_type=config["diffusion"]["schedule_type"],
-        max_beta=config["diffusion"]["max_beta"],
     )
     forward_diff = forward_diff.to(device)
 

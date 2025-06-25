@@ -39,7 +39,7 @@ class TestForwardDiffusion(unittest.TestCase):
         """Set up test fixtures."""
         self.diffusion_steps = 1000
         self.forward_diff = ForwardDiffusion(
-            diffusion_steps=self.diffusion_steps,
+            time_steps=self.diffusion_steps,
             beta_start=0.0001,
             beta_end=0.02,
             schedule_type="cosine",
@@ -145,13 +145,18 @@ class TestForwardDiffusion(unittest.TestCase):
         """Test that invalid timesteps raise appropriate errors."""
         for invalid_t in [0, self.diffusion_steps + 1]:
             t = torch.tensor([invalid_t])
-            for fn in [
-                self.forward_diff.beta,
-                self.forward_diff.alpha,
-                self.forward_diff.alpha_bar,
-                self.forward_diff.sigma,
-            ]:
+            # beta and alpha should raise for both 0 and T+1
+            for fn in [self.forward_diff.beta, self.forward_diff.alpha]:
                 with self.assertRaises(ValueError):
+                    _ = fn(t)
+            # alpha_bar and sigma should only raise for T+1
+            if invalid_t == self.diffusion_steps + 1:
+                for fn in [self.forward_diff.alpha_bar, self.forward_diff.sigma]:
+                    with self.assertRaises(ValueError):
+                        _ = fn(t)
+            else:
+                for fn in [self.forward_diff.alpha_bar, self.forward_diff.sigma]:
+                    # Should NOT raise for t=0
                     _ = fn(t)
 
 

@@ -115,12 +115,12 @@ def generate_timesteps(tmin: int, tmax: int) -> TimestepDict:
     return {"log": log_steps, "linear": linear_steps, "boundary": boundary_steps}
 
 
+# Reverse Diffusion Process
 def run_reverse_process(
     model: DiffusionModel,
     x0: Tensor,
+    timesteps: List[int],
     num_samples: int = 10,
-    timesteps: Optional[List[int]] = None,
-    verbose: bool = True,
 ) -> ReverseDiffusionResults:
     """Run diffusion process analysis at specified timesteps.
 
@@ -138,49 +138,25 @@ def run_reverse_process(
     Returns:
         Dictionary mapping timesteps to their analysis results
     """
-    if timesteps is None:
-        # Use a subset of timesteps from tmin to tmax
-        tmin = model.forward_diffusion.tmin
-        tmax = model.forward_diffusion.tmax
-
-        # For diffusion analysis, we typically want fewer timesteps than noise analysis
-        # to avoid generating too many plots
-        step_size = max(1, (tmax - tmin) // 10)  # Aim for about 10 timesteps
-        timesteps = list(range(tmin, tmax + 1, step_size))
-
-        # Always include tmin and tmax
-        if tmin not in timesteps:
-            timesteps.insert(0, tmin)
-        if tmax not in timesteps:
-            timesteps.append(tmax)
 
     # Dictionary to store results for each timestep
     results: ReverseDiffusionResults = {}
 
-    if verbose:
-        print("\n" + "=" * 70)
-        print(f" STARTING DIFFUSION ANALYSIS (timesteps: {len(timesteps)}) ")
-        print("=" * 70)
-
     # Run diffusion analysis for each timestep
     for t in timesteps:
-        if verbose:
-            print(f"\nAnalyzing diffusion process at timestep {t}...")
 
         # Run reverse process at this timestep
-        results[t] = run_reverse_process_at_timestep(model, x0, num_samples, t)
-
-        if verbose:
-            print("\n" + "-" * 50 + "\n")
+        results[t] = run_reverse_step(model, x0, t, num_samples)
 
     return results
 
 
-def run_reverse_process_at_timestep(
+# Reverse Diffusion Step
+def run_reverse_step(
     model: DiffusionModel,
     x0: Tensor,
-    num_samples: int,
     timestep: int,
+    num_samples: int,
 ) -> ReverseDiffusionResults:
     """Test the diffusion process at a specific timestep.
 
@@ -229,7 +205,6 @@ def run_reverse_process_at_timestep(
 
         # Calculate metrics with scaled predicted noise
         noise_mse = F.mse_loss(scaled_pred_noise, noise).item()
-        weighted_mse = weighted_mse_loss(predicted_noise, noise, t_tensor, model)
         x0_diff = F.mse_loss(x_t_minus_1, x0_samples).item()
         noise_magnitude = torch.mean(torch.abs(noise)).item()
         pred_noise_magnitude = torch.mean(torch.abs(predicted_noise)).item()
@@ -246,11 +221,17 @@ def run_reverse_process_at_timestep(
         signal_to_noise = signal_power / (noise_power + 1e-8)
 
         # Compile metrics
+        # Compute alpha_bar_t and coef for diagnostics
+        t_tensor = torch.tensor([timestep], device=x0.device, dtype=torch.long)
+        alpha_bar_t = model.forward_diffusion.alpha_bar(t_tensor).item()
+        beta_t = model.forward_diffusion.beta(t_tensor).item()
+        coef = beta_t / np.sqrt(1.0 - alpha_bar_t + 1e-7)
         metrics = {
             "noise_mse": noise_mse,
-            "weighted_mse": weighted_mse,
             "x0_diff": x0_diff,
             "sigma_t": sigma_t,
+            "alpha_bar_t": alpha_bar_t,
+            "coef": coef,
             "noise_magnitude": noise_magnitude,
             "pred_noise_magnitude": pred_noise_magnitude,
             "signal_to_noise": signal_to_noise,
@@ -269,7 +250,7 @@ def run_reverse_process_at_timestep(
     }
 
 
-# ==================== Utility Functions ====================
+# Print Reverse Statistics
 def print_reverse_statistics(
     results: ReverseDiffusionResults, timesteps: Optional[List[int]] = None
 ) -> None:
@@ -290,8 +271,9 @@ def print_reverse_statistics(
         r = results[t]
         print(f"\nTimestep t = {t}:")
         print(f"- Sigma_t: {r['metrics']['sigma_t']:.8f}")
+        print(f"- Alpha_bar_t: {r['metrics']['alpha_bar_t']:.8f}")
+        print(f"- Coef (beta/sqrt(1-alpha_bar)): {r['metrics']['coef']:.8f}")
         print(f"- Noise MSE: {r['metrics']['noise_mse']:.8f}")
-        print(f"- Weighted MSE: {r['metrics']['weighted_mse']:.8f}")
         print(f"- Reconstruction MSE (x0 vs x_t-1): {r['metrics']['x0_diff']:.8f}")
         print(f"- Signal-to-Noise Ratio: {r['metrics']['signal_to_noise']:.8f}")
         print(f"- True Noise Magnitude: {r['metrics']['noise_magnitude']:.8f}")
@@ -398,14 +380,18 @@ def calculate_diffusion_data(model, batch, timesteps=[100, 500, 900], device=Non
                 "noise_reduction_percent": noise_reduction_percent,
                 "loss": loss,
             }
-
     return results
 
 
 def visualize_diffusion_process_heatmap(
-    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+    results: dict,
+    timesteps: Optional[list] = None,
+    output_dir: Optional[str] = None,
+    sample_points: int = 200,
 ):
-    """Visualize the forward and reverse diffusion process at different timesteps using heatmaps.
+    """
+    Visualize the forward and reverse diffusion process at different timesteps using heatmaps.
+    Uses precomputed ReverseDiffusionResults (from run_reverse_process).
 
     For each timestep, shows:
     1. Original sample
@@ -415,19 +401,22 @@ def visualize_diffusion_process_heatmap(
     5. Denoised sample (reverse diffusion)
 
     Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        results: ReverseDiffusionResults dict (timestep -> result dict)
+        timesteps: List of timesteps to visualize (if None, use all in results)
         output_dir: Directory to save visualizations
         sample_points: Number of points to sample for visualization
     """
-    # Create figure
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to those available in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
     n_rows = len(timesteps)
     fig, axes = plt.subplots(n_rows, 5, figsize=(15, 3 * n_rows))
     if n_rows == 1:
         axes = axes.reshape(1, -1)
-
-    # Set column titles
     titles = [
         "Original x₀",
         "Added Noise ε",
@@ -438,16 +427,8 @@ def visualize_diffusion_process_heatmap(
     for ax, title in zip(axes[0], titles):
         ax.set_title(title)
 
-    # Plot data for each timestep
     for i, t in enumerate(timesteps):
-        # Set seed for reproducible results across different visualization functions
-        torch.manual_seed(42 + t)
-        # Run reverse process at this timestep
-        result = run_reverse_process_at_timestep(
-            model, batch, num_samples=1, timestep=t
-        )
-
-        # Extract data
+        result = results[t]
         x0_vis = to_numpy(result["x0"])[:sample_points]
         eps_vis = to_numpy(result["noise"])[:sample_points]
         x_t_vis = to_numpy(result["xt"])[:sample_points]
@@ -455,22 +436,16 @@ def visualize_diffusion_process_heatmap(
         scaled_pred_eps_vis = to_numpy(result["scaled_pred_noise"])[:sample_points]
         x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
 
-        # Plot heatmaps
         axes[i, 0].imshow(x0_vis.reshape(1, -1), aspect="auto", cmap="viridis")
         axes[i, 1].imshow(eps_vis.reshape(1, -1), aspect="auto", cmap="viridis")
         axes[i, 2].imshow(x_t_vis.reshape(1, -1), aspect="auto", cmap="viridis")
-
-        # Combined predicted noise heatmap (show both raw and scaled)
         combined_pred = np.vstack(
             [pred_eps_vis.reshape(1, -1), scaled_pred_eps_vis.reshape(1, -1)]
         )
         axes[i, 3].imshow(combined_pred, aspect="auto", cmap="viridis")
         axes[i, 3].set_yticks([0, 1])
         axes[i, 3].set_yticklabels(["Raw", "Scaled"], fontsize=8)
-
         axes[i, 4].imshow(x_t_minus_1_vis.reshape(1, -1), aspect="auto", cmap="viridis")
-
-        # Add statistics
         for j, (ax, arr) in enumerate(
             zip(axes[i, :4], [x0_vis, eps_vis, x_t_vis, pred_eps_vis])
         ):
@@ -484,8 +459,6 @@ def visualize_diffusion_process_heatmap(
             )
             if j == 0:
                 ax.set_ylabel(f"t={t}")
-
-        # Add statistics for denoised sample
         axes[i, 4].text(
             0.5,
             -0.15,
@@ -494,7 +467,6 @@ def visualize_diffusion_process_heatmap(
             ha="center",
             fontsize=8,
         )
-
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diffusion_heatmap.png")
@@ -504,9 +476,14 @@ def visualize_diffusion_process_heatmap(
 
 
 def visualize_diffusion_process_lineplot(
-    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+    results: dict,
+    timesteps: Optional[list] = None,
+    output_dir: Optional[str] = None,
+    sample_points: int = 200,
 ):
-    """Visualize the forward and reverse diffusion process at different timesteps using line plots.
+    """
+    Visualize the forward and reverse diffusion process at different timesteps using line plots.
+    Uses precomputed ReverseDiffusionResults (from run_reverse_process).
 
     For each timestep, shows:
     1. Original sample
@@ -516,19 +493,22 @@ def visualize_diffusion_process_lineplot(
     5. Denoised sample (reverse diffusion)
 
     Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        results: ReverseDiffusionResults dict (timestep -> result dict)
+        timesteps: List of timesteps to visualize (if None, use all in results)
         output_dir: Directory to save visualizations
         sample_points: Number of points to sample for visualization
     """
-    # Create figure
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to those available in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
     n_rows = len(timesteps)
     fig, axes = plt.subplots(n_rows, 5, figsize=(15, 3 * n_rows))
     if n_rows == 1:
         axes = axes.reshape(1, -1)
-
-    # Set column titles
     titles = [
         "Original x₀",
         "Added Noise ε",
@@ -538,39 +518,21 @@ def visualize_diffusion_process_lineplot(
     ]
     for ax, title in zip(axes[0], titles):
         ax.set_title(title)
-
-    # Plot data for each timestep
     for i, t in enumerate(timesteps):
-        # Set seed for reproducible results across different visualization functions
-        torch.manual_seed(42 + t)
-        # Run reverse process at this timestep
-        result = run_reverse_process_at_timestep(
-            model, batch, num_samples=1, timestep=t
-        )
-
-        # Extract data
+        result = results[t]
         x0_vis = to_numpy(result["x0"])[:sample_points]
         eps_vis = to_numpy(result["noise"])[:sample_points]
         x_t_vis = to_numpy(result["xt"])[:sample_points]
         pred_eps_vis = to_numpy(result["predicted_noise"])[:sample_points]
         scaled_pred_eps_vis = to_numpy(result["scaled_pred_noise"])[:sample_points]
         x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
-
         x_axis = np.arange(len(x0_vis))
-
-        # 1. Original
         axes[i, 0].plot(x_axis, x0_vis, "b-", linewidth=1)
         axes[i, 0].set_ylim(-3, 3)
-
-        # 2. Added Noise
         axes[i, 1].plot(x_axis, eps_vis, "r-", linewidth=1)
         axes[i, 1].set_ylim(-3, 3)
-
-        # 3. Noisy Signal
         axes[i, 2].plot(x_axis, x_t_vis, "g-", linewidth=1)
         axes[i, 2].set_ylim(-3, 3)
-
-        # 4. Predicted Noise (both raw and scaled)
         axes[i, 3].plot(x_axis, pred_eps_vis, "k-", linewidth=1, label="Raw", alpha=0.8)
         axes[i, 3].plot(
             x_axis, scaled_pred_eps_vis, "m-", linewidth=1, label="Scaled", alpha=0.8
@@ -578,16 +540,10 @@ def visualize_diffusion_process_lineplot(
         if i == 0:
             axes[i, 3].legend(fontsize=8)
         axes[i, 3].set_ylim(-3, 3)
-
-        # 5. Denoised Sample
         axes[i, 4].plot(x_axis, x_t_minus_1_vis, "c-", linewidth=1)
-        # Special case for t=1000: set wider y-axis limits for denoised sample
         if t == 999 or t == 1000:
             axes[i, 4].set_ylim(-6, 6)
-
-        # Add timestep label
         axes[i, 0].set_ylabel(f"t={t}")
-
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diffusion_lineplot.png")
@@ -597,9 +553,14 @@ def visualize_diffusion_process_lineplot(
 
 
 def visualize_diffusion_process_superimposed(
-    model, batch, timesteps=[100, 500, 900], output_dir=None, sample_points=200
+    results: dict,
+    timesteps: Optional[list] = None,
+    output_dir: Optional[str] = None,
+    sample_points: int = 200,
 ):
-    """Visualize the superimposed comparison of original, noisy, and denoised signals at different timesteps.
+    """
+    Visualize the superimposed comparison of original, noisy, and denoised signals at different timesteps.
+    Uses precomputed ReverseDiffusionResults (from run_reverse_process).
 
     For each timestep (as columns), shows superimposed plots of:
     - Original sample (blue)
@@ -607,56 +568,44 @@ def visualize_diffusion_process_superimposed(
     - Denoised sample (green)
 
     Args:
-        model: The diffusion model
-        batch: Batch of real data samples
-        timesteps: List of timesteps to visualize (1-indexed, as expected by model)
+        results: ReverseDiffusionResults dict (timestep -> result dict)
+        timesteps: List of timesteps to visualize (if None, use all in results)
         output_dir: Directory to save visualizations
         sample_points: Number of points to sample for visualization
     """
-    # Create figure - timesteps as columns
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to those available in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
     n_cols = len(timesteps)
     fig, axes = plt.subplots(1, n_cols, figsize=(4 * n_cols, 4))
     if n_cols == 1:
         axes = [axes]
-
-    # Plot data for each timestep
     for i, t in enumerate(timesteps):
-        # Set seed for reproducible results across different visualization functions
-        torch.manual_seed(42 + t)
-        # Run reverse process at this timestep
-        result = run_reverse_process_at_timestep(
-            model, batch, num_samples=1, timestep=t
-        )
-
-        # Extract data
+        result = results[t]
         x0_vis = to_numpy(result["x0"])[:sample_points]
         x_t_vis = to_numpy(result["xt"])[:sample_points]
         x_t_minus_1_vis = to_numpy(result["x_t_minus_1"])[:sample_points]
-
         x_axis = np.arange(len(x0_vis))
-
-        # Superimposed plot: Original, Noisy, Denoised
         axes[i].plot(x_axis, x0_vis, "b-", linewidth=2, label="Original", alpha=0.8)
         axes[i].plot(x_axis, x_t_vis, "r-", linewidth=2, label="Noisy", alpha=0.7)
         axes[i].plot(
             x_axis, x_t_minus_1_vis, "g-", linewidth=2, label="Denoised", alpha=0.7
         )
-
         axes[i].set_title(f"t={t}")
         axes[i].legend(fontsize=10)
-        # Special case for t=1000: set wider y-axis limits for denoised sample
-        if t == 999 or t == 1000:
-            axes[i].set_ylim(-6, 6)
         axes[i].grid(True, alpha=0.3)
-
-        # Calculate and add metrics annotation
-        initial_noise = torch.mean(torch.abs(result["xt"] - result["x0"])).item()
-        final_noise = torch.mean(torch.abs(result["x_t_minus_1"] - result["x0"])).item()
+        initial_noise = np.mean(np.abs(to_numpy(result["xt"]) - to_numpy(result["x0"])))
+        final_noise = np.mean(
+            np.abs(to_numpy(result["x_t_minus_1"]) - to_numpy(result["x0"]))
+        )
         noise_reduction = initial_noise - final_noise
         noise_reduction_percent = (
             (noise_reduction / initial_noise * 100) if initial_noise > 0 else 0
         )
-
         axes[i].annotate(
             f"Noise reduction:\n{noise_reduction:.3f} ({noise_reduction_percent:.1f}%)",
             xy=(0.02, 0.98),
@@ -666,7 +615,6 @@ def visualize_diffusion_process_superimposed(
             ha="left",
             va="top",
         )
-
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diffusion_superimposed.png")
@@ -675,7 +623,6 @@ def visualize_diffusion_process_superimposed(
         plt.show()
 
 
-# ==================== Visualization Functions ====================
 def plot_diffusion_results(
     result: ReverseDiffusionResult, save_dir: Optional[str] = None
 ) -> None:

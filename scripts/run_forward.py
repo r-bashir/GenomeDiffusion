@@ -13,17 +13,13 @@ Usage:
 """
 
 import argparse
-
-# Standard library imports
 import sys
 from pathlib import Path
 
-# Add project root to path before any project imports
+# Project root
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-# All imports after path modification
-# Disable the import-not-at-top lint rule
 # ruff: noqa: E402
 import torch
 
@@ -37,12 +33,12 @@ from scripts.utils.forward_utils import (
 )
 from scripts.utils.schedule_utils import (
     analyze_schedule_parameters,
-    compare_schedule_parameters,
-    print_parameter_comparison,
+    plot_schedule_comparison,
+    print_schedule_comparison,
 )
 from src.dataset import SNPDataset
 from src.forward_diffusion import ForwardDiffusion
-from src.utils import load_config, set_seed
+from src.utils import load_config, set_seed, setup_logging
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -76,124 +72,110 @@ def parse_args():
 
 
 def main():
-
-    # Set global seed for reproducibility
-    set_seed(42)
-
     # Parse Arguments
     args = parse_args()
 
+    # Setup logging
+    logger = setup_logging(name="forward")
+    logger.info("Starting run_forward script.")
+
+    # Set global seed
+    set_seed(seed=42)
+
     # Load config
-    print(f"Loading configuration from {args.config}")
+    logger.info(f"Loading configuration from {args.config}")
     config = load_config(args.config)
 
-    # Get base output directory from config and create experiment-specific directory
-    base_output_path = Path(config.get("output_path", "output"))
-    output_dir = base_output_path / "forward_diffusion"
-    output_dir.mkdir(exist_ok=True, parents=True)
-    print(f"Saving results to {output_dir}")
-
     # Load dataset
-    print("Loading dataset...")
+    logger.info("Loading dataset...")
     dataset = SNPDataset(config)
 
     # Select a sample
     sample_idx = 0
+    logger.info(f"Selecting sample with index {sample_idx}...")
     x0 = dataset[sample_idx]
+    logger.info(f"x0 sample shape: {x0.shape} and dimensions: {x0.dim()}")
+    logger.info("Reshaping to [batch, channel, seq_length]")
 
-    # Reshape sample for visualization: add batch and channel dimensions [batch, channel, seq_length]
+    # Reshape sample for visualization
     if x0.dim() == 1:
         x0 = x0.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_length]
     elif x0.dim() == 2:
         x0 = x0.unsqueeze(0)  # [1, channels, seq_length]
 
     x0 = x0.to(device)
-    print(f"Sample shape: {x0.shape}")
-    print(f"Sample unique values: {torch.unique(x0)}")
-    print(f"First 10 values: {x0[0, 0, :10]}")
+    logger.info(f"Sample shape: {x0.shape} and dimensions: {x0.dim()}")
+    logger.info(f"Sample unique values: {torch.unique(x0)}")
+    logger.info(f"First 10 values: {x0[0, 0, :10]}")
 
-    # ===================== Analyze Schedules =====================
-    print("\nAnalyzing diffusion schedules...")
+    # Prepare output directory
+    base_dir = Path(config["output_path"])
+    output_dir = base_dir / "forward_diffusion"
+    output_dir.mkdir(exist_ok=True, parents=True)
 
-    # Analyze linear schedule
-    print("\nAnalyzing linear schedule...")
-    forward_diff_linear = ForwardDiffusion(
-        diffusion_steps=config.get("diffusion", {}).get("timesteps", 1000),
-        beta_start=config.get("diffusion", {}).get("beta_start", 0.0001),
-        beta_end=config.get("diffusion", {}).get("beta_end", 0.02),
-        schedule_type="linear",
-        max_beta=config.get("diffusion", {}).get("max_beta", 0.999),
-    )
-    forward_diff_linear = forward_diff_linear.to(device)
-    # analyze_schedule_parameters(forward_diff_linear, output_dir, schedule_type="linear")
+    # Analyze noise schedule
+    forward_diff = ForwardDiffusion(
+        time_steps=config["diffusion"]["timesteps"],
+        beta_start=config["diffusion"]["beta_start"],
+        beta_end=config["diffusion"]["beta_end"],
+        schedule_type=config["diffusion"]["schedule_type"],
+    ).to(device)
 
-    # Analyze cosine schedule
-    print("\nAnalyzing cosine schedule...")
-    forward_diff_cosine = ForwardDiffusion(
-        diffusion_steps=config.get("diffusion", {}).get("timesteps", 1000),
-        beta_start=config.get("diffusion", {}).get("beta_start", 0.0001),
-        beta_end=config.get("diffusion", {}).get("beta_end", 0.02),
-        schedule_type="cosine",
-        max_beta=config.get("diffusion", {}).get("max_beta", 0.999),
-    )
-    forward_diff_cosine = forward_diff_cosine.to(device)
-    analyze_schedule_parameters(forward_diff_cosine, output_dir, schedule_type="cosine")
+    schedule_type = config["diffusion"]["schedule_type"]
 
-    # Continue with the main analysis using the configured schedule
-    schedule_type = config.get("diffusion", {}).get("schedule_type", "cosine")
-    forward_diff = (
-        forward_diff_cosine if schedule_type == "cosine" else forward_diff_linear
-    )
-    print(f"\nContinuing analysis with {schedule_type} schedule...")
+    # ===================== Analyze Beta Schedulers =====================
+    schedule_analysis = False
+    if schedule_analysis:
+        # Analyze schedule parameters
+        logger.info("Analyzing beta schedule...")
+        analyze_schedule_parameters(forward_diff, output_dir, schedule_type)
 
-    # ===================== Run Forward Diffusion =====================
-    # Generate timesteps for analysis
-    tmin, tmax = forward_diff.tmin, forward_diff.tmax
-    print(f"\nGenerating timesteps between {tmin} to {tmax}.")
-    timestep_sets = generate_timesteps(tmin, tmax)
+    # ===================== Analyze Forward Diffusion =====================
 
-    # Run forward diffusion process with boundary timesteps
-    print("Forward diffusion process with boundary timesteps...")
-    boundary_results = run_forward_process(
-        forward_diff, x0, timestep_sets["boundary"], verbose=False
-    )
+    forward_analysis = True
+    if forward_analysis:
+        logger.info("Analyzing forward diffusion...")
 
-    # Print statistics for boundary timesteps
-    print(f"\nStatistics for boundary timesteps: {timestep_sets['boundary']}")
-    print_forward_statistics(boundary_results, timestep_sets["boundary"])
+        # Generate timesteps for analysis
+        tmin, tmax = forward_diff.tmin, forward_diff.tmax
+        logger.info(f"Generating timesteps between {tmin} to {tmax}.")
+        timestep_sets = generate_timesteps(tmin, tmax)
 
-    # Compare schedule parameters with actual values
-    print("\nComparing schedule parameters...")
-    compare_schedule_parameters(
-        forward_diff, boundary_results, output_dir, schedule_type
-    )
+        # Select timesteps for analysis
+        timesteps = timestep_sets["boundary"]
+        logger.info(f"Selected timesteps: {timesteps}")
 
-    # Print parameter comparison
-    print("\nParameter comparison...")
-    print_parameter_comparison(
-        forward_diff, boundary_results, timestep_sets["boundary"]
-    )
+        # Forward diffusion process with boundary timesteps
+        logger.info("Forward diffusion with boundary timesteps...")
+        results = run_forward_process(forward_diff, x0, timesteps)
 
-    # Plot signal noise ratio
-    print("\nSignal noise ratio (SNR)...")
-    plot_snr(forward_diff, boundary_results, save_dir=output_dir, verbose=False)
+        # Print statistics for boundary timesteps
+        # logger.info("Printing statistics for boundary timesteps...")
+        # print_forward_statistics(results, timesteps)
 
-    # Plot diffusion superposition
-    print("\nSample evolution through timesteps...")
-    plot_sample_evolution(
-        forward_diff,
-        boundary_results,
-        x0,
-        timesteps=[1, 2, 500, 999, 1000],
-        save_dir=output_dir,
-    )
+        # Plot diffusion superposition
+        key_timesteps = [1, 2, 500, 999, 1000]
+        logger.info("Plotting sample evolution through timesteps...")
+        plot_sample_evolution(results, x0, key_timesteps, output_dir)
 
-    # Plot diffusion parameters
-    print("\nDiffusion parameters...")
-    plot_diffusion_parameters(boundary_results, x0, save_dir=output_dir)
+        # Plot diffusion parameters
+        logger.info("Plotting diffusion parameters...")
+        plot_diffusion_parameters(results, x0, output_dir)
 
-    print("\nForward diffusion complete!")
-    print(f"Results saved to: {output_dir}")
+        # Plot signal noise ratio
+        logger.info("Plotting signal noise ratio (SNR)...")
+        plot_snr(forward_diff, results, output_dir, verbose=False)
+
+        # Print schedule comparison
+        # logger.info("Printing schedule comparison...")
+        # print_schedule_comparison(forward_diff, results, timesteps, schedule_type)
+
+        # Compare schedule parameters with actual values
+        # logger.info("Plotting schedule parameters comparison...")
+        # plot_schedule_comparison(forward_diff, results, output_dir, schedule_type)
+
+    logger.info("Forward diffusion complete!")
+    logger.info(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

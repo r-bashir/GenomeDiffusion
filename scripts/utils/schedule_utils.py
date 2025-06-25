@@ -27,6 +27,9 @@ def analyze_schedule_parameters(
         save_dir: Directory to save the plots (if None, display plot)
         schedule_type: Type of schedule being analyzed ('cosine' or 'linear')
     """
+
+    print(f"Plotting {schedule_type} beta schedule parameters...")
+
     # Get all parameters
     betas = forward_diff.betas.cpu().numpy()
     alphas = forward_diff.alphas.cpu().numpy()
@@ -34,22 +37,22 @@ def analyze_schedule_parameters(
     sigmas = forward_diff.sigmas.cpu().numpy()
 
     # Create timestep arrays for different parameters
-    # Note: beta and alpha are defined for t=1 to T
-    #       alpha_bar and sigma are defined for t=0 to T
+    # Note: beta and alpha are defined for t=1 to T,
+    # alpha_bar and sigma are defined for t=0 to T
     t_diff = np.arange(1, len(alphas_bar))  # t=1 to T
     t_cumul = np.arange(0, len(alphas_bar))  # t=0 to T
 
-    # Create figure with subplots
+    # Subplots
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle(f"Diffusion Schedule Analysis ({schedule_type})", fontsize=16)
+    fig.suptitle(f"{schedule_type} schedule analysis", fontsize=16)
 
     # Plot 1: Beta values (t=1 to T)
-    ax1.plot(t_diff, betas, "b-", label="β (noise schedule)")
-    ax1.set_title("Beta Values (t=1→T)")
-    ax1.set_xlabel("Timestep (t)")
-    ax1.set_ylabel("β")
+    ax1.plot(t_diff, betas, "b-", label="β (noise schedule)", linewidth=2)
+    ax1.set_title("β values (t=1→T)", fontsize=14)
+    ax1.set_xlabel("timesteps", fontsize=12)
+    ax1.set_ylabel("β", fontsize=12)
     ax1.grid(True)
-    ax1.legend()
+    ax1.legend(loc="upper left", fontsize=12)
 
     # Add inset for last few timesteps
     axins1 = ax1.inset_axes([0.6, 0.6, 0.35, 0.35])
@@ -59,49 +62,49 @@ def analyze_schedule_parameters(
     axins1.grid(True)
 
     # Plot 2: Alpha values (t=1 to T)
-    ax2.plot(t_diff, alphas, "g-", label="α (signal preservation)")
-    ax2.set_title("Alpha Values (t=1→T)")
-    ax2.set_xlabel("Timestep (t)")
-    ax2.set_ylabel("α")
+    ax2.plot(t_diff, alphas, "g-", label="α (signal preservation)", linewidth=2)
+    ax2.set_title("α values (t=1→T)", fontsize=14)
+    ax2.set_xlabel("timesteps", fontsize=12)
+    ax2.set_ylabel("α", fontsize=12)
     ax2.grid(True)
-    ax2.legend()
+    ax2.legend(loc="lower left", fontsize=12)
 
     # Add inset for last few timesteps
     axins2 = ax2.inset_axes([0.6, 0.6, 0.35, 0.35])
     axins2.plot(t_diff[-last_n:], alphas[-last_n:], "g-")
-    axins2.set_title(f"Last {last_n} Steps")
+    axins2.set_title(f"Last {last_n} Steps", fontsize=12)
     axins2.grid(True)
 
     # Plot 3: Alpha bar values with log scale (t=0 to T)
-    ax3.semilogy(t_cumul, alphas_bar, "r-", label="ᾱ (cumulative signal)")
-    ax3.set_title("Cumulative Alpha (ᾱ) Values (t=0→T)")
-    ax3.set_xlabel("Timestep (t)")
-    ax3.set_ylabel("ᾱ (log scale)")
+    ax3.plot(t_cumul, alphas_bar, "r-", label="ᾱ (cumulative signal)", linewidth=2)
+    ax3.set_title("ᾱ values (t=0→T)", fontsize=14)
+    ax3.set_xlabel("timesteps", fontsize=12)
+    ax3.set_ylabel("ᾱ", fontsize=12)
     ax3.grid(True)
-    ax3.legend()
+    ax3.legend(loc="lower left", fontsize=12)
 
     # Add inset for last few timesteps
     axins3 = ax3.inset_axes([0.6, 0.6, 0.35, 0.35])
-    axins3.semilogy(t_cumul[-last_n:], alphas_bar[-last_n:], "r-")
-    axins3.set_title(f"Last {last_n} Steps")
+    axins3.plot(t_cumul[-last_n:], alphas_bar[-last_n:], "r-")
+    axins3.set_title(f"Last {last_n} Steps", fontsize=12)
     axins3.grid(True)
 
     # Plot 4: Sigma values (t=0 to T)
-    ax4.plot(t_cumul, sigmas, "m-", label="σ (noise level)")
-    ax4.set_title("Sigma Values (t=0→T)")
-    ax4.set_xlabel("Timestep (t)")
-    ax4.set_ylabel("σ")
+    ax4.plot(t_cumul, sigmas, "m-", label="σ (noise level)", linewidth=2)
+    ax4.set_title("σ values (t=0→T)", fontsize=14)
+    ax4.set_xlabel("timesteps", fontsize=12)
+    ax4.set_ylabel("σ", fontsize=12)
     ax4.grid(True)
-    ax4.legend()
+    ax4.legend(loc="upper left", fontsize=12)
 
     # Add inset for last few timesteps
     axins4 = ax4.inset_axes([0.6, 0.6, 0.35, 0.35])
     axins4.plot(t_cumul[-last_n:], sigmas[-last_n:], "m-")
-    axins4.set_title(f"Last {last_n} Steps")
+    axins4.set_title(f"Last {last_n} Steps", fontsize=12)
     axins4.grid(True)
 
     # Print statistics for the final few timesteps
-    print(f"Analyzing final {last_n} timesteps of {schedule_type} schedule:")
+    print(f"Printing {schedule_type} beta schedule, final {last_n} timesteps:")
     for i in range(-last_n, 0):
         t_idx = len(betas) + i
         print(f"\nt={t_idx+1}:")
@@ -117,7 +120,7 @@ def analyze_schedule_parameters(
             )
             sigma_change = (sigmas[t_idx + 1] - sigmas[t_idx]) / sigmas[t_idx] * 100
             print(f"ᾱ_t relative change: {alpha_bar_change:.2f}%")
-            print(f"σ_t relative change: {sigma_change:.2f}%")
+            print(f"σ_t relative change: {sigma_change:.8f}%")
 
     plt.tight_layout()
 
@@ -125,7 +128,7 @@ def analyze_schedule_parameters(
         save_path = Path(save_dir)
         save_path.mkdir(exist_ok=True, parents=True)
         plt.savefig(
-            save_path / f"schedule_analysis_{schedule_type}.png",
+            save_path / f"{schedule_type}_schedule.png",
             dpi=300,
             bbox_inches="tight",
         )
@@ -134,7 +137,7 @@ def analyze_schedule_parameters(
         plt.show()
 
 
-def compare_schedule_parameters(
+def plot_schedule_comparison(
     forward_diff: ForwardDiffusion,
     results: Dict[int, Dict[str, Union[Tensor, float]]],
     save_dir: Optional[Union[str, Path]] = None,
@@ -148,6 +151,9 @@ def compare_schedule_parameters(
         save_dir: Directory to save plots (if None, display plot)
         schedule_type: Type of schedule being analyzed ('cosine' or 'linear')
     """
+
+    print(f"Plotting {schedule_type} beta schedule comparison...")
+
     # Get theoretical parameters from schedule
     theoretical_params = {
         "betas": forward_diff.betas.cpu().numpy(),
@@ -236,7 +242,7 @@ def compare_schedule_parameters(
         save_path = Path(save_dir)
         save_path.mkdir(exist_ok=True, parents=True)
         plt.savefig(
-            save_path / f"compare_{schedule_type}_parameters.png",
+            save_path / f"{schedule_type}_schedule_comparison.png",
             dpi=300,
             bbox_inches="tight",
         )
@@ -245,7 +251,7 @@ def compare_schedule_parameters(
         plt.show()
 
 
-def print_parameter_comparison(
+def print_schedule_comparison(
     forward_diff: ForwardDiffusion,
     results: Dict[int, Dict[str, Union[Tensor, float]]],
     timesteps: Optional[List[int]] = None,
@@ -257,7 +263,10 @@ def print_parameter_comparison(
         results: Results from forward diffusion process
         timesteps: List of timesteps to compare (if None, use all timesteps in results)
     """
-    # Use provided timesteps or all timesteps in results
+
+    print("\nSchedule parameter comparison at selected timesteps:")
+
+    # Handle timesteps
     if timesteps is None:
         timesteps = sorted(results.keys())
     else:
@@ -265,7 +274,6 @@ def print_parameter_comparison(
         timesteps = [t for t in timesteps if t in results]
         timesteps.sort()
 
-    print("\nParameter Comparison at Selected Timesteps:")
     for t in timesteps:
         print(f"\nTimestep t = {t}:")
         print(

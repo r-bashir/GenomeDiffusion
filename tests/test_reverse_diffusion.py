@@ -52,7 +52,7 @@ class TestReverseDiffusion(unittest.TestCase):
         """Set up test fixtures."""
         self.diffusion_steps = 1000
         self.forward_diff = ForwardDiffusion(
-            diffusion_steps=self.diffusion_steps,
+            time_steps=self.diffusion_steps,
             beta_start=0.0001,
             beta_end=0.02,
             schedule_type="cosine",
