@@ -110,11 +110,12 @@ class DDPM:
             np.ndarray: Beta schedule array of shape (timesteps,)
         """
         steps = timesteps + 1
-        x = np.linspace(0, steps, steps)
-        alphas_cumprod = np.cos(((x / steps) + s) / (1 + s) * np.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        return np.clip(betas, 0, 0.999)
+        t = np.linspace(0, timesteps, steps) / timesteps
+        alphas_bar = np.cos(((t + s) / (1 + s)) * np.pi / 2) ** 2
+        alphas_bar = alphas_bar / alphas_bar[0]
+        betas = 1 - (alphas_bar[1:] / alphas_bar[:-1])
+        betas = np.clip(betas, a_min=1e-8, a_max=0.999)
+        return betas
 
     @property
     def tmin(self) -> int:
