@@ -42,33 +42,9 @@ import torch.utils.data
 import yaml
 from scipy import stats
 
+from .utils import setup_logging
 
-def setup_logging(debug: bool = False) -> logging.Logger:
-    """Configure console logging and return a logger instance.
-
-    Args:
-        debug: If True, set log level to DEBUG, else INFO
-
-    Returns:
-        logging.Logger: Configured logger instance with name "DataLogger"
-    """
-    logger = logging.getLogger("DataLogger")
-
-    # Only configure if not already configured
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    logger.setLevel(logging.DEBUG if debug else logging.INFO)
-    return logger
-
-
-# Initialize the module-level logger
-logger = setup_logging()
+logger = setup_logging(name="dataset")
 
 
 # Load dataset
@@ -90,6 +66,7 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     Returns:
         torch.FloatTensor: Processed data with shape (n_samples, n_markers)
     """
+
     logger.info("Starting data loading and preprocessing")
     data_config = config.get("data")
 
@@ -159,7 +136,7 @@ def handle_missing_values(data: np.ndarray, missing_value: int = 9) -> np.ndarra
     Returns:
         Data with missing values imputed
     """
-    logger = logging.getLogger(__name__)
+
     data = data.copy()  # Don't modify input array
     n_missing = 0
     n_markers = data.shape[1]
@@ -287,6 +264,7 @@ class SNPDataset(torch.utils.data.Dataset):
         self.validate_data()
         logger.info(f"SNPDataset samples: {len(self)}")
         logger.info(f"SNPDataset shape: {self.data.shape}")
+        logger.info(f"SNPDataset dimensions: {self.data.dim()}")
 
     def validate_data(self) -> None:
         """Validate that data was loaded correctly."""

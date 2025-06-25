@@ -54,7 +54,7 @@ class DiffusionModel(NetworkBase):
 
         # ForwardDiffusion: Forward diffusion process
         self.forward_diffusion = ForwardDiffusion(
-            diffusion_steps=hparams["diffusion"]["timesteps"],
+            time_steps=hparams["diffusion"]["timesteps"],
             beta_start=hparams["diffusion"]["beta_start"],
             beta_end=hparams["diffusion"]["beta_end"],
             schedule_type=hparams["diffusion"]["schedule_type"],

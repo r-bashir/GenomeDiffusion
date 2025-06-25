@@ -3,6 +3,7 @@
 
 """Utility functions for the diffusion model."""
 
+import logging
 import os
 import random
 from pathlib import Path
@@ -27,6 +28,39 @@ def set_seed(seed=42):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+
+def setup_logging(name: str = __name__, debug: bool = False) -> logging.Logger:
+    """
+    Set up and return a logger with standardized formatting for universal use across the codebase.
+
+    Args:
+        name (str): Name for the logger, typically use __name__ for module-level logging.
+        debug (bool): If True, sets log level to DEBUG; otherwise INFO.
+
+    Returns:
+        logging.Logger: Configured logger instance.
+
+    Usage:
+        from src.utils import setup_logging
+        logger = setup_logging(__name__, debug=True)
+        logger.info("Message")
+    """
+
+    logger = logging.getLogger(
+        name
+    )  # Get or create a logger for the given name (usually module)
+    # Prevent adding multiple handlers if logger already configured
+    if not logger.handlers:
+        handler = logging.StreamHandler()  # Output logs to console
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    # Set log level based on debug flag
+    logger.setLevel(logging.DEBUG if debug else logging.INFO)
+    return logger
 
 
 def bcast_right(x: torch.Tensor, ndim: int) -> torch.Tensor:

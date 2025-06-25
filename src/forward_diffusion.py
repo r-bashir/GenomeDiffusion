@@ -12,7 +12,7 @@ schedule following the improvements from 'Improved Denoising Diffusion Probabili
 (Nichol & Dhariwal, 2021) https://arxiv.org/abs/2102.09672
 
 Typical usage:
-    forward_diff = ForwardDiffusion(diffusion_steps=1000, schedule_type='cosine')
+    forward_diff = ForwardDiffusion(time_steps=1000, schedule_type='cosine')
     noisy_sample = forward_diff.sample(x0, timestep, noise)
 
 Note: This class only implements the forward (noising) process q(x_t|x_0), NOT the full DDPM model.
@@ -40,15 +40,8 @@ class ForwardDiffusion:
 
     In this implementation, reverse diffusion is handled by DiffusionModel.
 
-    Key Features:
-        - Supports both cosine and linear beta schedules
-        - Implements the improved cosine schedule from Nichol & Dhariwal, 2021
-        - Handles proper indexing for α, ᾱ, and σ values
-        - GPU/CPU compatible through the device system
-        - Batch processing support for efficient computation
-
     Attributes:
-        _diffusion_steps (int): Total number of diffusion steps T
+        _time_steps (int): Total number of diffusion steps T
         _beta_start (float): Starting value for β schedule (β_1)
         _beta_end (float): Ending value for β schedule (β_T)
         _schedule_type (str): Type of β schedule ('cosine' or 'linear')
@@ -60,17 +53,16 @@ class ForwardDiffusion:
 
     def __init__(
         self,
-        diffusion_steps: int = 1000,
+        time_steps: int = 1000,
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
         schedule_type: str = "cosine",
-        max_beta: float = 0.999,
     ) -> None:
         """
         Initialize the diffusion process with specified noise schedule parameters.
 
         Args:
-            diffusion_steps (int, optional): Total number of diffusion timesteps T. Defaults to 1000.
+            time_steps (int, optional): Total number of diffusion timesteps T. Defaults to 1000.
             beta_start (float, optional): Starting value for β schedule. Defaults to 0.0001.
             beta_end (float, optional): Final value for β schedule. Defaults to 0.02.
             schedule_type (str, optional): Type of β schedule to use ('cosine' or 'linear'). Defaults to 'cosine'.
@@ -81,21 +73,18 @@ class ForwardDiffusion:
         """
 
         # Initialize parameters
-        self._diffusion_steps = diffusion_steps
+        self._time_steps = time_steps
         self._beta_start = beta_start
         self._beta_end = beta_end
         self._schedule_type = schedule_type
-        self._max_beta = max_beta
 
         # Select beta schedule
         if schedule_type == "linear":
             betas_np = self._linear_beta_schedule(
-                self._diffusion_steps, self._beta_start, self._beta_end
+                self._time_steps, self._beta_start, self._beta_end
             )
         elif schedule_type == "cosine":
-            betas_np = self._cosine_beta_schedule(
-                self._diffusion_steps, max_beta=self._max_beta
-            )
+            betas_np = self._cosine_beta_schedule(self._time_steps)
         else:
             raise ValueError(
                 f"Unknown schedule_type '{schedule_type}'. Use 'cosine' or 'linear'."
@@ -119,7 +108,7 @@ class ForwardDiffusion:
         self.register_buffer("_sigmas_t", torch.tensor(sigmas_np, dtype=torch.float32))
 
     def sample(
-        self, x0: torch.Tensor, t: torch.Tensor, eps: Optional[torch.Tensor] = None
+        self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     ) -> torch.Tensor:
         """
         Samples from the forward diffusion process q(x_t | x_0).
@@ -130,8 +119,8 @@ class ForwardDiffusion:
 
         Args:
             x0: Clean data sample of shape [B, C, seq_len].
-            t: Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
-            eps: Optional pre-generated noise of same shape as x0. If None, noise is sampled.
+            t: Timestep indices, shape (batch_size,). Should be in [1, time_steps].
+            eps: Pre-generated noise of same shape as x0.
 
         Returns:
             torch.Tensor: Noisy sample x_t.
@@ -152,17 +141,14 @@ class ForwardDiffusion:
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
         sigma_t = bcast_right(sigma_t, ndim)
 
-        # Generate noise if not provided
-        if eps is None:
-            eps = torch.randn_like(x0, device=device)
-        else:
-            # Ensure noise is on the same device
-            eps = tensor_to_device(eps, device)
+        # Ensure noise is on the same device
+        eps = tensor_to_device(eps, device)
 
         # Compute noisy sample
         x_t = torch.sqrt(alpha_bar_t) * x0 + sigma_t * eps
         return x_t
 
+    # ====================== nn.Module like Methods ======================
     def register_buffer(self, name: str, tensor: torch.Tensor) -> None:
         """
         Register a tensor as a buffer (similar to PyTorch's nn.Module.register_buffer).
@@ -200,10 +186,10 @@ class ForwardDiffusion:
 
     # ====================== Methods ======================
     def _check_timestep(self, t: torch.Tensor) -> None:
-        """Ensure t is within valid bounds [1, diffusion_steps]."""
-        if torch.any(t < 1) or torch.any(t > self._diffusion_steps):
+        """Ensure t is within valid bounds [1, time_steps]."""
+        if torch.any(t < 1) or torch.any(t > self._time_steps):
             raise ValueError(
-                f"Timestep t={t} out of valid range [1, {self._diffusion_steps}]"
+                f"Timestep t={t} out of valid range [1, {self._time_steps}]"
             )
 
     def beta(self, t: torch.Tensor) -> torch.Tensor:
@@ -212,7 +198,7 @@ class ForwardDiffusion:
         The β_t values determine how much noise is added at each timestep.
 
         Args:
-            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, time_steps].
 
         Returns:
             torch.Tensor: β_t values of shape (batch_size,), where:
@@ -237,7 +223,7 @@ class ForwardDiffusion:
         The α_t values determine how much signal is preserved at each timestep.
 
         Args:
-            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, diffusion_steps].
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [1, time_steps].
 
         Returns:
             torch.Tensor: α_t values of shape (batch_size,), where:
@@ -262,7 +248,7 @@ class ForwardDiffusion:
         The ᾱ_t values represent the total signal preservation up to timestep t.
 
         Args:
-            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [0, diffusion_steps].
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [0, time_steps].
 
         Returns:
             torch.Tensor: ᾱ_t values of shape (batch_size,), where:
@@ -271,14 +257,13 @@ class ForwardDiffusion:
                 - t=1 corresponds to the first diffusion step (ᾱ_1 = α_1)
                 - The returned values are on the same device as the internal tensors
         """
-        # Check if t is within valid range
-        self._check_timestep(t)
-
-        # Move alphas_bar to the same device as t before indexing
+        # Allow t in [0, time_steps] for theoretical calculations
+        if not torch.all((t >= 0) & (t <= self._time_steps)):
+            raise ValueError(
+                f"Timestep t={t} out of valid range [0, {self._time_steps}]"
+            )
         device = t.device
         alphas_bar = tensor_to_device(self._alphas_bar_t, device)
-
-        # Index with t on the same device
         return alphas_bar[t.long()]
 
     def sigma(self, t: torch.Tensor) -> torch.Tensor:
@@ -287,7 +272,7 @@ class ForwardDiffusion:
         The σ_t values represent the standard deviation of the noise added at each timestep.
 
         Args:
-            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [0, diffusion_steps].
+            t (torch.Tensor): Timestep indices, shape (batch_size,). Should be in [0, time_steps].
 
         Returns:
             torch.Tensor: σ_t values of shape (batch_size,), where:
@@ -296,14 +281,13 @@ class ForwardDiffusion:
                 - t=1 corresponds to the first diffusion step (σ_1 = √(1-ᾱ_1))
                 - The returned values are on the same device as the internal tensors
         """
-        # Check if t is within valid range
-        self._check_timestep(t)
-
-        # Move sigmas to the same device as t before indexing
+        # Allow t in [0, time_steps] for theoretical calculations
+        if not torch.all((t >= 0) & (t <= self._time_steps)):
+            raise ValueError(
+                f"Timestep t={t} out of valid range [0, {self._time_steps}]"
+            )
         device = t.device
         sigmas = tensor_to_device(self._sigmas_t, device)
-
-        # Index with t on the same device
         return sigmas[t.long()]
 
     # ====================== Properties ======================
@@ -318,12 +302,12 @@ class ForwardDiffusion:
 
     @property
     def tmax(self) -> int:
-        """Maximum valid timestep value (total number of diffusion steps).
+        """Maximum valid timestep value (total number of time steps).
 
         Returns:
-            int: Maximum timestep value (diffusion_steps).
+            int: Maximum timestep value (time_steps).
         """
-        return self._diffusion_steps
+        return self._time_steps
 
     @property
     def betas(self) -> torch.Tensor:
@@ -332,7 +316,7 @@ class ForwardDiffusion:
         These control how much noise is added at each timestep.
 
         Returns:
-            torch.Tensor: β values of shape (diffusion_steps,).
+            torch.Tensor: β values of shape (time_steps,).
         """
         return self._betas_t
 
@@ -343,7 +327,7 @@ class ForwardDiffusion:
         These represent how much of the original signal is preserved at each timestep.
 
         Returns:
-            torch.Tensor: α values of shape (diffusion_steps,).
+            torch.Tensor: α values of shape (time_steps,).
         """
         return self._alphas_t
 
@@ -354,7 +338,7 @@ class ForwardDiffusion:
         The ᾱ_t values represent the total signal preservation up to timestep t.
 
         Returns:
-            torch.Tensor: ᾱ_t values of shape (diffusion_steps + 1,), where:
+            torch.Tensor: ᾱ_t values of shape (time_steps + 1,), where:
                 - ᾱ_0 = 1.0 (no noise)
                 - ᾱ_1 = α_1 = 1-β_1
                 - ...
@@ -369,7 +353,7 @@ class ForwardDiffusion:
         The σ_t values represent the standard deviation of the noise added up to timestep t.
 
         Returns:
-            torch.Tensor: σ_t values of shape (diffusion_steps + 1,), where:
+            torch.Tensor: σ_t values of shape (time_steps + 1,), where:
                 - σ_0 = 0.0 (no noise)
                 - σ_1 = √(1-ᾱ_1)
                 - ...
@@ -379,54 +363,34 @@ class ForwardDiffusion:
 
     # ====================== Static Methods ======================
     @staticmethod
-    def _cosine_beta_schedule(
-        timesteps: int, s: float = 0.008, max_beta: float = 0.999
-    ) -> np.ndarray:
-        """Generate a cosine beta schedule as proposed in 'Improved DDPM' (arXive:2102.09672, 2021).
-
-        This schedule reduces training time and improves sample quality by using a cosine
-        function to control the noise schedule. The offset parameter s prevents
-        the schedule from getting too small near t=0.
-
-        Args:
-            timesteps (int): Total number of diffusion timesteps T.
-            s (float, optional): Offset parameter to prevent β from being too small near t=0. Defaults to 0.008.
-            max_beta (float, optional): Maximum value for beta. Defaults to 0.999.
-
-        Returns:
-            np.ndarray: Array of β values with shape (timesteps,), clipped to [0, max_beta].
+    def _cosine_beta_schedule(timesteps: int, s: float = 0.008) -> np.ndarray:
         """
-        # Add 1 to timesteps to account for t=0
+        Improved cosine schedule from Nichol & Dhariwal, 2021.
+        Args:
+            timesteps (int): Number of diffusion steps.
+            s (float): Small offset to prevent singularity.
+        Returns:
+            np.ndarray: Beta schedule of shape (timesteps,).
+        """
         steps = timesteps + 1
-
-        # Generate linearly spaced values from 0 to steps
-        x = np.linspace(0, timesteps, steps)  # <-- FIXED LINE
-
-        # Compute alphas_cumprod using cosine function
-        alphas_cumprod = np.cos(((x / steps) + s) / (1 + s) * np.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-
-        # Compute betas from alphas_cumprod
-        betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-
-        # Clip betas to [0, max_beta]
-        return np.clip(betas, 0, max_beta)
+        t = np.linspace(0, timesteps, steps) / timesteps
+        alphas_bar = np.cos(((t + s) / (1 + s)) * np.pi / 2) ** 2
+        alphas_bar = alphas_bar / alphas_bar[0]
+        betas = 1 - (alphas_bar[1:] / alphas_bar[:-1])
+        betas = np.clip(betas, a_min=1e-8, a_max=0.999)
+        return betas
 
     @staticmethod
     def _linear_beta_schedule(
         timesteps: int, beta_start: float, beta_end: float
     ) -> np.ndarray:
-        """Generate a linear beta schedule from beta_start to beta_end.
-
-        This is the original schedule proposed in the DDPM paper (Ho et al., 2020).
-        It provides a simple linear interpolation between the start and end noise levels.
-
+        """
+        Linear beta schedule as in Ho et al., 2020.
         Args:
-            timesteps (int): Total number of diffusion timesteps T.
-            beta_start (float): Initial β value for the schedule.
-            beta_end (float): Final β value for the schedule.
-
+            timesteps (int): Number of diffusion steps.
+            beta_start (float): Initial beta value.
+            beta_end (float): Final beta value.
         Returns:
-            np.ndarray: Array of β values with shape (timesteps,).
+            np.ndarray: Beta schedule of shape (timesteps,).
         """
         return np.linspace(beta_start, beta_end, timesteps)
