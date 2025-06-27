@@ -44,7 +44,7 @@ class ReverseDiffusion:
         self.denoise_step = denoise_step
         self.discretize = discretize
 
-    def reverse_diffusion_step(self, x_t, t):
+    def reverse_diffusion_step(self, x_t, t, return_all=False):
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
         Implements Algorithm 2 from the DDPM paper (Ho et al., 2020):
@@ -91,20 +91,31 @@ class ReverseDiffusion:
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
         # Numerical stability constant
-        eps = 1e-7
+        eps = 1e-10
 
-        # Predict noise using the noise prediction model (ε_θ(x_t, t))
+        # Predict noise using the noise prediction model
+        # ε_θ(x_t, t): Model's prediction of the noise added at timestep t
         epsilon_theta = self.noise_predictor(x_t, t)
 
+        # === DDPM Reverse Step Equations ===
         # Compute mean for p(x_{t-1}|x_t) as in Algorithm 2
         # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)  # 1/√α_t
-        coef = beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)  # β_t/√(1-ᾱ_t)
-        mean = inv_sqrt_alpha_t * (x_t - coef * epsilon_theta)
+
+        # inv_sqrt_alpha_t = 1/√α_t
+        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)
+
+        # coef = β_t/√(1-ᾱ_t)
+        coef = beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)
+
+        # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
+        scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
+
+        # mean = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+        mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
-        # Compute standard deviation (σ_t = √β_t)
-        sigma_t = torch.sqrt(torch.clamp(beta_t, min=1e-6))  # σ_t
+        # standard deviation = σ_t = √β_t
+        sigma_t = torch.sqrt(beta_t)  # σ_t
 
         # For t=1, z=0 (no noise); for t>1, z ~ N(0,I) as per Algorithm 2
         z = torch.zeros_like(x_t, device=device)
@@ -112,11 +123,24 @@ class ReverseDiffusion:
             z = torch.randn_like(x_t, device=device)  # z ~ N(0, I)
 
         # Sample from N(mean, σ_t^2 * I)
+        # x_{t-1} = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t)) + σ_t * z
         x_prev = mean + sigma_t * z  # When t=1, z=0 so x_prev = mean
 
+        if return_all:
+            return {
+                "x_prev": x_prev,  # x_{t-1}: Denoised sample after adding noise
+                "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
+                "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
+                "scaled_pred_noise": scaled_pred_noise,  # β_t/√(1-ᾱ_t) * ε_θ(x_t, t): Scaled predicted noise
+                "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
+                "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β_t)
+                "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
+                "beta_t": beta_t,  # β_t: Noise schedule value for this step
+                "alpha_t": alpha_t,  # α_t: Alpha for this step
+            }
         return x_prev
 
-    def _reverse_diffusion_process(self, x, denoise_step=10, discretize=False):
+    def _reverse_diffusion_process(self, x, denoise_step=1, discretize=False):
         """
         Internal method to run the reverse diffusion process on a given tensor.
 
@@ -133,6 +157,7 @@ class ReverseDiffusion:
         tmin = self.forward_diffusion.tmin
 
         # Iterate over timesteps in reverse (Algorithm 2 from Ho et al., 2020)
+        # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
             t_tensor = tensor_to_device(
                 torch.full((x.size(0),), t, dtype=torch.long), x.device
@@ -140,7 +165,6 @@ class ReverseDiffusion:
             x = self.reverse_diffusion_step(x, t_tensor)
 
         # Post-processing for SNP data
-        x = torch.clamp(x, 0, 0.5)
         if discretize:
             x = torch.round(x * 4) / 4
             x = torch.clamp(x, 0, 0.5)
@@ -148,7 +172,7 @@ class ReverseDiffusion:
         return x
 
     def generate_samples(
-        self, num_samples=10, denoise_step=10, discretize=False, seed=42, device=None
+        self, num_samples=10, denoise_step=1, discretize=False, seed=42, device=None
     ):
         """
         Generate new samples from random noise using the reverse diffusion process.
@@ -192,7 +216,7 @@ class ReverseDiffusion:
             return self._reverse_diffusion_process(x, denoise_step, discretize)
 
     def denoise_sample(
-        self, batch, denoise_step=10, discretize=False, seed=42, device=None
+        self, batch, denoise_step=1, discretize=False, seed=42, device=None
     ):
         """
         Denoise an input batch using the reverse diffusion process.

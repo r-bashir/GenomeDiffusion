@@ -26,11 +26,10 @@ from src import DiffusionModel
 from src.utils import set_seed, setup_logging
 from utils.reverse_utils import (
     generate_timesteps,
-    plot_diffusion_metrics,
-    plot_diffusion_results,
+    plot_reverse_diagnostics,
+    print_diagnostic_statistics,
     print_reverse_statistics,
     run_reverse_process,
-    visualize_diffusion_process_heatmap,
     visualize_diffusion_process_lineplot,
     visualize_diffusion_process_superimposed,
 )
@@ -48,7 +47,7 @@ def parse_args():
         "--checkpoint", type=str, required=True, help="Path to model checkpoint"
     )
     parser.add_argument(
-        "--num_samples", type=int, default=3, help="Number of samples to analyze"
+        "--num_samples", type=int, default=1, help="Number of samples to analyze"
     )
     return parser.parse_args()
 
@@ -98,11 +97,29 @@ def main():
 
     # Prepare Batch
     logger.info("Preparing a batch of test data...")
-    x0 = next(iter(test_loader)).to(device)
-    x0 = x0.unsqueeze(1)  # Add channel dimension
-    logger.info(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
+    test_batch = next(iter(test_loader)).to(device)
 
-    # ===================== Run Reverse Diffusion =====================
+    # Select a single sample and ensure shape [1, 1, seq_len]
+    sample_idx = 0
+    if test_batch.dim() == 2:
+        # [batch, seq_len] -> [1, 1, seq_len]
+        x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
+    elif test_batch.dim() == 3:
+        # [batch, channels, seq_len] -> [1, channels, seq_len]
+        x0 = test_batch[sample_idx : sample_idx + 1]
+    else:
+        raise ValueError(f"Unexpected test_batch shape: {test_batch.shape}")
+
+    x0 = x0.to(device)
+    logger.info(
+        f"Selected x0 shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}"
+    )
+    logger.info(f"Sample unique values: {torch.unique(x0)}")
+    logger.info(f"First 10 values: {x0[0, 0, :10]}")
+
+    # ===================== Analyze Reverse Diffusion =====================
+    logger.info("Analyzing reverse diffusion...")
+
     # Generate timesteps for analysis
     tmin, tmax = model.forward_diffusion.tmin, model.forward_diffusion.tmax
     logger.info(f"Generating timesteps between {tmin} to {tmax}.")
@@ -113,45 +130,45 @@ def main():
     logger.info(f"Selected timesteps: {timesteps}")
 
     # Run reverse diffusion process with boundary timesteps
-    logger.info("Reverse diffusion process with boundary timesteps...")
+    logger.info("Reverse diffusion with boundary timesteps...")
     results = run_reverse_process(
         model=model,
         x0=x0,
         timesteps=timesteps,
-        num_samples=args.num_samples,
     )
 
-    # Print statistics for boundary timesteps
-    logger.info(f"Statistics for boundary timesteps: {timesteps}")
-    print_reverse_statistics(results, timesteps)
+    # Print statistics for boundary timesteps (FIXME: Refactoring needed as new format for results)
+    # logger.info("Printing statistics for boundary timesteps")
+    # print_reverse_statistics(results, timesteps)
+
+    # Plot diagnostics for key timesteps
+    key_timesteps = [1, 998, 999, 1000]
+    logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
+    print_diagnostic_statistics(results=results, timesteps=key_timesteps)
+
+    logger.info(f"Generating diagnostic plots for key timesteps: {key_timesteps}")
+    plot_reverse_diagnostics(
+        results=results, timesteps=key_timesteps, output_dir=output_dir
+    )
 
     # Diffusion evolution with key timesteps
-    key_timesteps = [1, 2, 500, 998, 999, 1000]
-    logger.info(f"Diffusion evolution with key timesteps: {key_timesteps}")
-
-    visualize_diffusion_process_heatmap(
-        results=results,
-        timesteps=key_timesteps,
-        output_dir=output_dir,
-        sample_points=200,
-    )
+    # key_timesteps = [1, 2, 500, 998, 999, 1000]
+    logger.info(f"Plotting sample evolution for key timesteps: {key_timesteps}")
     visualize_diffusion_process_lineplot(
         results=results,
         timesteps=key_timesteps,
         output_dir=output_dir,
-        sample_points=200,
     )
     visualize_diffusion_process_superimposed(
         results=results,
         timesteps=key_timesteps,
         output_dir=output_dir,
-        sample_points=200,
     )
 
     # Additional plots
     additional_plots = False
     if additional_plots:
-        logger.info("Extra plots...")
+        logger.info("Plotting additional visualizations...")
 
         # Create output directory for visualizations
         viz_dir = output_dir / "diffusion_analysis"
