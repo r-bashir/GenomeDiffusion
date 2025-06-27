@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import torch
 from torch import Tensor
 
@@ -30,7 +31,7 @@ def analyze_schedule_parameters(
 
     print(f"Plotting {schedule_type} beta schedule parameters...")
 
-    # Get all parameters
+    # Get schedule parameters
     betas = forward_diff.betas.cpu().numpy()
     alphas = forward_diff.alphas.cpu().numpy()
     alphas_bar = forward_diff.alphas_bar.cpu().numpy()
@@ -107,20 +108,18 @@ def analyze_schedule_parameters(
     print(f"Printing {schedule_type} beta schedule, final {last_n} timesteps:")
     for i in range(-last_n, 0):
         t_idx = len(betas) + i
-        print(f"\nt={t_idx+1}:")
-        print(f"β_t: {betas[t_idx]:.8f}")
-        print(f"α_t: {alphas[t_idx]:.8f}")
-        print(f"ᾱ_t: {alphas_bar[t_idx+1]:.8f}")
-        print(f"σ_t: {sigmas[t_idx+1]:.8f}")
+        print(
+            f"\nt={t_idx+1}, β_t: {betas[t_idx]:.8f}, α_t: {alphas[t_idx]:.8f}, ᾱ_t: {alphas_bar[t_idx+1]:.8f}, σ_t: {sigmas[t_idx+1]:.8f}"
+        )
 
-        if i <= -1:
-            # Calculate relative changes
-            alpha_bar_change = (
-                (alphas_bar[t_idx + 1] - alphas_bar[t_idx]) / alphas_bar[t_idx] * 100
-            )
-            sigma_change = (sigmas[t_idx + 1] - sigmas[t_idx]) / sigmas[t_idx] * 100
-            print(f"ᾱ_t relative change: {alpha_bar_change:.2f}%")
-            print(f"σ_t relative change: {sigma_change:.8f}%")
+        # if i <= -1:
+        # Calculate relative changes
+        alpha_bar_change = (
+            (alphas_bar[t_idx + 1] - alphas_bar[t_idx]) / alphas_bar[t_idx] * 100
+        )
+        sigma_change = (sigmas[t_idx + 1] - sigmas[t_idx]) / sigmas[t_idx] * 100
+        print(f"relative change in ᾱ_t: {alpha_bar_change:.8f}%")
+        print(f"relative change in σ_t: {sigma_change:.8f}%")
 
     plt.tight_layout()
 
@@ -137,6 +136,57 @@ def analyze_schedule_parameters(
         plt.show()
 
 
+# Print Schedule Parameters
+def print_schedule_parameters(
+    forward_diff: "ForwardDiffusion",
+    save_dir: Optional[Union[str, Path]] = None,
+    schedule_type: str = "cosine",
+) -> None:
+    """
+    Print and optionally save all schedule parameters (beta, alpha, alpha_bar, sigma) for all timesteps.
+
+    Args:
+        forward_diff: The forward diffusion model
+        save_dir: Directory to save the CSV file (if None, only print)
+        schedule_type: Type of schedule being analyzed ('cosine' or 'linear')
+    """
+
+    # Get schedule parameters
+    betas = forward_diff.betas.cpu().numpy()
+    alphas = forward_diff.alphas.cpu().numpy()
+    alphas_bar = forward_diff.alphas_bar.cpu().numpy()
+    sigmas = forward_diff.sigmas.cpu().numpy()
+
+    # Timesteps: beta/alpha are t=1..T, alpha_bar/sigma are t=0..T
+    T = len(betas)
+    print(f"\n{schedule_type.title()} Schedule Parameters:")
+    print(f"{'t':>5}  {'beta':>12}  {'alpha':>12}  {'alpha_bar':>16}  {'sigma':>16}")
+    rows = []
+    for t in range(1, T + 1):
+        # t: 1-based index for beta/alpha, t for alpha_bar/sigma is t
+        row = [
+            t,
+            betas[t - 1],
+            alphas[t - 1],
+            alphas_bar[t],
+            sigmas[t],
+        ]
+        print(
+            f"{t:5d}  {betas[t-1]:12.10f}  {alphas[t-1]:12.10f}  {alphas_bar[t]:16.10f}  {sigmas[t]:16.10f}"
+        )
+        rows.append(row)
+
+    # Save as CSV if requested
+    if save_dir:
+        save_path = Path(save_dir)
+        save_path.mkdir(exist_ok=True, parents=True)
+        csv_path = save_path / f"{schedule_type}_schedule_parameters.csv"
+        df = pd.DataFrame(rows, columns=["t", "beta", "alpha", "alpha_bar", "sigma"])
+        df.to_csv(csv_path, index=False)
+        print(f"\nSaved schedule parameters to: {csv_path}")
+
+
+# Plot Schedule Comparison (Theoretical vs Actual)
 def plot_schedule_comparison(
     forward_diff: ForwardDiffusion,
     results: Dict[int, Dict[str, Union[Tensor, float]]],
@@ -251,6 +301,7 @@ def plot_schedule_comparison(
         plt.show()
 
 
+# Print Schedule Comparison (Theoretical vs Actual)
 def print_schedule_comparison(
     forward_diff: ForwardDiffusion,
     results: Dict[int, Dict[str, Union[Tensor, float]]],

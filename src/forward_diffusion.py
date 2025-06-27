@@ -90,13 +90,14 @@ class ForwardDiffusion:
                 f"Unknown schedule_type '{schedule_type}'. Use 'cosine' or 'linear'."
             )
 
-        # Calculate alphas and cumulative alphas
+        # alpha = α_t = 1 - β_t
         alphas_np = 1.0 - betas_np
 
-        # Calculate cumulative product of alphas, prepend 1 for t=0 (no noise) for convenient indexing
+        # cumulative product of alphas: ᾱ_t = Π_{s=1}^{t} α_s,
+        # prepend 1 for t=0 (no noise) for convenient indexing
         alphas_bar_np = np.concatenate(([1.0], np.cumprod(alphas_np)))
 
-        # Calculate sigmas
+        # sigmas: σ_t = √(1-ᾱ_t)
         sigmas_np = np.sqrt(1.0 - alphas_bar_np)
 
         # Convert to tensors and register as buffers
@@ -377,7 +378,7 @@ class ForwardDiffusion:
         alphas_bar = np.cos(((t + s) / (1 + s)) * np.pi / 2) ** 2
         alphas_bar = alphas_bar / alphas_bar[0]
         betas = 1 - (alphas_bar[1:] / alphas_bar[:-1])
-        betas = np.clip(betas, a_min=1e-8, a_max=0.999)
+        betas = np.clip(betas, a_min=0, a_max=0.999)
         return betas
 
     @staticmethod

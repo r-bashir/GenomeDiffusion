@@ -35,6 +35,7 @@ from scripts.utils.schedule_utils import (
     analyze_schedule_parameters,
     plot_schedule_comparison,
     print_schedule_comparison,
+    print_schedule_parameters,
 )
 from src.dataset import SNPDataset
 from src.forward_diffusion import ForwardDiffusion
@@ -129,6 +130,10 @@ def main():
         # Analyze schedule parameters
         logger.info("Analyzing beta schedule...")
         analyze_schedule_parameters(forward_diff, output_dir, schedule_type)
+
+        # Print schedule parameters
+        # logger.info("Printing schedule parameters...")
+        # print_schedule_parameters(forward_diff, output_dir, schedule_type)
 
     # ===================== Analyze Forward Diffusion =====================
 
