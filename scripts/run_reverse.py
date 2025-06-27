@@ -141,10 +141,13 @@ def main():
     # logger.info("Printing statistics for boundary timesteps")
     # print_reverse_statistics(results, timesteps)
 
-    # Plot diagnostics for key timesteps
+    # Selected timesteps for analysis
     key_timesteps = [1, 998, 999, 1000]
-    logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
-    print_diagnostic_statistics(results=results, timesteps=key_timesteps)
+    logger.info(f"Selected timesteps: {key_timesteps}")
+
+    # Plot diagnostics for key timesteps
+    # logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
+    # print_diagnostic_statistics(results=results, timesteps=key_timesteps)
 
     logger.info(f"Generating diagnostic plots for key timesteps: {key_timesteps}")
     plot_reverse_diagnostics(
@@ -152,7 +155,6 @@ def main():
     )
 
     # Diffusion evolution with key timesteps
-    # key_timesteps = [1, 2, 500, 998, 999, 1000]
     logger.info(f"Plotting sample evolution for key timesteps: {key_timesteps}")
     visualize_diffusion_process_lineplot(
         results=results,
