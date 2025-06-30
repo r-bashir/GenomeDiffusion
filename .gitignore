@@ -1,6 +1,7 @@
 *.sif
 *.png
 *.pdf
+*.log
 .ipynb_checkpoints
 __pycache__
 .wandb

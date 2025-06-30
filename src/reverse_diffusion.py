@@ -110,6 +110,41 @@ class ReverseDiffusion:
         # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
         scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
 
+        # ==== Debug Print: Important Variables per Timestep ====
+        # Scalars (print as float)
+        t_val = t.item() if hasattr(t, "item") else t
+        print("\n[ReverseDiffusion]")
+        print(f"timestep: {t_val}")
+        print(f"β_t: {beta_t.flatten()[0].item():.6f}")
+        print(f"α_t: {alpha_t.flatten()[0].item():.6f}")
+        print(f"ᾱ_t: {alpha_bar_t.flatten()[0].item():.6f}")
+        print(f"1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.6f}")  # inv_sqrt_alpha_t
+        print(f"β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.6f}")  # coef
+
+        # Arrays (show shape and first 5 elements of first batch/channel)
+        scaled_pred_noise_np = scaled_pred_noise.detach().cpu().numpy()
+        epsilon_theta_np = epsilon_theta.detach().cpu().numpy()
+        mean_np = (inv_sqrt_alpha_t * (x_t - scaled_pred_noise)).detach().cpu().numpy()
+
+        print("\ncoef * epsilon_theta = scaled_pred_noise")
+        print(
+            f"{'t':>3}: {'β_t/√(1-ᾱ_t)':>6} * {'ε_θ(x_t, t)':>10} = {'β_t/√(1-ᾱ_t) * ε_θ(x_t, t)':>16}"
+        )
+        for i in range(100):
+            print(
+                f"{t_val:>3}: {coef.flatten()[0].item():.6f} * {epsilon_theta_np.flatten()[i]:.6f} = {scaled_pred_noise_np.flatten()[i]:.6f}"
+            )
+
+        print("\nmean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)")
+        print(
+            f"{t_val:>4}: {'inv_sqrt_alpha_t':>10}  {'x_t':>16}  {'scaled_pred_noise':>16}"
+        )
+        for i in range(100):
+            print(
+                f"{t_val:>4}: {inv_sqrt_alpha_t.flatten()[0].item():.6f} * {x_t.flatten()[i]:.6f} - {scaled_pred_noise_np.flatten()[i]:.6f} = {mean_np.flatten()[i]:.6f}"
+            )
+        print("------------------------------------------------------")
+
         # mean = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
         mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -159,10 +194,7 @@ class ReverseDiffusion:
         # Iterate over timesteps in reverse (Algorithm 2 from Ho et al., 2020)
         # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
-            t_tensor = tensor_to_device(
-                torch.full((x.size(0),), t, dtype=torch.long), x.device
-            )
-            x = self.reverse_diffusion_step(x, t_tensor)
+            x = self.reverse_diffusion_step(x, t)
 
         # Post-processing for SNP data
         if discretize:
