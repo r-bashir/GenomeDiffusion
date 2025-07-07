@@ -140,21 +140,21 @@ class DiffusionModel(NetworkBase):
         # Forward diffusion: add noise to the batch
         xt = self.forward_diffusion.sample(batch, t, eps)
 
-        # Predict the noise using the model
-        pred_eps = self.predict_added_noise(xt, t)
+        # ε_θ(x_t, t): Model's prediction of the noise added at timestep t
+        eps_theta = self.predict_added_noise(xt, t)
 
-        # Get sigma_t for each timestep
+        # Get σ_t = √(1 - ᾱ_t) at each timestep
         sigma_t = self.forward_diffusion.sigma(t)
 
         # Broadcast sigma_t to match dimensions of pred_eps
-        sigma_t = bcast_right(sigma_t, pred_eps.ndim)
+        sigma_t = bcast_right(sigma_t, eps_theta.ndim)
 
-        # Scale predicted noise by 1/sigma_t before computing MSE
-        # This implements the supervisor's recommendation: MSE(true_noise, predicted_noise / sigma_t)
-        scaled_pred_eps = pred_eps / sigma_t
+        # Scale predicted noise by 1/σ_t before computing MSE
+        # i.e. MSE(true_noise, ε_θ(x_t, t)/σ_t)
+        scaled_pred_eps = eps_theta / sigma_t
 
         # Compute and return MSE loss
-        return F.mse_loss(scaled_pred_eps, eps)
+        return F.mse_loss(eps, scaled_pred_eps)
 
     # ==================== Inference Methods ====================
     def loss_per_timesteps(
@@ -185,15 +185,15 @@ class DiffusionModel(NetworkBase):
             xt = self.forward_diffusion.sample(x0, t_tensor, eps)
 
             # Predict noise
-            predicted_noise = self.predict_added_noise(xt, t_tensor)
+            eps_theta = self.predict_added_noise(xt, t_tensor)
 
             # Get sigma_t for the current timestep
             sigma_t = self.forward_diffusion.sigma(t_tensor)
             # Broadcast sigma_t to match dimensions of predicted_noise
-            sigma_t = bcast_right(sigma_t, predicted_noise.ndim)
+            sigma_t = bcast_right(sigma_t, eps_theta.ndim)
 
             # Scale predicted noise by 1/sigma_t before computing MSE
-            scaled_pred_noise = predicted_noise / sigma_t
+            scaled_pred_noise = eps_theta / sigma_t
 
             # Compute loss using scaled predicted noise
             loss = F.mse_loss(scaled_pred_noise, eps)

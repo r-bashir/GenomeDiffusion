@@ -70,6 +70,7 @@ class ReverseDiffusion:
         t = tensor_to_device(t, device)
 
         # Ensure x_t has the correct shape [B, C, L]
+        # x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, ε ~ N(0, I) comes from ForwardDiffusion
         x_t = prepare_batch_shape(x_t)
 
         # Get diffusion parameters for timestep t, either use properties with manual indexing
@@ -110,43 +111,31 @@ class ReverseDiffusion:
         # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
         scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
 
-        # ==== Debug Print: Important Variables per Timestep ====
+        # === Debug Print: Important Variables per Timestep ===
         # Scalars (print as float)
-        t_val = t.item() if hasattr(t, "item") else t
-        print("\n[ReverseDiffusion]")
-        print(f"timestep: {t_val}")
-        print(f"β_t: {beta_t.flatten()[0].item():.6f}")
-        print(f"α_t: {alpha_t.flatten()[0].item():.6f}")
-        print(f"ᾱ_t: {alpha_bar_t.flatten()[0].item():.6f}")
-        print(f"1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.6f}")  # inv_sqrt_alpha_t
-        print(f"β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.6f}")  # coef
+
+        # print("\n[ReverseDiffusion]")
+        # print(f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}")
 
         # Arrays (show shape and first 5 elements of first batch/channel)
-        scaled_pred_noise_np = scaled_pred_noise.detach().cpu().numpy()
-        epsilon_theta_np = epsilon_theta.detach().cpu().numpy()
-        mean_np = (inv_sqrt_alpha_t * (x_t - scaled_pred_noise)).detach().cpu().numpy()
+        # scaled_pred_noise_np = scaled_pred_noise.detach().cpu().numpy()
+        # epsilon_theta_np = epsilon_theta.detach().cpu().numpy()
 
-        print("\ncoef * epsilon_theta = scaled_pred_noise")
-        print(
-            f"{'t':>3}: {'β_t/√(1-ᾱ_t)':>6} * {'ε_θ(x_t, t)':>10} = {'β_t/√(1-ᾱ_t) * ε_θ(x_t, t)':>16}"
-        )
-        for i in range(100):
-            print(
-                f"{t_val:>3}: {coef.flatten()[0].item():.6f} * {epsilon_theta_np.flatten()[i]:.6f} = {scaled_pred_noise_np.flatten()[i]:.6f}"
-            )
-
-        print("\nmean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)")
-        print(
-            f"{t_val:>4}: {'inv_sqrt_alpha_t':>10}  {'x_t':>16}  {'scaled_pred_noise':>16}"
-        )
-        for i in range(100):
-            print(
-                f"{t_val:>4}: {inv_sqrt_alpha_t.flatten()[0].item():.6f} * {x_t.flatten()[i]:.6f} - {scaled_pred_noise_np.flatten()[i]:.6f} = {mean_np.flatten()[i]:.6f}"
-            )
-        print("------------------------------------------------------")
+        # print("\ncoef * epsilon_theta = scaled_pred_noise")
+        # print("---------------------------------------------\n")
+        # print(
+        #     f"{'t':>3}: {'coef':>8} * {'epsilon_theta':>10} = {'scaled_pred_noise':>16}"
+        # )
+        # for i in range(100):
+        #     print(
+        #         f"{t.item():>3}: {coef.flatten()[0].item():.6f} * {epsilon_theta_np.flatten()[i]:.6f} = {scaled_pred_noise_np.flatten()[i]:.6f}"
+        #     )
 
         # mean = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
+        mean_old = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
+
+        # TODO: Try new mean = x_t - ε_θ(x_t, t)
+        mean = x_t - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
         # standard deviation = σ_t = √β_t
@@ -159,21 +148,27 @@ class ReverseDiffusion:
 
         # Sample from N(mean, σ_t^2 * I)
         # x_{t-1} = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t)) + σ_t * z
-        x_prev = mean + sigma_t * z  # When t=1, z=0 so x_prev = mean
+        x_t_minus_1 = mean + sigma_t * z  # When t=1, z=0 so x_prev = mean
 
+        # === Debugging: Print and Return Important Variables per Timestep ===
         if return_all:
+
+            print(
+                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
+            )
             return {
-                "x_prev": x_prev,  # x_{t-1}: Denoised sample after adding noise
+                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
                 "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
                 "scaled_pred_noise": scaled_pred_noise,  # β_t/√(1-ᾱ_t) * ε_θ(x_t, t): Scaled predicted noise
                 "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
-                "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β_t)
+                "alpha_t": alpha_t,  # α_t: Alpha for this step
+                "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/sqrt(alpha_t) for diagnostics
                 "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
                 "beta_t": beta_t,  # β_t: Noise schedule value for this step
-                "alpha_t": alpha_t,  # α_t: Alpha for this step
+                "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β_t)
             }
-        return x_prev
+        return x_t_minus_1
 
     def _reverse_diffusion_process(self, x, denoise_step=1, discretize=False):
         """

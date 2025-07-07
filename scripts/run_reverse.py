@@ -141,12 +141,22 @@ def main():
     # logger.info("Printing statistics for boundary timesteps")
     # print_reverse_statistics(results, timesteps)
 
+    # === Debugging Reverse Mean Components ===
+    from scripts.utils.reverse_utils import plot_schedule_parameters_vs_time
+
+    plot_schedule_parameters_vs_time(results, output_dir)
+
+    key_timesteps = [998, 999, 1000]
+    from scripts.utils.reverse_utils import plot_reverse_mean_components
+
+    plot_reverse_mean_components(results, key_timesteps, output_dir)
+
     # Plotting
-    plotting = False
+    plotting = True
     if plotting:
 
         # Selected timesteps for analysis
-        key_timesteps = [1, 998, 999, 1000]
+        # key_timesteps = [1, 998, 999, 1000]
         logger.info(f"Selected timesteps: {key_timesteps}")
 
         # Plot diagnostics for key timesteps
