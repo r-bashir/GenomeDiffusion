@@ -134,7 +134,7 @@ class ReverseDiffusion:
         # mean = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
         mean_old = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
 
-        # TODO: Try new mean = x_t - ε_θ(x_t, t)
+        # TODO: mean = x_t - ε_θ(x_t, t)
         mean = x_t - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 

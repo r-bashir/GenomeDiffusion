@@ -267,20 +267,18 @@ def visualize_diffusion_process_lineplot(
     for i, t in enumerate(timesteps):
         r = results[t]
         x0 = r["x0"].squeeze().cpu().numpy()
-        noise = r["noise"].squeeze().cpu().numpy()
         xt = r["xt"].squeeze().cpu().numpy()
-        pred_noise = r["epsilon_theta"].squeeze().cpu().numpy()
-        alpha_bar_t = r["alpha_bar_t"].squeeze().cpu().numpy()
+        noise = r["noise"].squeeze().cpu().numpy()
         scaled_noise = (
             (r["epsilon_theta"] / (np.sqrt(1.0 - r["alpha_bar_t"])))
             .squeeze()
             .cpu()
             .numpy()
         )
-        x_t_minus_1 = r["x_t_minus_1"].squeeze().cpu().numpy()
         epsilon_theta = r["epsilon_theta"].squeeze().cpu().numpy()
         scaled_epsilon_theta = r["scaled_pred_noise"].squeeze().cpu().numpy()
         mu = r["mu"].squeeze().cpu().numpy()
+        x_t_minus_1 = r["x_t_minus_1"].squeeze().cpu().numpy()
         seq_len = x0.shape[-1]
         x_axis = np.arange(seq_len)
 
@@ -363,6 +361,7 @@ def visualize_diffusion_process_lineplot(
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diffusion_lineplot.png")
+        fig.savefig(f"{output_dir}/diffusion_lineplot.pdf")
         plt.close()
     else:
         plt.show()
@@ -416,34 +415,38 @@ def visualize_diffusion_process_superimposed(
         axes[i].plot(
             x_axis,
             x0_vis,
-            "b-",
+            color="blue",
+            linestyle="-",
             linewidth=1,
             label=r"Original sample: $x_{0}$",
-            alpha=0.8,
+            alpha=0.4,
         )
         axes[i].plot(
             x_axis,
             x_t_vis,
-            "k-",
+            color="orange",
+            linestyle="-",
             linewidth=1,
             label=r"Noisy sample: $x_{t}$",
-            alpha=0.7,
-        )
-        axes[i].plot(
-            x_axis,
-            x_t_minus_1_vis,
-            "g-",
-            linewidth=2,
-            label=r"Denoised sample: $x_{t-1}$",
-            alpha=0.7,
+            alpha=0.6,
         )
         axes[i].plot(
             x_axis,
             mu_vis,
-            "r--",
+            color="green",
+            linestyle="-",
             linewidth=2,
             label=r"Denoised mean: $\mu_\theta(x_{t}, t)$",
-            alpha=0.7,
+            alpha=0.8,
+        )
+        axes[i].plot(
+            x_axis,
+            x_t_minus_1_vis,
+            color="red",
+            linestyle="--",
+            linewidth=1,
+            label=r"Denoised sample: $x_{t-1}$",
+            alpha=1.0,
         )
         axes[i].set_title(f"t={t}")
         axes[i].legend(loc="lower right", fontsize=8)
@@ -468,6 +471,7 @@ def visualize_diffusion_process_superimposed(
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diffusion_superimposed.png")
+        fig.savefig(f"{output_dir}/diffusion_superimposed.pdf")
         plt.close()
     else:
         plt.show()
@@ -621,32 +625,35 @@ def plot_diagnostic_signals(results, timesteps, output_dir=None):
         s = signals[t]
         axs[i].plot(
             s["x0"],
-            label=r"Original sample: $x_{0}$",
             color="blue",
+            linestyle="-",
             linewidth=1,
-            alpha=0.7,
+            label=r"Original sample: $x_{0}$",
+            alpha=0.4,
         )
         axs[i].plot(
             s["x_t"],
+            color="orange",
+            linestyle="-",
+            linewidth=1,
             label=r"Noisy sample: $x_{t}$",
-            color="black",
-            linewidth=1,
-            alpha=0.7,
-        )
-        axs[i].plot(
-            s["x_t_minus_1"],
-            label=r"Denoised sample: $x_{t-1}$",
-            color="green",
-            linewidth=1,
-            alpha=0.9,
+            alpha=0.6,
         )
         axs[i].plot(
             s["mu"],
+            color="green",
+            linestyle="-",
+            linewidth=2,
             label=r"Denoised mean: $\mu_\theta(x_{t}, t)$",
+            alpha=0.8,
+        )
+        axs[i].plot(
+            s["x_t_minus_1"],
             color="red",
             linestyle="--",
             linewidth=1,
-            alpha=0.7,
+            label=r"Denoised sample: $x_{t-1}$",
+            alpha=1.0,
         )
         axs[i].set_title(f"Reverse Diffusion Signals at t={t}")
         axs[i].legend(loc="lower right", fontsize=8)
@@ -655,6 +662,7 @@ def plot_diagnostic_signals(results, timesteps, output_dir=None):
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diagnostic_signals.png")
+        fig.savefig(f"{output_dir}/diagnostic_signals.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -670,26 +678,37 @@ def plot_diagnostic_noise(results, timesteps, output_dir=None):
     for i, t in enumerate(timesteps):
         s = signals[t]
         axs[i].plot(
-            s["noise"], label=r"Added noise: $\epsilon$", color="red", alpha=0.7
+            s["noise"],
+            color="black",
+            linestyle="-",
+            linewidth=1,
+            label=r"Added noise: $\epsilon$",
+            alpha=0.4,
         )
         axs[i].plot(
             s["epsilon_theta"],
+            color="magenta",
+            linestyle="-",
+            linewidth=1,
             label=r"Predicted noise: $\epsilon_{\theta}$",
-            color="green",
-            alpha=0.7,
+            alpha=0.6,
         )
         axs[i].plot(
             s["scaled_pred_noise"],
+            color="#56B4E9",  # Teal/Cyan
+            linestyle="-",
+            linewidth=2,
             label=r"Scaled predicted noise: $\beta_t/\sqrt{1-\bar{\alpha_t}} * \epsilon_{\theta}$",
-            color="magenta",
-            linestyle="--",
+            alpha=0.8,
         )
         pred_noise = s["epsilon_theta"] / np.sqrt(1 - s["alpha_bar_t"])
         axs[i].plot(
             pred_noise,
-            label=r"Scaled predicted noise: $1/\sqrt{1-\bar{\alpha_t}} * \epsilon_{\theta}$",
-            color="yellow",
+            color="#F0E442",  # Dark Yellow
             linestyle="--",
+            linewidth=1,
+            label=r"Scaled predicted noise: $1/\sqrt{1-\bar{\alpha_t}} * \epsilon_{\theta}$",
+            alpha=1.0,
         )
         axs[i].set_title(f"Noise Comparison at t={t}")
         axs[i].legend(loc="lower right", fontsize=8)
@@ -698,6 +717,7 @@ def plot_diagnostic_noise(results, timesteps, output_dir=None):
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/diagnostic_noise.png")
+        fig.savefig(f"{output_dir}/diagnostic_noise.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -727,6 +747,7 @@ def plot_diagnostic_variance(results, timesteps, output_dir=None):
 
     if output_dir:
         fig.savefig(f"{output_dir}/diagnostic_variance.png")
+        fig.savefig(f"{output_dir}/diagnostic_variance.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -755,6 +776,7 @@ def plot_diagnostic_schedule(results, timesteps, output_dir=None):
 
     if output_dir:
         fig.savefig(f"{output_dir}/diagnostic_schedule.png")
+        fig.savefig(f"{output_dir}/diagnostic_schedule.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -795,6 +817,7 @@ def plot_diagnostic_histograms(results, timesteps, output_dir=None):
 
     if output_dir:
         fig.savefig(f"{output_dir}/diagnostic_histograms.png")
+        fig.savefig(f"{output_dir}/diagnostic_histograms.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -942,6 +965,7 @@ def plot_reverse_mean_components(results, timesteps, output_dir=None):
     fig.tight_layout()
     if output_dir:
         fig.savefig(f"{output_dir}/reverse_mean_components.png")
+        fig.savefig(f"{output_dir}/reverse_mean_components.pdf")
         plt.close(fig)
     else:
         plt.show()
@@ -975,6 +999,7 @@ def plot_schedule_parameters_vs_time(results, output_dir=None):
     plt.tight_layout()
     if output_dir:
         plt.savefig(f"{output_dir}/schedule_parameters_vs_time.png")
+        plt.savefig(f"{output_dir}/schedule_parameters_vs_time.pdf")
         plt.close()
     else:
         plt.show()

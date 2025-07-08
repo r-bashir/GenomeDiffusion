@@ -22,6 +22,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # We need to disable the import-not-at-top lint rule
 # ruff: noqa: E402
 
+from scripts.utils.reverse_utils import (
+    plot_reverse_mean_components,
+    plot_schedule_parameters_vs_time,
+)
 from src import DiffusionModel
 from src.utils import set_seed, setup_logging
 from utils.reverse_utils import (
@@ -137,31 +141,25 @@ def main():
         timesteps=timesteps,
     )
 
-    # Print statistics for boundary timesteps (FIXME: Refactoring needed as new format for results)
+    # Print statistics for boundary timesteps
+    # FIXME: Refactoring needed as new format for results
     # logger.info("Printing statistics for boundary timesteps")
     # print_reverse_statistics(results, timesteps)
 
     # === Debugging Reverse Mean Components ===
-    from scripts.utils.reverse_utils import plot_schedule_parameters_vs_time
-
-    plot_schedule_parameters_vs_time(results, output_dir)
-
-    key_timesteps = [998, 999, 1000]
-    from scripts.utils.reverse_utils import plot_reverse_mean_components
-
-    plot_reverse_mean_components(results, key_timesteps, output_dir)
+    # plot_schedule_parameters_vs_time(results, output_dir)
 
     # Plotting
     plotting = True
     if plotting:
 
         # Selected timesteps for analysis
-        # key_timesteps = [1, 998, 999, 1000]
+        key_timesteps = [1, 998, 999, 1000]
         logger.info(f"Selected timesteps: {key_timesteps}")
 
         # Plot diagnostics for key timesteps
-        logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
-        print_diagnostic_statistics(results=results, timesteps=key_timesteps)
+        # logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
+        # print_diagnostic_statistics(results=results, timesteps=key_timesteps)
 
         # Plot diagnostics for key timesteps
         logger.info(f"Generating diagnostic plots for key timesteps: {key_timesteps}")
@@ -177,6 +175,14 @@ def main():
             output_dir=output_dir,
         )
         visualize_diffusion_process_superimposed(
+            results=results,
+            timesteps=key_timesteps,
+            output_dir=output_dir,
+        )
+
+        # Plot reverse mean components for key timesteps
+        logger.info(f"Plotting mean components for key timesteps: {key_timesteps}")
+        plot_reverse_mean_components(
             results=results,
             timesteps=key_timesteps,
             output_dir=output_dir,
