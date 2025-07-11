@@ -1,9 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
-import argparse
-import os
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,12 +16,14 @@ ReverseDiffusionResults = Dict[int, ReverseDiffusionResult]
 TimestepDict = Dict[str, List[int]]
 
 
-# ==================== Core Reverse Process Analysis ====================
-def to_numpy(tensor):
+def torch_to_numpy(tensor: Tensor) -> np.ndarray:
     """Convert a PyTorch tensor to numpy array."""
     if tensor is None:
         return None
     return tensor.cpu().detach().numpy()
+
+
+# ==================== Core Reverse Process Analysis ====================
 
 
 # Generate timesteps for analysis
@@ -187,7 +186,7 @@ def run_reverse_step(
             "inv_sqrt_alpha_t"
         ],  # 1/√α_t: inverse alpha for this step
         "alpha_bar_t": reverse_dict["alpha_bar_t"],  # ᾱ_t: cumulative product of alphas
-        "sigma_t": reverse_dict["sigma_t"],  # σ_t: std of noise added at this step
+        "sigma_t": reverse_dict["sigma_t"],  # σ_t=√β_t: std of noise added at this step
         "metrics": metrics,  # dictionary of diagnostic metrics
     }
 
@@ -196,32 +195,122 @@ def run_reverse_step(
 def print_reverse_statistics(
     results: ReverseDiffusionResults, timesteps: Optional[List[int]] = None
 ) -> None:
-    """Print formatted diffusion statistics.
+    """Print formatted diffusion statistics for specified timesteps.
+    Works directly with PyTorch tensors for all calculations.
 
     Args:
-        timestep: Current timestep
-        metrics: Dictionary of computed statistics
+        results: ReverseDiffusionResults dictionary mapping timesteps to result dictionaries
+        timesteps: List of timesteps to print statistics for (if None, use all in results)
     """
+    print("\n" + "=" * 80)
+    print(" REVERSE DIFFUSION STATISTICS ")
+    print("=" * 80)
+
+    # Handle timesteps
     if timesteps is None:
         timesteps = sorted(results.keys())
     else:
-        # Filter timesteps to those available in results
+        # Filter timesteps to only those in results
         timesteps = [t for t in timesteps if t in results]
         timesteps.sort()
 
     for t in timesteps:
         r = results[t]
+
+        # Diffusion parameters section
         print(f"\nTimestep t = {t}:")
-        print(f"- Sigma_t: {r['metrics']['sigma_t']:.8f}")
-        print(f"- Alpha_bar_t: {r['metrics']['alpha_bar_t']:.8f}")
-        print(f"- Coef (beta/sqrt(1-alpha_bar)): {r['metrics']['coef']:.8f}")
+        print("Diffusion Parameters:")
+        print(f"- β_t: {r['beta_t'].item():.10f}")
+        print(f"- α_t: {r['alpha_t'].item():.10f}")
+        print(f"- ᾱ_t: {r['alpha_bar_t'].item():.10f}")
+        print(f"- 1/√α_t: {r['inv_sqrt_alpha_t'].item():.10f}")
+        print(f"- β_t/√(1-ᾱ_t): {r['coef'].item():.10f}")
+        print(f"- σ_t=√β_t: {r['sigma_t'].item():.10f}")
+
+        # Noise prediction metrics
+        print("\nNoise Prediction Metrics:")
         print(f"- Noise MSE: {r['metrics']['noise_mse']:.8f}")
-        print(f"- Reconstruction MSE (x0 vs x_t-1): {r['metrics']['x0_diff']:.8f}")
-        print(f"- Signal-to-Noise Ratio: {r['metrics']['signal_to_noise']:.8f}")
-        print(f"- True Noise Magnitude: {r['metrics']['noise_magnitude']:.8f}")
+        print(f"- |ε| (true noise magnitude): {r['metrics']['noise_magnitude']:.8f}")
         print(
-            f"- Predicted Noise Magnitude: {r['metrics']['pred_noise_magnitude']:.8f}"
+            f"- |εᵩ| (pred noise magnitude): {r['metrics']['pred_noise_magnitude']:.8f}"
         )
+
+        # Calculate relative error directly with tensors
+        noise_mag = r["metrics"]["noise_magnitude"]
+        pred_noise_mag = r["metrics"]["pred_noise_magnitude"]
+        rel_error = (pred_noise_mag / max(noise_mag, 1e-8)) - 1
+        print(f"- Relative error: {rel_error:.8f}")
+
+        # Reconstruction metrics
+        print("\nReconstruction Metrics:")
+        print(f"- x₀ vs x_{t-1} MSE: {r['metrics']['x0_diff']:.8f}")
+        print(f"- SNR: {r['metrics']['signal_to_noise']:.8f}")
+
+        # Additional statistics
+        print("\nAdditional Information:")
+        print(f"- Progress: {t/1000:.1%} through diffusion process")
+        print(f"- Signal strength: {torch.sqrt(r['alpha_bar_t']).item():.6f}")
+        print(f"- Noise strength: {torch.sqrt(1 - r['alpha_bar_t']).item():.6f}")
+
+        # Tensor shape information
+        print("\nTensor Shapes:")
+        print(f"- Original x₀: {r['x0'].shape}")
+        print(f"- Noisy x_t: {r['xt'].shape}")
+        print(f"- Denoised x_{t-1}: {r['x_t_minus_1'].shape}")
+        print("-" * 50)
+
+
+def plot_schedule_parameters(
+    results: ReverseDiffusionResults,
+    timesteps: Optional[List[int]] = None,
+    output_dir=None,
+):
+    """
+    Plot the schedule parameters (β_t, α_t, ᾱ_t, 1/√α_t, β_t/√(1-ᾱ_t), σ_t=√β_t)
+    for the given results dictionary as a function of time.
+    """
+    print("\n" + "=" * 80)
+    print(" REVERSE DIFFUSION SCHEDULE PARAMETERS ")
+    print("=" * 80)
+
+    # Handle timesteps
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to only those in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
+    # Extract Schedule Parameters
+    beta_t = [float(torch_to_numpy(results[t]["beta_t"])) for t in timesteps]
+    alpha_t = [float(torch_to_numpy(results[t]["alpha_t"])) for t in timesteps]
+    alpha_bar_t = [float(torch_to_numpy(results[t]["alpha_bar_t"])) for t in timesteps]
+    inv_sqrt_alpha_t = [
+        float(torch_to_numpy(results[t]["inv_sqrt_alpha_t"])) for t in timesteps
+    ]
+    coef = [float(torch_to_numpy(results[t]["coef"])) for t in timesteps]
+    sigma_t = [float(torch_to_numpy(results[t]["sigma_t"])) for t in timesteps]
+
+    # Plot Schedule Parameters
+    plt.figure(figsize=(7, 6))
+    plt.plot(timesteps, beta_t, "b-", label=r"$\beta_t$")
+    plt.plot(timesteps, alpha_t, "g-", label=r"$\alpha_t$")
+    plt.plot(timesteps, alpha_bar_t, "r--", label=r"$\bar{\alpha}_t$")
+    plt.plot(timesteps, inv_sqrt_alpha_t, "m--", label=r"$1/\sqrt{\alpha_t}$")
+    plt.plot(timesteps, coef, "k--", label=r"$coef=\beta_t/\sqrt{1-\bar{\alpha}_t}$")
+    plt.plot(timesteps, sigma_t, "y--", label=r"$\sigma_t=\sqrt{\beta_t}$")
+    plt.xlabel("Timestep")
+    plt.ylabel("Value")
+    plt.title("Schedule Parameters")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    if output_dir:
+        plt.savefig(f"{output_dir}/schedule_parameters.png")
+        plt.savefig(f"{output_dir}/schedule_parameters.pdf")
+        plt.close()
+    else:
+        plt.show()
 
 
 # ==================== Evolution of Denoising ====================
@@ -230,7 +319,7 @@ def print_reverse_statistics(
 # Visualize diffusion process at different timesteps
 def visualize_diffusion_process_lineplot(
     results: ReverseDiffusionResults,
-    timesteps: Optional[list] = None,
+    timesteps: Optional[List[int]] = None,
     output_dir: Optional[str] = None,
 ):
     """
@@ -266,19 +355,16 @@ def visualize_diffusion_process_lineplot(
 
     for i, t in enumerate(timesteps):
         r = results[t]
-        x0 = r["x0"].squeeze().cpu().numpy()
-        xt = r["xt"].squeeze().cpu().numpy()
-        noise = r["noise"].squeeze().cpu().numpy()
-        scaled_noise = (
-            (r["epsilon_theta"] / (np.sqrt(1.0 - r["alpha_bar_t"])))
-            .squeeze()
-            .cpu()
-            .numpy()
+        x0 = torch_to_numpy(r["x0"].squeeze())
+        xt = torch_to_numpy(r["xt"].squeeze())
+        noise = torch_to_numpy(r["noise"].squeeze())
+        scaled_noise = torch_to_numpy(
+            (r["epsilon_theta"] / (torch.sqrt(1.0 - r["alpha_bar_t"]))).squeeze()
         )
-        epsilon_theta = r["epsilon_theta"].squeeze().cpu().numpy()
-        scaled_epsilon_theta = r["scaled_pred_noise"].squeeze().cpu().numpy()
-        mu = r["mu"].squeeze().cpu().numpy()
-        x_t_minus_1 = r["x_t_minus_1"].squeeze().cpu().numpy()
+        epsilon_theta = torch_to_numpy(r["epsilon_theta"].squeeze())
+        scaled_epsilon_theta = torch_to_numpy(r["scaled_pred_noise"].squeeze())
+        mu = torch_to_numpy(r["mu"].squeeze())
+        x_t_minus_1 = torch_to_numpy(r["x_t_minus_1"].squeeze())
         seq_len = x0.shape[-1]
         x_axis = np.arange(seq_len)
 
@@ -370,7 +456,7 @@ def visualize_diffusion_process_lineplot(
 # Visualize Superimposed Denoising Process
 def visualize_diffusion_process_superimposed(
     results: ReverseDiffusionResults,
-    timesteps: Optional[list] = None,
+    timesteps: Optional[List[int]] = None,
     output_dir: Optional[str] = None,
 ):
     """
@@ -405,10 +491,10 @@ def visualize_diffusion_process_superimposed(
 
         # Always plot only the first sample and first channel for all tensors
         # Robustly flatten all arrays for plotting
-        x0_vis = to_numpy(result["x0"]).reshape(-1)
-        x_t_vis = to_numpy(result["xt"]).reshape(-1)
-        x_t_minus_1_vis = to_numpy(result["x_t_minus_1"]).reshape(-1)
-        mu_vis = to_numpy(result["mu"]).reshape(-1)
+        x0_vis = torch_to_numpy(result["x0"]).flatten()
+        x_t_vis = torch_to_numpy(result["xt"]).flatten()
+        x_t_minus_1_vis = torch_to_numpy(result["x_t_minus_1"]).flatten()
+        mu_vis = torch_to_numpy(result["mu"]).flatten()
         x_axis = np.arange(len(x0_vis))
 
         # Plot data
@@ -451,9 +537,13 @@ def visualize_diffusion_process_superimposed(
         axes[i].set_title(f"t={t}")
         axes[i].legend(loc="lower right", fontsize=8)
         axes[i].grid(True, alpha=0.3)
-        initial_noise = np.mean(np.abs(to_numpy(result["xt"]) - to_numpy(result["x0"])))
+
+        # Calculate noise reduction
+        initial_noise = np.mean(
+            np.abs(torch_to_numpy(result["xt"]) - torch_to_numpy(result["x0"]))
+        )
         final_noise = np.mean(
-            np.abs(to_numpy(result["x_t_minus_1"]) - to_numpy(result["x0"]))
+            np.abs(torch_to_numpy(result["x_t_minus_1"]) - torch_to_numpy(result["x0"]))
         )
         noise_reduction = initial_noise - final_noise
         noise_reduction_percent = (
@@ -473,6 +563,120 @@ def visualize_diffusion_process_superimposed(
         fig.savefig(f"{output_dir}/diffusion_superimposed.png")
         fig.savefig(f"{output_dir}/diffusion_superimposed.pdf")
         plt.close()
+    else:
+        plt.show()
+
+
+def plot_reverse_mean_components(results, timesteps, output_dir=None):
+    """
+    Plot all variables entering the mean calculation in the reverse diffusion step for each timestep.
+    Args:
+        results: ReverseDiffusionResults dict (timestep -> result dict)
+        timesteps: List of timesteps to visualize
+        output_dir: Directory to save visualizations
+    """
+    # Handle timesteps
+    if timesteps is None:
+        timesteps = sorted(results.keys())
+    else:
+        # Filter timesteps to only those in results
+        timesteps = [t for t in timesteps if t in results]
+        timesteps.sort()
+
+    n_rows, n_cols = len(timesteps), 5
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 3 * n_rows))
+    if n_rows == 1:
+        axes = axes[np.newaxis, :]
+
+    for i, t in enumerate(timesteps):
+
+        r = results[t]
+        xt = torch_to_numpy(r["xt"].squeeze())
+        epsilon_theta = torch_to_numpy(r["epsilon_theta"].squeeze())
+        coef = torch_to_numpy(r["coef"].squeeze())
+        scaled_pred_noise = torch_to_numpy(r["scaled_pred_noise"].squeeze())
+        mu = torch_to_numpy(r["mu"].squeeze())
+        inv_sqrt_alpha_t = torch_to_numpy(r["inv_sqrt_alpha_t"].squeeze())
+        x_t_minus_1 = torch_to_numpy(r["x_t_minus_1"].squeeze())
+        seq_len = xt.shape[-1]
+        x_axis = np.arange(seq_len)
+
+        # Set titles
+        if i == 0:
+            axes[i, 0].set_title(r"Noisy sample: $x_{t}$")
+            axes[i, 1].set_title(r"$\epsilon_\theta(x_{t}, t)$")
+            axes[i, 2].set_title(r"$\beta_t/\sqrt{1-\bar{\alpha_t}} * \epsilon_\theta$")
+            axes[i, 3].set_title(
+                r"$\mu_\theta(x_{t}, t) = 1/\sqrt{\alpha_t} * (x_t - coef * \epsilon_\theta)$"
+            )
+            axes[i, 4].set_title(r"$x_{t-1} = \mu_\theta(x_{t}, t) + \sigma_t * z$")
+        if i == n_rows - 1:
+            for j in range(axes.shape[1]):
+                axes[i, j].set_xlabel("SNP Markers")
+
+        # x_t: Noisy sample
+        axes[i, 0].plot(x_axis, xt, "b-", linewidth=1)
+
+        # predicted_noise = ε_θ(x_t, t): Predicted noise
+        axes[i, 1].plot(
+            x_axis,
+            epsilon_theta,
+            "r-",
+            linewidth=1,
+            label=r"$\beta_t$ = %.6f, $\alpha_t$ = %.6f" % (r["beta_t"], r["alpha_t"]),
+        )
+        axes[i, 1].legend(fontsize=6)
+
+        # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
+        label_scaled_pred_noise = (
+            r"$\beta_t$ = %.6f, $\bar{\alpha_t}$ = %.6f, $coef$ = %.6f"
+            % (r["beta_t"], r["alpha_t"], coef),
+        )
+        axes[i, 2].plot(
+            x_axis,
+            scaled_pred_noise,
+            "k-",
+            linewidth=1,
+            label=label_scaled_pred_noise,
+        )
+        axes[i, 2].legend(fontsize=6)
+
+        # mu = μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+        label_mu = r"$1/\sqrt{\alpha_t}$ = %.6f, $coef$ = %.6f" % (
+            inv_sqrt_alpha_t,
+            coef,
+        )
+        axes[i, 3].plot(
+            x_axis,
+            mu,
+            "y-",
+            linewidth=1,
+            label=label_mu,
+        )
+        axes[i, 3].legend(fontsize=6)
+
+        # x_{t-1} = μ_θ(x_t, t) + σ_t * z
+        axes[i, 4].plot(
+            x_axis,
+            mu,
+            "y-",
+            linewidth=1,
+            label=label_mu,
+        )
+        axes[i, 4].plot(
+            x_axis,
+            x_t_minus_1,
+            "g-",
+            linewidth=1,
+            label=r"$\sigma_t$ = %.6f" % r["sigma_t"],
+        )
+        axes[i, 4].legend(fontsize=6)
+
+    fig.tight_layout()
+    if output_dir:
+        fig.savefig(f"{output_dir}/reverse_mean_components.png")
+        fig.savefig(f"{output_dir}/reverse_mean_components.pdf")
+        plt.close(fig)
     else:
         plt.show()
 
@@ -542,7 +746,7 @@ def print_diagnostic_statistics(results, timesteps):
 
         # 1. Signal Statistics
         print("Signal Statistics:")
-        for key in ["x0", "x_t", "mu", "x_t_minus_1"]:
+        for key in ["x0", "xt", "mu", "x_t_minus_1"]:
             if s[key] is not None:
                 arr = np.array(s[key])
                 print(
@@ -565,8 +769,8 @@ def print_diagnostic_statistics(results, timesteps):
         # 4. Critical Metrics
         print("\nCritical Metrics:")
         # Variance ratios
-        if s["x_t"] is not None and s["x_t_minus_1"] is not None:
-            var_ratio = np.std(s["x_t_minus_1"]) / np.std(s["x_t"])
+        if s["xt"] is not None and s["x_t_minus_1"] is not None:
+            var_ratio = np.std(s["x_t_minus_1"]) / np.std(s["xt"])
             print(f"  Variance Ratio (σ_{t-1}/σ_t)     : {var_ratio:8.4f}")
 
         # Noise prediction accuracy
@@ -615,7 +819,7 @@ def plot_reverse_diagnostics(results, timesteps, output_dir=None):
 
 
 def plot_diagnostic_signals(results, timesteps, output_dir=None):
-    """Plot x0, x_t, mu, x_t_minus_1 for all timesteps."""
+    """Plot x0, xt, mu, x_t_minus_1 for all timesteps."""
     signals = prepare_diagnostic_signals(results, timesteps)
     n_rows = (len(timesteps) + 1) // 2  # 2 plots per row
     fig, axs = plt.subplots(n_rows, 2, figsize=(14, 4 * n_rows))
@@ -632,7 +836,7 @@ def plot_diagnostic_signals(results, timesteps, output_dir=None):
             alpha=0.4,
         )
         axs[i].plot(
-            s["x_t"],
+            s["xt"],
             color="orange",
             linestyle="-",
             linewidth=1,
@@ -727,7 +931,7 @@ def plot_diagnostic_variance(results, timesteps, output_dir=None):
     """Plot variance bar plots for all timesteps."""
     signals = prepare_diagnostic_signals(results, timesteps)
     labels = [r"$x_{t}$", r"$\mu_\theta(x_{t}, t)$", r"$x_{t-1}$"]
-    keys = ["x_t", "mu", "x_t_minus_1"]
+    keys = ["xt", "mu", "x_t_minus_1"]
 
     fig, ax = plt.subplots(figsize=(2 * len(timesteps) + 6, 5))
     x = np.arange(len(labels))
@@ -787,25 +991,38 @@ def plot_diagnostic_histograms(results, timesteps, output_dir=None):
     signals = prepare_diagnostic_signals(results, timesteps)
     n_rows = len(timesteps)
     fig, axs = plt.subplots(
-        n_rows, 3, figsize=(14, 3 * n_rows), sharex="col", sharey="row"
+        n_rows, 4, figsize=(16, 3 * n_rows), sharex="col", sharey="row"
     )
     if n_rows == 1:
-        axs = axs.reshape(1, -1)
+        # Convert 1D array to 2D array with shape (1, 4) for consistent indexing
+        axs = axs.reshape(1, 4)
 
     for i, t in enumerate(timesteps):
         s = signals[t]
-        for j, key in enumerate(["x0", "mu", "x_t_minus_1"]):
+        # Order: original sample, noisy sample, denoised mean, denoised sample
+        for j, key in enumerate(["x0", "xt", "mu", "x_t_minus_1"]):
             axs[i, j].hist(
                 s[key],
-                bins=40,
+                bins=100,
                 alpha=0.7,
                 label=(
-                    r"$x_{t}$"
-                    if key == "x_t"
-                    else r"$\mu_\theta(x_{t}, t)$" if key == "mu" else r"$x_{t-1}$"
+                    r"$x_0$"
+                    if key == "x0"
+                    else (
+                        r"$\mu_\theta(x_{t}, t)$"
+                        if key == "mu"
+                        else r"$x_{t}$" if key == "xt" else r"$x_{t-1}$"
+                    )
                 ),
             )
-            axs[i, j].set_title(f"{key} at t={t}")
+            # More descriptive titles
+            titles = {
+                "x0": f"$x_0$: Original sample at t={t}",
+                "xt": f"$x_t$: Noisy sample at t={t}",
+                "mu": rf"$\mu_{{\theta}}$: Denoised mean at t={t}",
+                "x_t_minus_1": f"$x_{{t-1}}$: Denoised sample at t={t}",
+            }
+            axs[i, j].set_title(titles[key])
 
     for ax in axs[-1]:
         ax.set_xlabel("Value")
@@ -826,180 +1043,33 @@ def plot_diagnostic_histograms(results, timesteps, output_dir=None):
 def prepare_diagnostic_signals(results, timesteps):
     """
     Extract and prepare all signals needed for diagnostics from results.
+    Converts tensors to numpy arrays and reshapes them for plotting and analysis.
+
     Args:
         results: Dict mapping timesteps to ReverseDiffusionResult
         timesteps: List of timesteps to analyze
     Returns:
         Dict mapping timesteps to prepared signals
     """
-
-    def flatten(x):
-        return x.reshape(-1) if x is not None else None
-
-    def get(key, r):
-        return flatten(to_numpy(r[key])) if key in r and r[key] is not None else None
-
     signals = {}
     for t in timesteps:
+        r = results[t]
+
         signals[t] = {
-            "x0": get("x0", results[t]),
-            "x_t": get("xt", results[t]),
-            "mu": get("mu", results[t]),
-            "x_t_minus_1": get("x_t_minus_1", results[t]),
-            "noise": get("noise", results[t]),
-            "epsilon_theta": get("epsilon_theta", results[t]),
-            "scaled_pred_noise": get("scaled_pred_noise", results[t]),
-            "alpha_bar_t": get("alpha_bar_t", results[t]),
-            "sigma_t": float(results[t].get("sigma_t", 0)),  # Convert to scalar
-            "coef": float(results[t].get("coef", 0)),  # Convert to scalar
+            # Signal values (flattened to 1D for easier analysis)
+            "x0": torch_to_numpy(r["x0"]).flatten(),
+            "xt": torch_to_numpy(r["xt"]).flatten(),
+            "mu": torch_to_numpy(r["mu"]).flatten(),
+            "x_t_minus_1": torch_to_numpy(r["x_t_minus_1"]).flatten(),
+            "noise": torch_to_numpy(r["noise"]).flatten(),
+            "epsilon_theta": torch_to_numpy(r["epsilon_theta"]).flatten(),
+            "scaled_pred_noise": torch_to_numpy(r["scaled_pred_noise"]).flatten(),
+            # Scalar parameters (converted to Python scalars)
+            "alpha_bar_t": r["alpha_bar_t"].item(),
+            "alpha_t": r["alpha_t"].item(),
+            "beta_t": r["beta_t"].item(),
+            "sigma_t": r["sigma_t"].item(),
+            "coef": r["coef"].item(),
+            "inv_sqrt_alpha_t": r["inv_sqrt_alpha_t"].item(),
         }
     return signals
-
-
-# === Debugging Reverse Mean Components ===
-def plot_reverse_mean_components(results, timesteps, output_dir=None):
-    """
-    Plot all variables entering the mean calculation in the reverse diffusion step for each timestep.
-    Args:
-        results: ReverseDiffusionResults dict (timestep -> result dict)
-        timesteps: List of timesteps to visualize
-        output_dir: Directory to save visualizations
-    """
-    # Handle timesteps
-    if timesteps is None:
-        timesteps = sorted(results.keys())
-    else:
-        # Filter timesteps to only those in results
-        timesteps = [t for t in timesteps if t in results]
-        timesteps.sort()
-
-    n_rows, n_cols = len(timesteps), 5
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=(20, 3 * n_rows))
-    if n_rows == 1:
-        axes = axes[np.newaxis, :]
-
-    for i, t in enumerate(timesteps):
-
-        r = results[t]
-        xt = r["xt"].squeeze().cpu().numpy()
-        epsilon_theta = r["epsilon_theta"].squeeze().cpu().numpy()
-        coef = r["coef"].squeeze().cpu().numpy()
-        scaled_pred_noise = r["scaled_pred_noise"].squeeze().cpu().numpy()
-        mu = r["mu"].squeeze().cpu().numpy()
-        inv_sqrt_alpha_t = r["inv_sqrt_alpha_t"].squeeze().cpu().numpy()
-        x_t_minus_1 = r["x_t_minus_1"].squeeze().cpu().numpy()
-        seq_len = xt.shape[-1]
-        x_axis = np.arange(seq_len)
-
-        # Set titles
-        if i == 0:
-            axes[i, 0].set_title(r"Noisy sample: $x_{t}$")
-            axes[i, 1].set_title(r"$\epsilon_\theta(x_{t}, t)$")
-            axes[i, 2].set_title(r"$\beta_t/\sqrt{1-\bar{\alpha_t}} * \epsilon_\theta$")
-            axes[i, 3].set_title(
-                r"$\mu_\theta(x_{t}, t) = 1/\sqrt{\alpha_t} * (x_t - coef * \epsilon_\theta)$"
-            )
-            axes[i, 4].set_title(r"$x_{t-1} = \mu_\theta(x_{t}, t) + \sigma_t * z$")
-        if i == n_rows - 1:
-            for j in range(axes.shape[1]):
-                axes[i, j].set_xlabel("SNP Markers")
-
-        # x_t: Noisy sample
-        axes[i, 0].plot(x_axis, xt, "b-", linewidth=1)
-
-        # predicted_noise = ε_θ(x_t, t): Predicted noise
-        axes[i, 1].plot(
-            x_axis,
-            epsilon_theta,
-            "r-",
-            linewidth=1,
-            label=r"$\beta_t$ = %.6f, $\alpha_t$ = %.6f" % (r["beta_t"], r["alpha_t"]),
-        )
-        axes[i, 1].legend(fontsize=6)
-
-        # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
-        label_scaled_pred_noise = (
-            r"$\beta_t$ = %.6f, $\bar{\alpha_t}$ = %.6f, $coef$ = %.6f"
-            % (r["beta_t"], r["alpha_t"], coef),
-        )
-        axes[i, 2].plot(
-            x_axis,
-            scaled_pred_noise,
-            "k-",
-            linewidth=1,
-            label=label_scaled_pred_noise,
-        )
-        axes[i, 2].legend(fontsize=6)
-
-        # mu = μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        label_mu = r"$1/\sqrt{\alpha_t}$ = %.6f, $coef$ = %.6f" % (
-            inv_sqrt_alpha_t,
-            coef,
-        )
-        axes[i, 3].plot(
-            x_axis,
-            mu,
-            "y-",
-            linewidth=1,
-            label=label_mu,
-        )
-        axes[i, 3].legend(fontsize=6)
-
-        # x_{t-1} = μ_θ(x_t, t) + σ_t * z
-        axes[i, 4].plot(
-            x_axis,
-            mu,
-            "y-",
-            linewidth=1,
-            label=label_mu,
-        )
-        axes[i, 4].plot(
-            x_axis,
-            x_t_minus_1,
-            "g-",
-            linewidth=1,
-            label=r"$\sigma_t$ = %.6f" % r["sigma_t"],
-        )
-        axes[i, 4].legend(fontsize=6)
-
-    fig.tight_layout()
-    if output_dir:
-        fig.savefig(f"{output_dir}/reverse_mean_components.png")
-        fig.savefig(f"{output_dir}/reverse_mean_components.pdf")
-        plt.close(fig)
-    else:
-        plt.show()
-
-
-def plot_schedule_parameters_vs_time(results, output_dir=None):
-    import matplotlib.pyplot as plt
-    import numpy as np
-
-    timesteps = sorted(results.keys())
-    beta_t = [float(np.squeeze(results[t]["beta_t"])) for t in timesteps]
-    alpha_t = [float(np.squeeze(results[t]["alpha_t"])) for t in timesteps]
-    alpha_bar_t = [float(np.squeeze(results[t]["alpha_bar_t"])) for t in timesteps]
-    inv_sqrt_alpha_t = [
-        float(np.squeeze(results[t]["inv_sqrt_alpha_t"])) for t in timesteps
-    ]
-    coef = [float(np.squeeze(results[t]["coef"])) for t in timesteps]
-
-    plt.figure(figsize=(7, 6))
-    plt.plot(timesteps, beta_t, label=r"$\beta_t$", marker="o")
-    plt.plot(timesteps, alpha_t, label=r"$\alpha_t$", marker="o")
-    plt.plot(timesteps, alpha_bar_t, label=r"$\bar{\alpha}_t$", marker="o")
-    plt.plot(timesteps, inv_sqrt_alpha_t, label=r"$1/\sqrt{\alpha_t}$", marker="o")
-    plt.plot(timesteps, coef, label=r"$\beta_t/\sqrt{1-\bar{\alpha}_t}$", marker="o")
-    plt.xlabel("Timestep t")
-    plt.ylabel("Value")
-    # plt.yscale("log")
-    plt.title("Schedule Parameters vs. Timestep")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    if output_dir:
-        plt.savefig(f"{output_dir}/schedule_parameters_vs_time.png")
-        plt.savefig(f"{output_dir}/schedule_parameters_vs_time.pdf")
-        plt.close()
-    else:
-        plt.show()

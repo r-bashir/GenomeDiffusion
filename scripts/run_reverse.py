@@ -23,20 +23,18 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # ruff: noqa: E402
 
 from scripts.utils.reverse_utils import (
-    plot_reverse_mean_components,
-    plot_schedule_parameters_vs_time,
-)
-from src import DiffusionModel
-from src.utils import set_seed, setup_logging
-from utils.reverse_utils import (
     generate_timesteps,
     plot_reverse_diagnostics,
+    plot_reverse_mean_components,
+    plot_schedule_parameters,
     print_diagnostic_statistics,
     print_reverse_statistics,
     run_reverse_process,
     visualize_diffusion_process_lineplot,
     visualize_diffusion_process_superimposed,
 )
+from src import DiffusionModel
+from src.utils import set_seed, setup_logging
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -141,13 +139,31 @@ def main():
         timesteps=timesteps,
     )
 
-    # Print statistics for boundary timesteps
-    # FIXME: Refactoring needed as new format for results
-    # logger.info("Printing statistics for boundary timesteps")
-    # print_reverse_statistics(results, timesteps)
+    # Print statistics for all timesteps
+    logger.info("Printing statistics for all timesteps...")
+    print_reverse_statistics(results, timesteps)
 
-    # === Debugging Reverse Mean Components ===
-    # plot_schedule_parameters_vs_time(results, output_dir)
+    # Schedule parameters for all timesteps
+    logger.info("Plotting schedule parameters for all timesteps...")
+    plot_schedule_parameters(results, timesteps, output_dir)
+
+    # Special Diagnostics
+    diagnostics = True
+    if diagnostics:
+
+        # Selected timesteps for analysis
+        key_timesteps = [1, 998, 999, 1000]
+        logger.info(f"Selected key timesteps: {key_timesteps}")
+
+        # Print diagnostic statistics for key timesteps
+        logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
+        print_diagnostic_statistics(results=results, timesteps=key_timesteps)
+
+        # Plot diagnostics for key timesteps
+        logger.info(f"Generating diagnostic plots for key timesteps: {key_timesteps}")
+        plot_reverse_diagnostics(
+            results=results, timesteps=key_timesteps, output_dir=output_dir
+        )
 
     # Plotting
     plotting = True
@@ -155,17 +171,7 @@ def main():
 
         # Selected timesteps for analysis
         key_timesteps = [1, 998, 999, 1000]
-        logger.info(f"Selected timesteps: {key_timesteps}")
-
-        # Plot diagnostics for key timesteps
-        # logger.info(f"Analyzing diagnostics for key timesteps: {key_timesteps}")
-        # print_diagnostic_statistics(results=results, timesteps=key_timesteps)
-
-        # Plot diagnostics for key timesteps
-        logger.info(f"Generating diagnostic plots for key timesteps: {key_timesteps}")
-        plot_reverse_diagnostics(
-            results=results, timesteps=key_timesteps, output_dir=output_dir
-        )
+        logger.info(f"Selected key timesteps: {key_timesteps}")
 
         # Diffusion evolution with key timesteps
         logger.info(f"Plotting sample evolution for key timesteps: {key_timesteps}")
@@ -187,49 +193,6 @@ def main():
             timesteps=key_timesteps,
             output_dir=output_dir,
         )
-
-    # Additional plots
-    additional_plots = False
-    if additional_plots:
-        logger.info("Plotting additional visualizations...")
-
-        # Create output directory for visualizations
-        viz_dir = output_dir / "diffusion_analysis"
-        viz_dir.mkdir(exist_ok=True, parents=True)
-
-        # Extract metrics across timesteps
-        timesteps = sorted(results.keys())
-        mse_values = [results[t]["metrics"]["noise_mse"] for t in timesteps]
-        x0_diff_values = [results[t]["metrics"]["x0_diff"] for t in timesteps]
-
-        # Print summary of results
-        print("\n" + "=" * 70)
-        print(" DIFFUSION ANALYSIS SUMMARY ")
-        print("=" * 70)
-        print(
-            f"Analyzed {len(timesteps)} timesteps from {min(timesteps)} to {max(timesteps)}"
-        )
-        print(f"Average noise prediction MSE: {sum(mse_values) / len(mse_values):.6f}")
-        print(
-            f"Average reconstruction error: {sum(x0_diff_values) / len(x0_diff_values):.6f}"
-        )
-
-        # Generate plots for key timesteps (beginning, middle, end)
-        key_timesteps = [
-            min(timesteps),
-            timesteps[len(timesteps) // 2],
-            max(timesteps),
-        ]
-        logger.info(f"Generating visualizations for key timesteps: {key_timesteps}")
-
-        for t in key_timesteps:
-            t_dir = viz_dir / f"timestep_{t}"
-            t_dir.mkdir(exist_ok=True, parents=True)
-            plot_diffusion_results(results[t], save_dir=t_dir)
-
-        # Generate summary metrics plot across all timesteps
-        logger.info("Generating summary metrics plot across all timesteps")
-        plot_diffusion_metrics(results, save_dir=viz_dir)
 
     logger.info("Reverse diffusion complete!")
     logger.info(f"Results saved to: {output_dir}")
