@@ -27,7 +27,7 @@ from pathlib import Path
 import torch
 
 from src.diffusion_model import DiffusionModel
-from src.inference_utils import (
+from src.infer_utils import (
     analyze_maf_distribution,
     calculate_maf_stats,
     compare_maf_distributions,
@@ -123,46 +123,42 @@ def main():
             real_samples.append(batch)
     real_samples = torch.cat(real_samples, dim=0)
 
-    print(f"\nReal samples shape: {real_samples.shape}")
-    print(f"Real samples unique values: {torch.unique(real_samples)}")
+    # Select a single real sample for qualitative comparison
+    x0_real = real_samples[0:1]  # shape [1, 1, seq_len]
+    print(f"Selected real sample shape: {x0_real.shape}")
 
-    # Generated samples
-    num_samples = args.num_samples or real_samples.shape[0]
-    print(f"Generating {num_samples} synthetic sequences from full noise...")
+    # Generate a single synthetic sample from noise
     with torch.no_grad():
-        gen_samples = model.generate_samples(
-            num_samples=num_samples, denoise_step=1, discretize=args.discretize
-        )
-
-        # Check for NaN values in generated samples
-        if torch.isnan(gen_samples).any():
-            print("Warning: Generated samples contain NaN values. Attempting to fix...")
-            gen_samples = torch.nan_to_num(gen_samples, nan=0.0)
-
-        # Save samples
-        torch.save(gen_samples, output_dir / "generated_samples.pt")
-
-        # Print statistics
-        print(f"Generated samples shape: {gen_samples.shape}")
-        print(f"Generated samples unique values: {torch.unique(gen_samples)}")
+        x0_gen = model.generate_samples(num_samples=1, denoise_step=1, discretize=False)
+        x0_gen = torch.clamp(x0_gen, 0.0, 0.5)
+    print(f"Generated sample shape: {x0_gen.shape}")
 
     # === Perform Inference ===
+
+    from src.infer_utils import plot_sample_comparison, print_sample_stats
+
+    # Print statistics for both samples
+    print_sample_stats(x0_real, "Real Sample")
+    print_sample_stats(x0_gen, "Generated Sample")
+
+    # Plot and save side-by-side comparison
+    plot_sample_comparison(x0_real, x0_gen, output_dir / "sample_comparison.png")
 
     # 1. Sample Analysis (Fully Denoised, T=0)
     print("\n1. Performing Sample Analysis (Fully Denoised, T=0)...")
 
     # Compare samples
     compare_samples(
-        real_samples,
-        gen_samples,
+        x0_real,
+        x0_gen,
         output_dir / "compare_samples.png",
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
     )
 
     # Visualize samples
     visualize_samples(
-        real_samples,
-        gen_samples,
+        x0_real,
+        x0_gen,
         output_dir / "visualize_samples.png",
         max_seq_len=1000,
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
@@ -174,21 +170,21 @@ def main():
     T = 500
     gen_samples_mid = generate_samples_mid_step(
         model,
-        num_samples=num_samples,
+        num_samples=1,
         mid_timestep=T,  # Middle of diffusion process
         denoise_step=1,  # Choose denoise step
         discretize=args.discretize,
     )
 
     compare_samples(
-        real_samples,
+        x0_real,
         gen_samples_mid,
         output_dir / f"compare_samples_t{T}.png",
         genotype_values=[0.0, 0.25, 0.5],
     )
 
     visualize_samples(
-        real_samples,
+        x0_real,
         gen_samples_mid,
         output_dir / f"visualize_samples_t{T}.png",
         max_seq_len=1000,
@@ -213,7 +209,7 @@ def main():
 
     # Analyze real data MAF
     real_maf, _ = analyze_maf_distribution(
-        real_samples,
+        x0_real,
         output_dir / "maf_real_distribution.png",
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
         max_value=0.5,
@@ -221,7 +217,7 @@ def main():
 
     # Analyze generated data MAF
     gen_maf, _ = analyze_maf_distribution(
-        gen_samples,
+        x0_gen,
         output_dir / "maf_gen_distribution.png",
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
         max_value=0.5,
@@ -229,12 +225,12 @@ def main():
 
     # Calculate MAF stats for real and generated data (scaled genotype values)
     real_maf_stats = calculate_maf_stats(
-        real_maf,
+        x0_real,
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
     )
 
     gen_maf_stats = calculate_maf_stats(
-        gen_maf,
+        x0_gen,
         genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
     )
 

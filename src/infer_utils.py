@@ -75,6 +75,40 @@ def count_genotype_values(arr, genotype_values=[0.0, 0.5, 1.0]):
 # === Sample Analysis ===
 
 
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def plot_sample_comparison(real, gen, save_path):
+    """Plot real and generated sample side by side as line plots."""
+    real_np = real.flatten().cpu().numpy()
+    gen_np = gen.flatten().cpu().numpy()
+    fig, axes = plt.subplots(2, 1, figsize=(12, 6), sharex=True)
+    axes[0].plot(real_np, label="Real", color="tab:blue")
+    axes[0].set_title("Real Sample")
+    axes[1].plot(gen_np, label="Generated", color="tab:orange")
+    axes[1].set_title("Generated Sample")
+    for ax in axes:
+        ax.set_ylabel("Value")
+        ax.set_ylim(0, 0.5)
+    axes[1].set_xlabel("Position")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved sample comparison plot to {save_path}")
+
+
+def print_sample_stats(sample, label="Sample"):
+    """Print unique values, mean, std, and min/max."""
+    sample_np = sample.flatten().cpu().numpy()
+    print(f"\n{label} statistics:")
+    print(f"  Unique values: {np.unique(sample_np)}")
+    print(f"  Mean: {np.mean(sample_np):.4f}")
+    print(f"  Std: {np.std(sample_np):.4f}")
+    print(f"  Min: {np.min(sample_np):.4f}, Max: {np.max(sample_np):.4f}")
+
+
 def compare_samples(
     real_samples, generated_samples, save_path, genotype_values=[0.0, 0.5, 1.0]
 ):
@@ -112,8 +146,14 @@ def compare_samples(
     # Create figure with subplots
     fig, axes = plt.subplots(1, 2, figsize=(15, 6))
 
-    # Plot value distributions as density
-    hist_params = {"bins": 50, "alpha": 0.5, "density": True}
+    # Plot value distributions as density with more robust binning
+    # Use fewer bins and explicit range to avoid binning errors with extreme values
+    hist_params = {
+        "bins": 20,  # Reduced from 50 to be more robust
+        "alpha": 0.5,
+        "density": True,
+        "range": (0.0, 0.5),  # Explicitly set range to expected SNP values
+    }
     axes[0].hist(real_flat, **hist_params, label="Real", color="tab:blue")
     axes[0].hist(gen_flat, **hist_params, label="Generated", color="tab:orange")
     axes[0].set_title("Value Distribution (Density)")
