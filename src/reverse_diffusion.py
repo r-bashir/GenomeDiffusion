@@ -67,7 +67,12 @@ class ReverseDiffusion:
         """
         # Ensure tensors are on the correct device
         device = x_t.device
-        t = tensor_to_device(t, device)
+
+        # Convert integer timestep to tensor if needed
+        if isinstance(t, int):
+            t = torch.tensor([t], device=device)
+        else:
+            t = tensor_to_device(t, device)
 
         # Ensure x_t has the correct shape [B, C, L]
         # x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, ε ~ N(0, I) comes from ForwardDiffusion
