@@ -24,7 +24,6 @@ from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
 
 from src import DiffusionModel
-from src.evaluation_callback import EvaluationCallback
 from src.utils import load_config, set_seed
 
 
