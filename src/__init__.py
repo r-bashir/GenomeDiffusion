@@ -10,9 +10,8 @@ SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 DATA_DIR = PROJECT_ROOT / "data"
 
 from .dataset import SNPDataModule, SNPDataset
-from .diffusion_model import DiffusionModel
+from .ddpm import DiffusionModel
 from .forward_diffusion import ForwardDiffusion
-from .mlp import MLP
 from .reverse_diffusion import ReverseDiffusion
 from .time_sampler import UniformContinuousTimeSampler, UniformDiscreteTimeSampler
 from .unet import UNet1D
@@ -34,7 +33,6 @@ __all__ = [
     "DiffusionModel",
     "ForwardDiffusion",
     "ReverseDiffusion",
-    "MLP",
     "UNet1D",
     # Time samplers
     "UniformContinuousTimeSampler",

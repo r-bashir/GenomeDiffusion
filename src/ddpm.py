@@ -12,7 +12,12 @@ import torch.nn.functional as F
 
 from .all_models import UniformContinuousTimeSampler
 from .forward_diffusion import ForwardDiffusion
-from .mlp import MLP, SimpleLinearModel, zero_out_model_parameters
+from .mlp import (
+    LinearNoisePredictor,
+    SimpleNoisePredictor,
+    ComplexNoisePredictor,
+    zero_out_model_parameters,
+)
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .unet import UNet1D
@@ -41,8 +46,8 @@ class DiffusionModel(NetworkBase):
             tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
 
-        # UNet1D or MLP or SimpleLinearModel for noise prediction
-        self.unet = SimpleLinearModel(
+        # Noise Predictor
+        self.noise_predictor = LinearNoisePredictor(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
@@ -63,18 +68,18 @@ class DiffusionModel(NetworkBase):
         # ReverseDiffusion: Reverse diffusion process
         self.reverse_diffusion = ReverseDiffusion(
             self.forward_diffusion,
-            self.unet,
+            self.noise_predictor,
             self._data_shape,
             denoise_step=hparams["diffusion"].get("denoise_step", 10),
             discretize=hparams["diffusion"].get("discretize", False),
         )
 
         # Zero noise model
-        # zero_out_model_parameters(self.unet)
+        # zero_out_model_parameters(self.noise_predictor)
 
         # Enable gradient checkpointing for memory efficiency
-        if hasattr(self.unet, "gradient_checkpointing_enable"):
-            self.unet.gradient_checkpointing_enable()
+        if hasattr(self.noise_predictor, "gradient_checkpointing_enable"):
+            self.noise_predictor.gradient_checkpointing_enable()
         else:
             print("Warning: `gradient_checkpointing_enable()` not found. Skipping...")
 
@@ -108,8 +113,8 @@ class DiffusionModel(NetworkBase):
         x = prepare_batch_shape(x)
         t = tensor_to_device(t, device)
 
-        # Pass through the UNet model to predict noise
-        return self.unet(x, t)
+        # Pass through the noise predictor to predict noise
+        return self.noise_predictor(x, t)
 
     def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
         """

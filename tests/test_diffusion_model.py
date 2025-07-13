@@ -5,7 +5,7 @@
 
 import torch
 
-from src.diffusion_model import DiffusionModel
+from src.ddpm import DiffusionModel
 
 
 def get_dummy_config():
