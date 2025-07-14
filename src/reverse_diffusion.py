@@ -117,29 +117,22 @@ class ReverseDiffusion:
         scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
 
         # === Debug Print: Important Variables per Timestep ===
-        # Scalars (print as float)
+        if t.item() % 10 == 0:  # Print every 10 steps
 
-        # print("\n[ReverseDiffusion]")
-        # print(f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}")
+            eps_mean = epsilon_theta.mean().item()
+            eps_std = epsilon_theta.std().item()
+            eps_min = epsilon_theta.min().item()
+            eps_max = epsilon_theta.max().item()
+            print(
+                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, Mean: {eps_mean:.6f}, Std:  {eps_std:.6f}, Min:  {eps_min:.6f}, Max:  {eps_max:.6f}"
+            )
 
-        # Arrays (show shape and first 5 elements of first batch/channel)
-        # scaled_pred_noise_np = scaled_pred_noise.detach().cpu().numpy()
-        # epsilon_theta_np = epsilon_theta.detach().cpu().numpy()
+        # Compute mean for p(x_{t-1}|x_t) as in DDPM Algorithm 2:
+        # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+        # mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
 
-        # print("\ncoef * epsilon_theta = scaled_pred_noise")
-        # print("---------------------------------------------\n")
-        # print(
-        #     f"{'t':>3}: {'coef':>8} * {'epsilon_theta':>10} = {'scaled_pred_noise':>16}"
-        # )
-        # for i in range(100):
-        #     print(
-        #         f"{t.item():>3}: {coef.flatten()[0].item():.6f} * {epsilon_theta_np.flatten()[i]:.6f} = {scaled_pred_noise_np.flatten()[i]:.6f}"
-        #     )
-
-        # mean = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        mean_old = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
-
-        # TODO: mean = x_t - ε_θ(x_t, t)
+        # TODO: Try new mean for p(x_{t-1}|x_t)
+        # μ_θ(x_t, t) = x_t - ε_θ(x_t, t)
         mean = x_t - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 

@@ -294,7 +294,7 @@ class ComplexNoisePredictor(nn.Module):
             self.time_mlp = None
 
         # Hidden dimensions
-        self.hidden_dims = [2048, 1024, 512, 256, 128]
+        self.hidden_dims = [1024, 512, 256, 128]
 
         print(f"Using hidden dimensions: {self.hidden_dims}")
 
