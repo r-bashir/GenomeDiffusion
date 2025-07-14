@@ -13,15 +13,15 @@ import torch.nn.functional as F
 from .all_models import UniformContinuousTimeSampler
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
+    ComplexNoisePredictor,
     LinearNoisePredictor,
     SimpleNoisePredictor,
-    ComplexNoisePredictor,
     zero_out_model_parameters,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .unet import UNet1D
-from .utils import bcast_right, prepare_batch_shape, set_seed, tensor_to_device
+from .utils import bcast_right, prepare_batch_shape, tensor_to_device
 
 
 class DiffusionModel(NetworkBase):
@@ -46,6 +46,14 @@ class DiffusionModel(NetworkBase):
             tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
         )
 
+        # ForwardDiffusion: Forward diffusion process
+        self.forward_diffusion = ForwardDiffusion(
+            time_steps=hparams["diffusion"]["timesteps"],
+            beta_start=hparams["diffusion"]["beta_start"],
+            beta_end=hparams["diffusion"]["beta_end"],
+            schedule_type=hparams["diffusion"]["schedule_type"],
+        )
+
         # Noise Predictor
         self.noise_predictor = LinearNoisePredictor(
             embedding_dim=hparams["unet"]["embedding_dim"],
@@ -57,25 +65,17 @@ class DiffusionModel(NetworkBase):
             seq_length=hparams["data"]["seq_length"],
         )
 
-        # ForwardDiffusion: Forward diffusion process
-        self.forward_diffusion = ForwardDiffusion(
-            time_steps=hparams["diffusion"]["timesteps"],
-            beta_start=hparams["diffusion"]["beta_start"],
-            beta_end=hparams["diffusion"]["beta_end"],
-            schedule_type=hparams["diffusion"]["schedule_type"],
-        )
+        # Zero noise model
+        # zero_out_model_parameters(self.noise_predictor)
 
         # ReverseDiffusion: Reverse diffusion process
         self.reverse_diffusion = ReverseDiffusion(
             self.forward_diffusion,
             self.noise_predictor,
             self._data_shape,
-            denoise_step=hparams["diffusion"].get("denoise_step", 10),
+            denoise_step=hparams["diffusion"].get("denoise_step", 1),
             discretize=hparams["diffusion"].get("discretize", False),
         )
-
-        # Zero noise model
-        # zero_out_model_parameters(self.noise_predictor)
 
         # Enable gradient checkpointing for memory efficiency
         if hasattr(self.noise_predictor, "gradient_checkpointing_enable"):
