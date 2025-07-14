@@ -30,6 +30,7 @@ from src.utils import load_config, set_seed, setup_logging
 from utils.ddpm_utils import (
     get_noisy_sample,
     plot_denoising_comparison,
+    plot_denoising_trajectory,
     run_markov_reverse_process,
 )
 
@@ -159,30 +160,41 @@ def main():
     logger.info(f"Sample unique values: {torch.unique(x0)}")
     logger.info(f"First 10 values: {x0[0, 0, :10]}")
 
-    # Markov Reverse Process from Noisy x0 Diagnostic
-    t_markov = 1000
-    logger.info(f"Running Markov reverse process from noisy x0 at t={t_markov}...")
+    # Full reverse diffusion process from x_t
+    T = 4
+    logger.info(f"Running Markov reverse process from x_t at t={T}...")
 
-    # Generate noisy sample at t_markov
-    x_t = get_noisy_sample(model, x0, 100)
+    # Generate noisy sample x_t at t=T
+    x_t = get_noisy_sample(model, x0, T)
 
     # Run Markov reverse process
     samples_dict = run_markov_reverse_process(
-        model, x_t, t_markov, device, return_all_steps=False
+        model, x0, x_t, T, device, return_all_steps=True, print_mse=True
     )
-    x0_recon_markov = samples_dict[0]
 
     # Plot and compare
-    mse, corr = plot_denoising_comparison(
+    x_t_minus_1 = samples_dict[0]  # Denoised sample (x_{t-1} at t=0)
+    mse_x0, corr_x0, mse_xt, corr_xt = plot_denoising_comparison(
         x0,
         x_t,
-        x0_recon_markov,
-        t_markov,
+        x_t_minus_1,
+        T,
         output_dir,
     )
-    logger.info(f"Markov reverse denoising plot saved to: {output_dir}")
-    logger.info(f"MSE: {mse:.6f} | Corr: {corr:.4f}")
+    print(
+        f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
+    )
 
+    # Plot denoising trajectory
+    plot_denoising_trajectory(
+        x0,
+        x_t,
+        samples_dict,
+        T,
+        output_dir,
+    )
+
+    logger.info(f"Markov reverse denoising plot saved to: {output_dir}")
     logger.info("DDPM complete!")
     logger.info(f"Results saved to: {output_dir}")
 
