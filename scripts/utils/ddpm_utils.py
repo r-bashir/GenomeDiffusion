@@ -8,6 +8,8 @@ All functions use the correct Markov chain: at each step, the output of the prev
 
 from typing import Dict, List, Optional
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -57,42 +59,78 @@ def run_markov_reverse_process(
     """
     model.eval()
     with torch.no_grad():
+        # Initialize samples dictionary with the starting noisy sample at t_start
         samples = {t_start: x_t_start.clone()}
         x_t = x_t_start
+        # Reverse diffusion: iteratively denoise from x_t (at t_start) down to x_1
         for t in range(t_start, 1, -1):
+            # t: current timestep we are denoising from (x_t)
+            # t_tensor: target timestep after denoising (t-1), i.e., we want x_{t-1}
             t_tensor = torch.full((1,), t - 1, device=device, dtype=torch.long)
+            # Perform one reverse diffusion step: x_t -> x_{t-1}
             x_t = model.reverse_diffusion.reverse_diffusion_step(x_t, t_tensor)
-            samples[t - 1] = x_t.clone()
+            samples[t - 1] = x_t.clone()  # Store the result for timestep t-1
+        # After the final step, x_t is x_0 (fully denoised sample)
+        samples[0] = x_t.clone()  # Store the final denoised output at t=0
+
     if return_all_steps:
         return samples
     else:
         return {0: samples[0]}
 
 
-import matplotlib.pyplot as plt
-import numpy as np
-
-
 def plot_denoising_comparison(x0, x_t, x0_recon, t_markov, output_path):
     """
-    Plots and saves a comparison of original, noisy, and denoised signals.
+    Plots and saves a comparison of original, noisy, and denoised signals using matplotlib OOP API.
+    Left: x0 and x_t; Right: x0, x_t, x0_recon. Annotates MSE and correlation on right.
     Returns MSE and correlation between x0 and x0_recon.
     """
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     x0_np = x0.detach().cpu().numpy().flatten()
     x_t_np = x_t.detach().cpu().numpy().flatten()
     x0_recon_np = x0_recon.detach().cpu().numpy().flatten()
 
-    plt.figure(figsize=(12, 5))
-    plt.plot(x0_np, label="Original x₀", color="blue")
-    plt.plot(x_t_np, label=f"Noisy xₜ (t={t_markov})", color="red", alpha=0.6)
-    plt.plot(x0_recon_np, label="Denoised x₀'", color="green", alpha=0.7)
-    plt.legend()
-    plt.title(f"Markov Reverse Denoising: Original, Noisy (t={t_markov}), Denoised")
-    plt.xlabel("Position")
-    plt.tight_layout()
-    plt.savefig(str(output_path))
-    plt.close()
-
     mse = np.mean((x0_np - x0_recon_np) ** 2)
     corr = np.corrcoef(x0_np, x0_recon_np)[0, 1]
+
+    fig, axs = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
+
+    # Left subplot: x0 and x_t
+    axs[0].plot(x0_np, label=r"Original $x_0$", color="blue")
+    axs[0].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
+    axs[0].set_title(f"Original vs Noisy (T=100)")
+    axs[0].set_xlabel("Position")
+    axs[0].set_ylabel("Value")
+    if t_markov <= 100:
+        axs[0].set_ylim(-1, 1)
+    else:
+        axs[0].set_ylim(-3, 3)
+    axs[0].legend()
+
+    # Right subplot: x0, x_t, x0_recon
+    axs[1].plot(x0_np, label=r"Original $x_0$", color="blue")
+    axs[1].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
+    axs[1].plot(x0_recon_np, label=r"Denoised $x_{t-1}$", color="green", alpha=0.7)
+    axs[1].set_title(f"Denoising Comparison (T={t_markov})")
+    axs[1].set_xlabel("Position")
+    axs[1].legend()
+
+    # Annotate MSE and correlation
+    axs[1].annotate(
+        f"MSE: {mse:.2e}\nCorr: {corr:.4f}",
+        xy=(0.02, 0.98),
+        xycoords="axes fraction",
+        bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),
+        fontsize=10,
+        ha="left",
+        va="top",
+    )
+
+    fig.tight_layout()
+    fig.savefig(str(output_path / f"markov_reverse_t{t_markov}.png"))
+    fig.savefig(str(output_path / f"markov_reverse_t{t_markov}.pdf"))
+    plt.close(fig)
+
     return mse, corr

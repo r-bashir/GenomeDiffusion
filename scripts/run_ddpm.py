@@ -25,7 +25,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # ruff: noqa: E402
 
 from src import DiffusionModel
-from src.utils import set_seed, setup_logging
+from src.mlp import IdentityNoisePredictor
+from src.utils import load_config, set_seed, setup_logging
 from utils.ddpm_utils import (
     get_noisy_sample,
     plot_denoising_comparison,
@@ -90,20 +91,46 @@ def main():
     set_seed(seed=42)
 
     # Load Model
-    try:
-        logger.info(f"Loading model from checkpoint: {args.checkpoint}")
-        model, config = load_model_from_checkpoint(args.checkpoint, device)
-        logger.info("Model loaded successfully from checkpoint on %s", device)
-        logger.info("Model config loaded from checkpoint:")
+    if args.identity_model:
+        logger.info("Using IdentityNoisePredictor for debugging")
+        config = load_config(config_path="config.yaml")
+        model = DiffusionModel(config).to(device)
+        model.noise_predictor = IdentityNoisePredictor(
+            seq_length=config["data"]["seq_length"],
+            embedding_dim=config["unet"]["embedding_dim"],
+            dim_mults=config["unet"]["dim_mults"],
+            channels=config["unet"]["channels"],
+            with_time_emb=config["unet"]["with_time_emb"],
+            with_pos_emb=config["unet"]["with_pos_emb"],
+            resnet_block_groups=config["unet"]["resnet_block_groups"],
+        ).to(device)
+        logger.info("Created IdentityNoisePredictor model")
+        logger.info("Model config:")
         print(f"\n{config}\n")
-    except Exception as e:
-        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
+    else:
+        if not args.checkpoint:
+            raise ValueError(
+                "Must provide --checkpoint when not using --identity-model"
+            )
+        try:
+            logger.info(f"Loading model from checkpoint: {args.checkpoint}")
+            model, config = load_model_from_checkpoint(args.checkpoint, device)
+            logger.info("Model loaded successfully from checkpoint on %s", device)
+            logger.info("Model config loaded from checkpoint:")
+            print(f"\n{config}\n")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    checkpoint_path = Path(args.checkpoint)
-    base_dir = checkpoint_path.parent.parent
-    output_dir = base_dir / "ddpm_diffusion"
-    output_dir.mkdir(exist_ok=True)
+    if args.identity_model:
+        base_dir = Path("outputs/analysis")
+        output_dir = base_dir / "identity_model"
+    else:
+        checkpoint_path = Path(args.checkpoint)
+        base_dir = checkpoint_path.parent.parent
+        output_dir = base_dir / "ddpm_diffusion"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load Dataset (Test)
     logger.info("Loading test dataset...")
@@ -132,18 +159,18 @@ def main():
     logger.info(f"Sample unique values: {torch.unique(x0)}")
     logger.info(f"First 10 values: {x0[0, 0, :10]}")
 
-    # --- New: Markov Reverse Process from Noisy x0 Diagnostic ---
+    # Markov Reverse Process from Noisy x0 Diagnostic
     t_markov = 1000
     logger.info(f"Running Markov reverse process from noisy x0 at t={t_markov}...")
 
     # Generate noisy sample at t_markov
-    x_t = get_noisy_sample(model, x0, t_markov)
+    x_t = get_noisy_sample(model, x0, 100)
 
     # Run Markov reverse process
     samples_dict = run_markov_reverse_process(
-        model, x_t, t_markov, device, return_all_steps=True
+        model, x_t, t_markov, device, return_all_steps=False
     )
-    x0_recon_markov = samples_dict[1]
+    x0_recon_markov = samples_dict[0]
 
     # Plot and compare
     mse, corr = plot_denoising_comparison(
@@ -151,11 +178,9 @@ def main():
         x_t,
         x0_recon_markov,
         t_markov,
-        output_dir / "markov_reverse_t{t_markov}.png",
+        output_dir,
     )
-    logger.info(
-        f"Markov reverse denoising plot saved to: {output_dir}/markov_reverse_t{t_markov}.png"
-    )
+    logger.info(f"Markov reverse denoising plot saved to: {output_dir}")
     logger.info(f"MSE: {mse:.6f} | Corr: {corr:.4f}")
 
     logger.info("DDPM complete!")
