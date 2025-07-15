@@ -263,6 +263,8 @@ class ReverseDiffusion:
         # q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)
         # z ~ N(0, I), β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
         z = torch.randn_like(x_t) if not (t == 1).all() else torch.zeros_like(x_t)
+
+        # x_{t-1} = μ̃_t(x_t,x_0) + σ_t * z, where σ_t = √β̃_t
         x_t_minus_1 = mean + torch.sqrt(beta_tilde) * z
 
         # === Debugging: Print Important Variables per Timestep ===

@@ -1,5 +1,5 @@
 # Project name
-project_name: "FinDiff"
+project_name: "LinDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -39,7 +39,7 @@ unet:
   embedding_dim: 128           # Reduced from 128
   dim_mults: [1, 2, 4, 8]      # Reduced from [1, 2, 4, 8]
   channels: 1
-  with_time_emb: false
+  with_time_emb: true
   with_pos_emb: false
   resnet_block_groups: 8
 
