@@ -116,22 +116,16 @@ class ReverseDiffusion:
         # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
         scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
 
-        # === Debug Print: Important Variables per Timestep ===
-        if t.item() % 10 == 0:  # Print every 10 steps
-
-            eps_mean = epsilon_theta.mean().item()
-            eps_std = epsilon_theta.std().item()
-            eps_min = epsilon_theta.min().item()
-            eps_max = epsilon_theta.max().item()
-            print(
-                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, Mean: {eps_mean:.6f}, Std:  {eps_std:.6f}, Min:  {eps_min:.6f}, Max:  {eps_max:.6f}"
-            )
+        # === Debugging: Print Important Variables per Timestep ===
+        # print(
+        #     f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}"
+        # )
 
         # Compute mean for p(x_{t-1}|x_t) as in DDPM Algorithm 2:
         # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
         # mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
 
-        # TODO: Try new mean for p(x_{t-1}|x_t)
+        # TODO: Compute mean for p(x_{t-1}|x_t) slightly different from Algorithm 2
         # μ_θ(x_t, t) = x_t - ε_θ(x_t, t)
         mean = x_t - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
@@ -145,10 +139,10 @@ class ReverseDiffusion:
             z = torch.randn_like(x_t, device=device)  # z ~ N(0, I)
 
         # Sample from N(mean, σ_t^2 * I)
-        # x_{t-1} = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t)) + σ_t * z
-        x_t_minus_1 = mean + sigma_t * z  # When t=1, z=0 so x_prev = mean
+        # x_{t-1} = μ_θ(x_t, t) + σ_t * z
+        x_t_minus_1 = mean + sigma_t * z
 
-        # === Debugging: Print and Return Important Variables per Timestep ===
+        # === Debugging: Print & Return Important Variables per Timestep ===
         if return_all:
 
             print(
@@ -165,6 +159,130 @@ class ReverseDiffusion:
                 "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
                 "beta_t": beta_t,  # β_t: Noise schedule value for this step
                 "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β_t)
+            }
+        return x_t_minus_1
+
+    def reverse_diffusion_step_improved(self, x_t, t, return_all=False):
+        """
+        Single reverse diffusion step to estimate x_{t-1} given x_t and t.
+        Implements improved DDPM from Nichol & Dhariwal (2021).
+
+        Key improvements over Ho et al. (2020):
+        1. Uses the true posterior variance β̃_t instead of fixed β_t:
+           - Ho et al. used σ_t^2 = β_t for simplicity
+           - Nichol & Dhariwal derive the correct variance β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
+           - This better matches the true posterior q(x_{t-1}|x_t,x_0)
+
+        2. Explicit x_0 prediction:
+           - Ho et al. used noise prediction ε_θ to compute mean
+           - Nichol & Dhariwal show this is equivalent to predicting x_0
+           - Use x_0 prediction in mean calculation for better interpretability
+
+        For t > 1:
+            # Eq. 10: True posterior variance
+            β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
+
+            # New to Nicole & Dhariwal 2021
+            x_0 = x_t - ε_θ(x_t, t)
+            # Eq. 11: Mean using x_0 prediction
+            μ̃_t(x_t, x_0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x_0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * x_t
+
+            # Eq. 12: True posterior distribution
+            q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)
+
+            # Sample using reparameterization:
+            z ~ N(0, I), σ_t = √β̃_t
+            x_{t-1} = μ̃_t(x_t,x_0) + σ_t * z
+
+        For t = 1:
+            β̃_1 = 0, z = 0
+            x_0 = x_1 - ε_θ(x_1, 1)
+            x_{t-1} = μ̃_1(x_1, x_0)
+
+        The key improvement over reverse_diffusion_step() is using the improved
+        variance β̃_t (Eq. 10) and mean μ̃_t (Eq. 11) which better match the
+        true posterior q(x_{t-1}|x_t,x_0).
+
+        Args:
+            x_t: Noisy sample at timestep t, shape [B, C, seq_len] (must be on correct device)
+            t: Current timestep (tensor of shape [B] or scalar int, 1-based)
+        Returns:
+            x_{t-1}: Sample at timestep t-1, same shape as x_t
+        """
+        # Ensure tensors are on the correct device
+        device = x_t.device
+
+        # Convert integer timestep to tensor if needed
+        if isinstance(t, int):
+            t = torch.tensor([t], device=device)
+        else:
+            t = tensor_to_device(t, device)
+
+        # Ensure x_t has the correct shape [B, C, L]
+        # x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, comes from ForwardDiffusion
+        x_t = prepare_batch_shape(x_t)
+
+        # Get diffusion parameters for timestep t
+        # β_t, α_t, ᾱ_t (beta, alpha, and cumulative alpha)
+        beta_t = tensor_to_device(self.forward_diffusion.beta(t), device)  # β_t
+        alpha_t = tensor_to_device(self.forward_diffusion.alpha(t), device)  # α_t
+        alpha_bar_t = tensor_to_device(
+            self.forward_diffusion.alpha_bar(t), device
+        )  # ᾱ_t
+
+        # Broadcast parameters to match x_t's dimensions
+        ndim = x_t.ndim
+        beta_t = bcast_right(beta_t, ndim)
+        alpha_t = bcast_right(alpha_t, ndim)
+        alpha_bar_t = bcast_right(alpha_bar_t, ndim)
+
+        # === Step 1: Predict x_0 using noise predictor ===
+        epsilon_theta = self.noise_predictor(x_t, t)
+        x_0 = x_t - epsilon_theta
+
+        # === Step 2: Get ᾱ_{t-1} for both mean and variance ===
+        t_minus_1 = t - 1 if not (t == 1).all() else torch.zeros_like(t)
+        alpha_bar_prev = tensor_to_device(
+            self.forward_diffusion.alpha_bar(t_minus_1), device
+        )
+
+        # === Step 3: Compute β̃_t using Eq. 10 ===
+        # β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
+        beta_tilde = ((1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t)) * beta_t
+        if (t == 1).all():
+            beta_tilde = torch.zeros_like(beta_t)
+
+        # === Step 4: Compute μ̃_t using Eq. 11 ===
+        # μ̃_t(x_t, x_0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x_0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * x_t
+        coef_x0 = (torch.sqrt(alpha_bar_prev) * beta_t) / (1.0 - alpha_bar_t)
+        coef_xt = (torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar_t)
+        mean = coef_x0 * x_0 + coef_xt * x_t
+        mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # === Step 5: Sample from posterior using Eq. 12 ===
+        # q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)
+        # z ~ N(0, I), β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
+        z = torch.randn_like(x_t) if not (t == 1).all() else torch.zeros_like(x_t)
+        x_t_minus_1 = mean + torch.sqrt(beta_tilde) * z
+
+        # === Debugging: Print Important Variables per Timestep ===
+        if return_all:
+            print(
+                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, β~_t: {beta_tilde.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
+            )
+            return {
+                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
+                "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
+                "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
+                "scaled_pred_noise": scaled_pred_noise,  # β_t/√(1-ᾱ_t) * ε_θ(x_t, t): Scaled predicted noise
+                "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
+                "alpha_t": alpha_t,  # α_t: Alpha for this step
+                "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/sqrt(alpha_t) for diagnostics
+                "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
+                "alpha_bar_prev": alpha_bar_prev,  # ᾱ_{t-1}: Cumulative product up to t-1
+                "beta_t": beta_t,  # β_t: Noise schedule value for this step
+                "beta_tilde": beta_tilde,  # β~_t: Posterior variance
+                "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β~_t)
             }
         return x_t_minus_1
 
