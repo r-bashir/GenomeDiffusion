@@ -242,9 +242,13 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
 
     fig.tight_layout()
     fig.savefig(
-        str(output_path / "denoising_trajectory.png"), dpi=300, bbox_inches="tight"
+        str(output_path / f"denoising_trajectory_t{T}.png"),
+        dpi=300,
+        bbox_inches="tight",
     )
     fig.savefig(
-        str(output_path / "denoising_trajectory.pdf"), dpi=300, bbox_inches="tight"
+        str(output_path / f"denoising_trajectory_t{T}.pdf"),
+        dpi=300,
+        bbox_inches="tight",
     )
     plt.close(fig)
