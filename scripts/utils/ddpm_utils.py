@@ -113,7 +113,7 @@ def run_markov_reverse_process(
         # Reverse diffusion: from t_start down to 1 (after loop x_curr will be x0)
         for t in range(T, 0, -1):
             t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
-            x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step(
+            x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step_improved(
                 x_t_minus_1, t_tensor
             )
             samples[t - 1] = x_t_minus_1.clone()

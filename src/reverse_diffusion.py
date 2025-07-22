@@ -15,6 +15,19 @@ Typical usage:
 Note: This class only implements the reverse (denoising) process p(x_{t-1}|x_t), NOT the full DDPM model.
 """
 
+"""
+Summary: Diagnosing Rising MSE in Reverse Diffusion
+
+- This file includes experiments to diagnose why MSE(x_t_minus_1, x0) increases during reverse diffusion.
+- Key findings:
+    * Schedule and indexing are correct (confirmed by ε_theta = 0 test).
+    * A linear model is too simple to denoise, so MSE increases with each step.
+    * With ε_theta = 0 and z = 0 (see FIXME lines), the process is stationary and MSE stays constant.
+- Recommendation: Use a more expressive, trained model to observe MSE decrease during denoising.
+
+See FIXME comments for deterministic/noise-free test code.
+"""
+
 import torch
 
 from .utils import bcast_right, prepare_batch_shape, set_seed, tensor_to_device
@@ -127,8 +140,18 @@ class ReverseDiffusion:
 
         # TODO: Compute mean for p(x_{t-1}|x_t) slightly different from Algorithm 2
         # μ_θ(x_t, t) = x_t - ε_θ(x_t, t)
+
+        # FIXME: Test ε_θ(x_t, t) = 0, i.e. μ_θ(x_t, t) = x_t
+        # epsilon_theta = torch.zeros_like(x_t)
+
         mean = x_t - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
+
+        # abs_diff = torch.abs(epsilon_theta)
+        # mean_abs_diff = abs_diff.mean().item()
+        # max_abs_diff = abs_diff.max().item()
+        # min_abs_diff = abs_diff.min().item()
+        # print(f"t: {t.item()}, Mean |ε_theta|: {mean_abs_diff:.6f}, Max |ε_theta|: {max_abs_diff:.6f}, Min |ε_theta|: {min_abs_diff:.6f}")
 
         # standard deviation = σ_t = √β_t
         sigma_t = torch.sqrt(beta_t)  # σ_t
@@ -137,6 +160,9 @@ class ReverseDiffusion:
         z = torch.zeros_like(x_t, device=device)
         if (t > 1).all():  # Only add noise if all timesteps are > 1
             z = torch.randn_like(x_t, device=device)  # z ~ N(0, I)
+
+        # FIXME: No noise added, along with epsilon_theta = 0 (DDIM)
+        # z = torch.zeros_like(x_t, device=device)
 
         # Sample from N(mean, σ_t^2 * I)
         # x_{t-1} = μ_θ(x_t, t) + σ_t * z
@@ -307,7 +333,7 @@ class ReverseDiffusion:
         # Iterate over timesteps in reverse (Algorithm 2 from Ho et al., 2020)
         # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
-            x = self.reverse_diffusion_step(x, t)
+            x = self.reverse_diffusion_step_improved(x, t)
 
         # Post-processing for SNP data
         if discretize:
