@@ -252,3 +252,192 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
         bbox_inches="tight",
     )
     plt.close(fig)
+
+
+def compute_locality_metrics(values, outputs, snp_index):
+    """Compute on-target and off-target metrics for locality analysis.
+
+    Args:
+        values (np.ndarray): Input values at target SNP
+        outputs (np.ndarray): Model outputs for all SNPs
+        snp_index (int): Index of the target SNP
+
+    Returns:
+        dict: Dictionary containing all metrics
+    """
+    from sklearn.metrics import mean_squared_error, r2_score
+
+    # On-target metrics
+    on_target_output = outputs[:, snp_index]
+    metrics = {
+        "on_target": {
+            "slope": np.polyfit(values, on_target_output, 1)[0],
+            "correlation": np.corrcoef(values, on_target_output)[0, 1],
+            "mse": mean_squared_error(values, on_target_output),
+            "r2": r2_score(values, on_target_output),
+        }
+    }
+
+    # Off-target metrics
+    off_target = np.delete(outputs, snp_index, axis=1)
+    metrics["off_target"] = {
+        "mean_abs": np.mean(np.abs(off_target)),
+        "max_abs": np.max(np.abs(off_target)),
+        "total_energy": np.sum(off_target**2),
+        "std_dev": np.std(off_target),
+        "regional_means": compute_regional_metrics(off_target),
+    }
+
+    return metrics
+
+
+def compute_regional_metrics(off_target):
+    """Compute metrics for each region of SNPs.
+
+    Args:
+        off_target (np.ndarray): Off-target effects array
+
+    Returns:
+        dict: Dictionary containing metrics for each region
+    """
+    regions = {
+        "region_0": (0, 25),  # First region (0)
+        "region_025": (25, 75),  # Middle region (0.25)
+        "region_05": (75, 100),  # Last region (0.5)
+    }
+
+    return {
+        name: {
+            "mean": np.mean(np.abs(off_target[:, start:end])),
+            "max": np.max(np.abs(off_target[:, start:end])),
+            "energy": np.sum(off_target[:, start:end] ** 2),
+        }
+        for name, (start, end) in regions.items()
+    }
+
+
+def plot_locality_analysis(values, outputs, snp_index, output_dir):
+    """Create all locality analysis plots.
+
+    Args:
+        values (np.ndarray): Input values at target SNP
+        outputs (np.ndarray): Model outputs for all SNPs
+        snp_index (int): Index of the target SNP
+        output_dir (Path): Directory to save plots
+    """
+    # Line plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for i, val in enumerate(values):
+        label = f"SNP 60 = {val:.2f}" if i % 2 == 0 else None
+        ax.plot(outputs[i], alpha=0.7, label=label)
+
+    ax.axvline(snp_index, color="red", linestyle="--", label="SNP 60")
+    ax.set_xlabel("SNP Position")
+    ax.set_ylabel("Output Value")
+    ax.set_title("Output at all SNPs for each SNP 60 value")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize="small", ncol=1)
+
+    # Add region backgrounds
+    ax.axvspan(0, 25, alpha=0.1, color="blue", label="Region 0")
+    ax.axvspan(25, 75, alpha=0.1, color="green", label="Region 0.25")
+    ax.axvspan(75, 100, alpha=0.1, color="red", label="Region 0.5")
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "snp60_locality_lines.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # Scatter plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.scatter(values, outputs[:, snp_index], label="Model Output", color="blue")
+    ax.plot(values, values, "k--", label="Ideal (y=x)")
+    ax.set_xlabel("Input value at SNP 60")
+    ax.set_ylabel("Output at SNP 60")
+    ax.set_title("Output vs Input at SNP 60")
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "snp60_locality_scatter.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+    # Off-target effects
+    off_target = np.delete(outputs, snp_index, axis=1)
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.plot(
+        values, np.max(np.abs(off_target), axis=1), label="Max off-target", color="red"
+    )
+    ax.plot(
+        values,
+        np.mean(np.abs(off_target), axis=1),
+        label="Mean off-target",
+        color="blue",
+    )
+
+    # Add regional means
+    for region, (start, end) in {
+        "Region 0": (0, 25),
+        "Region 0.25": (25, 75),
+        "Region 0.5": (75, 100),
+    }.items():
+        mean = np.mean(np.abs(off_target[:, start:end]), axis=1)
+        ax.plot(values, mean, "--", label=f"{region} mean", alpha=0.6)
+
+    ax.set_xlabel("Input value at SNP 60")
+    ax.set_ylabel("Off-target output magnitude")
+    ax.set_title("Off-target Effects vs. Input at SNP 60")
+    ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "snp60_locality_offtarget.png", dpi=300, bbox_inches="tight"
+    )
+    plt.close(fig)
+
+
+def format_metrics_report(metrics):
+    """Format metrics into a detailed report.
+
+    Args:
+        metrics (dict): Dictionary of computed metrics
+
+    Returns:
+        str: Formatted report string
+    """
+    sections = [
+        (
+            "On-Target Analysis (SNP 60)",
+            [
+                f"Slope: {metrics['on_target']['slope']:.4f} (1.0 is ideal)",
+                f"Pearson r: {metrics['on_target']['correlation']:.4f}",
+                f"MSE: {metrics['on_target']['mse']:.6f}",
+                f"R²: {metrics['on_target']['r2']:.4f}",
+            ],
+        ),
+        (
+            "Off-Target Analysis",
+            [
+                f"Mean absolute: {metrics['off_target']['mean_abs']:.6e}",
+                f"Max absolute: {metrics['off_target']['max_abs']:.6e}",
+                f"Total energy: {metrics['off_target']['total_energy']:.6e}",
+                f"Standard deviation: {metrics['off_target']['std_dev']:.6e}",
+            ],
+        ),
+        (
+            "Regional Analysis",
+            [
+                f"\nRegion 0 (SNPs 0-24):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_0']['mean']:.6e}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_0']['max']:.6e}",
+                f"\nRegion 0.25 (SNPs 25-74):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_025']['mean']:.6e}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_025']['max']:.6e}",
+                f"\nRegion 0.5 (SNPs 75-99):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_05']['mean']:.6e}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_05']['max']:.6e}",
+            ],
+        ),
+    ]
+
+    return "\n\n".join(
+        f"=== {title} ===\n" + "\n".join(items) for title, items in sections
+    )

@@ -28,9 +28,12 @@ from src import DiffusionModel
 from src.mlp import IdentityNoisePredictor
 from src.utils import load_config, set_seed, setup_logging
 from utils.ddpm_utils import (
+    compute_locality_metrics,
+    format_metrics_report,
     get_noisy_sample,
     plot_denoising_comparison,
     plot_denoising_trajectory,
+    plot_locality_analysis,
     run_markov_reverse_process,
 )
 
@@ -148,7 +151,7 @@ def main():
         # [batch, seq_len] -> [1, 1, seq_len]
         x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
     elif test_batch.dim() == 3:
-        # [batch, channels, seq_len] -> [1, channels, seq_len]
+        # [batch, 1, seq_len] -> [1, 1, seq_len]
         x0 = test_batch[sample_idx : sample_idx + 1]
     else:
         raise ValueError(f"Unexpected test_batch shape: {test_batch.shape}")
@@ -164,6 +167,42 @@ def main():
     T = 4
     logger.info(f"Running Markov reverse process from x_t at t={T}...")
 
+    # === BEGIN: Locality Experiment ===
+    logger.info("Running SNP locality experiment (varying SNP 60)...")
+    seq_len = x0.shape[-1]
+    snp_index = 59  # SNP 60 (0-indexed)
+    values = np.linspace(0, 0.5, 11)
+    outputs = []
+
+    # Run experiment
+    for val in values:
+        x0_test = x0.clone()
+        x0_test[..., snp_index] = val
+        x_t_test = get_noisy_sample(model, x0_test, T)
+        samples_dict = run_markov_reverse_process(
+            model, x0_test, x_t_test, T, device, return_all_steps=False, print_mse=False
+        )
+        x_denoised = samples_dict[0].detach().cpu().numpy().squeeze()
+        outputs.append(x_denoised)
+
+    outputs = np.stack(outputs)  # shape: (len(values), seq_len)
+
+    # Compute metrics and generate plots
+    metrics = compute_locality_metrics(values, outputs, snp_index)
+    plot_locality_analysis(values, outputs, snp_index, output_dir)
+
+    # Save metrics report
+    report = format_metrics_report(metrics)
+    with open(output_dir / "snp60_locality_metrics.txt", "w") as f:
+        f.write(report)
+    logger.info(
+        f"Locality experiment metrics saved to: {output_dir / 'snp60_locality_metrics.txt'}"
+    )
+    logger.info("\nMetrics Report:")
+    print(report)
+    # === END: Locality Experiment ===
+
+    # === BEGIN: Reverse Diffusion ===
     # Generate noisy sample x_t at t=T
     x_t = get_noisy_sample(model, x0, T)
 
@@ -181,7 +220,7 @@ def main():
         T,
         output_dir,
     )
-    print(
+    logger.info(
         f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
     )
 
