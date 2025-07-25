@@ -110,7 +110,7 @@ class ReverseDiffusion:
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
         # Numerical stability constant
-        eps = 1e-10
+        eps = 1e-8
 
         # Predict noise using the noise prediction model
         # ε_θ(x_t, t): Model's prediction of the noise added at timestep t
@@ -262,6 +262,11 @@ class ReverseDiffusion:
         alpha_t = bcast_right(alpha_t, ndim)
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
+        # Numerical stability constant
+        eps = 1e-8
+
+        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)
+
         # === Step 1: Predict x_0 using noise predictor ===
         epsilon_theta = self.noise_predictor(x_t, t)
         x_0 = x_t - epsilon_theta
@@ -283,7 +288,7 @@ class ReverseDiffusion:
         coef_x0 = (torch.sqrt(alpha_bar_prev) * beta_t) / (1.0 - alpha_bar_t)
         coef_xt = (torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar_t)
         mean = coef_x0 * x_0 + coef_xt * x_t
-        mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
+        # mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
         # === Step 5: Sample from posterior using Eq. 12 ===
         # q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)

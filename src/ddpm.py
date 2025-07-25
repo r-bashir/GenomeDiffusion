@@ -116,7 +116,7 @@ class DiffusionModel(NetworkBase):
         # Pass through the noise predictor to predict noise
         return self.noise_predictor(x, t)
 
-    def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
+    def compute_loss_Ho(self, batch: torch.Tensor) -> torch.Tensor:
         """
         Compute MSE between true noise and predicted noise for a batch.
         This method performs the forward diffusion process, predicts noise,
@@ -161,6 +161,46 @@ class DiffusionModel(NetworkBase):
         # Compute and return MSE loss
         return F.mse_loss(eps, scaled_pred_eps)
 
+    def compute_loss(self, batch: torch.Tensor) -> torch.Tensor:
+        """
+        Compute MSE between (xt - x0) and predicted noise for a batch.
+        This method performs the forward diffusion process, predicts noise,
+        and calculates the loss. One can scale the MSE with a scale factor.
+
+        Args:
+            batch: Input batch from dataloader of shape [B, C, seq_len].
+        Returns:
+            torch.Tensor: MSE loss.
+        """
+        # Ensure batch has the correct shape and is on the right device
+        device = batch.device
+        batch = prepare_batch_shape(batch)
+
+        # Sample random timesteps for each batch element
+        t = tensor_to_device(self.time_sampler.sample(shape=(batch.shape[0],)), device)
+
+        # Generate Gaussian noise
+        eps = torch.randn_like(batch, device=device)
+
+        # Forward diffusion: add noise to the batch
+        xt = self.forward_diffusion.sample(batch, t, eps)
+
+        # ε_θ(x_t, t): Model's prediction of the noise added at timestep t
+        eps_theta = self.predict_added_noise(xt, t)
+
+        # Elementwise MSE loss
+        mse = F.mse_loss(eps_theta, (xt - batch), reduction="none")  # shape: [B, C, L]
+
+        # Scale MSE by (1 - ᾱ_t)
+        alpha_bar_t = self.forward_diffusion.alpha_bar(t)
+        alpha_bar_t = bcast_right(alpha_bar_t, eps_theta.ndim)  # get shape: [B, C, L]
+        scaled_mse = mse * (1 - alpha_bar_t)
+
+        # Aggregate to scalar (mean over all elements)
+        scaled_loss = scaled_mse.mean()
+
+        return mse.mean()
+
     # ==================== Inference Methods ====================
     def loss_per_timesteps(
         self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
@@ -194,6 +234,7 @@ class DiffusionModel(NetworkBase):
 
             # Get sigma_t for the current timestep
             sigma_t = self.forward_diffusion.sigma(t_tensor)
+
             # Broadcast sigma_t to match dimensions of predicted_noise
             sigma_t = bcast_right(sigma_t, eps_theta.ndim)
 
