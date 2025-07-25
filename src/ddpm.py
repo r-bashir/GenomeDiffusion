@@ -194,7 +194,7 @@ class DiffusionModel(NetworkBase):
         # Scale MSE by (1 - ᾱ_t)
         alpha_bar_t = self.forward_diffusion.alpha_bar(t)
         alpha_bar_t = bcast_right(alpha_bar_t, eps_theta.ndim)  # get shape: [B, C, L]
-        scaled_mse = mse * (1 - alpha_bar_t)
+        scaled_mse = mse / (1 - alpha_bar_t)
 
         # Aggregate to scalar (mean over all elements)
         scaled_loss = scaled_mse.mean()
