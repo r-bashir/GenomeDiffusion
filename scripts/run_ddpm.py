@@ -89,7 +89,7 @@ def main():
 
     # Setup logging
     logger = setup_logging(name="reverse")
-    logger.info("Starting run_reverse script.")
+    logger.info("Starting run_ddpm script.")
 
     # Set global seed
     set_seed(seed=42)
@@ -127,12 +127,9 @@ def main():
 
     # Output directory
     if args.identity_model:
-        base_dir = Path("outputs/analysis")
-        output_dir = base_dir / "identity_model"
+        output_dir = Path("outputs/analysis") / "identity_model"
     else:
-        checkpoint_path = Path(args.checkpoint)
-        base_dir = checkpoint_path.parent.parent
-        output_dir = base_dir / "ddpm_diffusion"
+        output_dir = Path(args.checkpoint).parent.parent / "ddpm_diffusion"
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -203,10 +200,12 @@ def main():
     # === END: Locality Experiment ===
 
     # === BEGIN: Reverse Diffusion ===
+
     # Generate noisy sample x_t at t=T
     x_t = get_noisy_sample(model, x0, T)
+    # x_t = x0
 
-    # Run Markov reverse process
+    # Run Reverse Diffusion Process (Markov Chain)
     samples_dict = run_markov_reverse_process(
         model, x0, x_t, T, device, return_all_steps=True, print_mse=True
     )
@@ -220,7 +219,9 @@ def main():
         T,
         output_dir,
     )
-    logger.info(
+
+    # Debug log
+    logger.debug(
         f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
     )
 
@@ -233,7 +234,8 @@ def main():
         output_dir,
     )
 
-    logger.info(f"Markov reverse denoising plot saved to: {output_dir}")
+    # === END: Reverse Diffusion ===
+
     logger.info("DDPM complete!")
     logger.info(f"Results saved to: {output_dir}")
 

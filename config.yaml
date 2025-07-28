@@ -1,5 +1,5 @@
 # Project name
-project_name: "LinDiff"
+project_name: "NicDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"

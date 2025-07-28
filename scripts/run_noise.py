@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import DiffusionModel
-from src.utils import set_seed
+from src.utils import load_config, set_seed, setup_logging
 from utils.noise_utils import (
     plot_error_statistics,
     plot_loss_vs_timestep,
@@ -44,6 +44,31 @@ from utils.noise_utils_sample import (
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
+    """
+    Loads a DiffusionModel from a checkpoint and moves it to the specified device.
+
+    Args:
+        checkpoint_path (str): Path to the checkpoint file.
+        device (torch.device): Device to load the model onto.
+
+    Returns:
+        model: The loaded DiffusionModel (on the correct device, in eval mode)
+        config: The config/hparams dictionary from the checkpoint
+    """
+    from src import DiffusionModel
+
+    model = DiffusionModel.load_from_checkpoint(
+        checkpoint_path,
+        map_location=device,
+        strict=True,
+    )
+    config = model.hparams
+    model = model.to(device)
+    model.eval()
+    return model, config
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -62,50 +87,39 @@ def parse_args():
 
 
 def main():
-    # Set global seed for reproducibility
-    set_seed(42)
-
     # Parse Arguments
     args = parse_args()
 
+    # Setup logging
+    logger = setup_logging(name="reverse")
+    logger.info("Starting run_noise script.")
+
+    # Set global seed
+    set_seed(seed=42)
+
     try:
-        # Load the model from checkpoint
-        print(f"\nLoading model from checkpoint: {args.checkpoint}")
-        model = DiffusionModel.load_from_checkpoint(
-            args.checkpoint,
-            map_location=device,
-            strict=True,
-        )
-
-        # Get model config and move to device
-        config = model.hparams
-        model = model.to(device)
-        model.eval()
-
-        print(f"Model loaded successfully from checkpoint on {device}")
-        print("Model config loaded from checkpoint:\n")
-        print(config)
-
+        logger.info(f"Loading model from checkpoint: {args.checkpoint}")
+        model, config = load_model_from_checkpoint(args.checkpoint, device)
+        logger.info("Model loaded successfully from checkpoint on %s", device)
+        logger.info("Model config loaded from checkpoint:")
+        print(f"\n{config}\n")
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    checkpoint_path = Path(args.checkpoint)
-    base_dir = checkpoint_path.parent.parent
-    output_dir = base_dir / "noise_analysis"
+    output_dir = Path(args.checkpoint).parent.parent / "noise_analysis"
     output_dir.mkdir(exist_ok=True)
-    print(f"\nResults will be saved to: {output_dir}")
 
     # Load Dataset (Test)
-    print("\nLoading test dataset...")
+    logger.info("Loading test dataset...")
     model.setup("test")
     test_loader = model.test_dataloader()
 
     # Prepare Batch
-    print("Preparing a batch of test data...")
-    x0 = next(iter(test_loader)).to(device)
-    x0 = x0.unsqueeze(1)  # Add channel dimension
-    print(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
+    logger.info("Preparing a batch of test data...")
+    test_batch = next(iter(test_loader)).to(device)
+    x0 = test_batch.unsqueeze(1)  # Add channel dimension
+    logger.info(f"Input shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}")
 
     # ===================== Run Noise Analysis =====================
 
@@ -225,6 +239,9 @@ def main():
         )
 
         print(f"\nMarker analysis complete! Results saved to {output_dir}")
+
+    logger.info("Noise analysis complete!")
+    logger.info(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

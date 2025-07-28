@@ -110,8 +110,7 @@ def main():
     logger.info(f"First 10 values: {x0[0, 0, :10]}")
 
     # Prepare output directory
-    base_dir = Path(config["output_path"])
-    output_dir = base_dir / "forward_diffusion"
+    output_dir = Path(config["output_path"]) / "forward_diffusion"
     output_dir.mkdir(exist_ok=True, parents=True)
 
     # Analyze noise schedule

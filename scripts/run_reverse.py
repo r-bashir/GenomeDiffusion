@@ -40,6 +40,31 @@ from src.utils import set_seed, setup_logging
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
+def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
+    """
+    Loads a DiffusionModel from a checkpoint and moves it to the specified device.
+
+    Args:
+        checkpoint_path (str): Path to the checkpoint file.
+        device (torch.device): Device to load the model onto.
+
+    Returns:
+        model: The loaded DiffusionModel (on the correct device, in eval mode)
+        config: The config/hparams dictionary from the checkpoint
+    """
+    from src import DiffusionModel
+
+    model = DiffusionModel.load_from_checkpoint(
+        checkpoint_path,
+        map_location=device,
+        strict=True,
+    )
+    config = model.hparams
+    model = model.to(device)
+    model.eval()
+    return model, config
+
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
@@ -66,30 +91,16 @@ def main():
     set_seed(seed=42)
 
     try:
-        # Load the model from checkpoint
         logger.info(f"Loading model from checkpoint: {args.checkpoint}")
-        model = DiffusionModel.load_from_checkpoint(
-            args.checkpoint,
-            map_location=device,
-            strict=True,
-        )
-
-        # Get model config and move to device
-        config = model.hparams
-        model = model.to(device)
-        model.eval()
-
-        logger.info("Model loaded successfully from checkpoint on {device}")
+        model, config = load_model_from_checkpoint(args.checkpoint, device)
+        logger.info("Model loaded successfully from checkpoint on %s", device)
         logger.info("Model config loaded from checkpoint:")
         print(f"\n{config}\n")
-
     except Exception as e:
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    checkpoint_path = Path(args.checkpoint)
-    base_dir = checkpoint_path.parent.parent
-    output_dir = base_dir / "reverse_diffusion"
+    output_dir = Path(args.checkpoint).parent.parent / "reverse_diffusion"
     output_dir.mkdir(exist_ok=True)
 
     # Load Dataset (Test)
