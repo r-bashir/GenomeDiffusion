@@ -135,6 +135,9 @@ class LinearNoisePredictor(nn.Module):
         # Apply linear transformation
         output = self.linear(x_t)
 
+        # Add skip connection to SNP sequence not time embedding
+        # output = output + x_flat
+
         # Reshape back to original dimensions
         return output.view(batch_size, channels, seq_len)
 
