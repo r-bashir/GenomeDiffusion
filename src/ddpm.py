@@ -16,21 +16,20 @@ from .mlp import (
     ComplexNoisePredictor,
     LinearNoisePredictor,
     SimpleNoisePredictor,
-    zero_out_model_parameters,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .unet import UNet1D
-from .utils import bcast_right, prepare_batch_shape, tensor_to_device
+from .utils import bcast_right, tensor_to_device
 
 
 class DiffusionModel(NetworkBase):
     """Diffusion model with 1D Convolutional network for SNP data.
 
-    Implements both forward diffusion (data corruption) and reverse diffusion (denoising)
-    processes for SNP data. The forward process gradually adds noise to the data following
-    a predefined schedule, while the reverse process learns to denoise the data using a
-    UNet1D architecture.
+    Implements both forward diffusion (data corruption) and reverse
+    diffusion (denoising) processes for SNP data. The forward process
+    gradually adds noise to the data following a predefined schedule,
+    while the reverse process learns to denoise the data using a UNet.
 
     Inherits from NetworkBase to leverage PyTorch Lightning functionality.
     """
@@ -65,9 +64,6 @@ class DiffusionModel(NetworkBase):
             seq_length=hparams["data"]["seq_length"],
         )
 
-        # Zero noise model
-        # zero_out_model_parameters(self.noise_predictor)
-
         # ReverseDiffusion: Reverse diffusion process
         self.reverse_diffusion = ReverseDiffusion(
             self.forward_diffusion,
@@ -84,37 +80,37 @@ class DiffusionModel(NetworkBase):
             print("Warning: `gradient_checkpointing_enable()` not found. Skipping...")
 
     # ==================== Training Methods ====================
-    def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def forward(self, batch: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Forward pass of the diffusion model.
 
         Args:
-            x: Input data of shape [B, C, seq_len].
+            batch: Input data of shape [B, 1, L].
             t: Timesteps of shape [B].
 
         Returns:
-            torch.Tensor: Predicted noise of shape [B, C, seq_len].
+            torch.Tensor: Predicted noise of shape [B, 1, L].
         """
-        return self.predict_added_noise(x, t)
+        return self.predict_added_noise(batch, t)
 
-    def predict_added_noise(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def predict_added_noise(self, batch: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         """
         Predict the noise that was added during forward diffusion.
 
         Args:
-            x: Noisy input data of shape [B, C, seq_len].
+            batch: Noisy input data of shape [B, 1, L].
             t: Timesteps of shape [B].
 
         Returns:
-            torch.Tensor: Predicted noise of shape [B, C, seq_len].
+            torch.Tensor: Predicted noise of shape [B, 1, L].
         """
-        # Ensure tensors have the correct shape and are on the right device
-        device = x.device
-        x = prepare_batch_shape(x)
+        # Ensure tensors have the correct shape of [B, 1, L]
+        device = batch.device
+        batch = self._prepare_batch(batch)
         t = tensor_to_device(t, device)
 
         # Pass through the noise predictor to predict noise
-        return self.noise_predictor(x, t)
+        return self.noise_predictor(batch, t)
 
     def compute_loss_Ho(self, batch: torch.Tensor) -> torch.Tensor:
         """
@@ -128,13 +124,13 @@ class DiffusionModel(NetworkBase):
             L = E[||eps - eps_theta(x_t, t)||^2]
 
         Args:
-            batch: Input batch from dataloader of shape [B, C, seq_len].
+            batch: Input batch from dataloader of shape [B, 1, L].
         Returns:
             torch.Tensor: MSE loss.
         """
-        # Ensure batch has the correct shape and is on the right device
+        # Ensure batch has the correct shape of [B, 1, L]
         device = batch.device
-        batch = prepare_batch_shape(batch)
+        batch = self._prepare_batch(batch)
 
         # Sample random timesteps for each batch element
         t = tensor_to_device(self.time_sampler.sample(shape=(batch.shape[0],)), device)
@@ -168,13 +164,13 @@ class DiffusionModel(NetworkBase):
         and calculates the loss. One can scale the MSE with a scale factor.
 
         Args:
-            batch: Input batch from dataloader of shape [B, C, seq_len].
+            batch: Input batch from dataloader of shape [B, 1, L].
         Returns:
             torch.Tensor: MSE loss.
         """
-        # Ensure batch has the correct shape and is on the right device
+        # Ensure batch has the correct shape of [B, 1, L]
         device = batch.device
-        batch = prepare_batch_shape(batch)
+        batch = self._prepare_batch(batch)
 
         # Sample random timesteps for each batch element
         t = tensor_to_device(self.time_sampler.sample(shape=(batch.shape[0],)), device)
@@ -189,11 +185,11 @@ class DiffusionModel(NetworkBase):
         eps_theta = self.predict_added_noise(xt, t)
 
         # Elementwise MSE loss
-        mse = F.mse_loss(eps_theta, (xt - batch), reduction="none")  # shape: [B, C, L]
+        mse = F.mse_loss(eps_theta, (xt - batch), reduction="none")  # shape: [B, 1, L]
 
         # Scale MSE by (1 - ᾱ_t)
         alpha_bar_t = self.forward_diffusion.alpha_bar(t)
-        alpha_bar_t = bcast_right(alpha_bar_t, eps_theta.ndim)  # get shape: [B, C, L]
+        alpha_bar_t = bcast_right(alpha_bar_t, eps_theta.ndim)  # get shape: [B, 1, L]
         scaled_mse = mse / (1 - alpha_bar_t)
 
         # Aggregate to scalar (mean over all elements)
@@ -203,31 +199,31 @@ class DiffusionModel(NetworkBase):
 
     # ==================== Inference Methods ====================
     def loss_per_timesteps(
-        self, x0: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
+        self, batch: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
     ) -> torch.Tensor:
         """
         Computes loss at specific timesteps.
         Args:
-            x0: Clean input data of shape [B, C, seq_len].
-            eps: Noise of shape [B, C, seq_len].
+            batch: Clean input data of shape [B, 1, L].
+            eps: Noise of shape [B, 1, L].
             timesteps: Timesteps to compute loss at.
         Returns:
             torch.Tensor: Loss at each timestep.
         """
-        # Ensure tensors have the correct shape and are on the right device
-        device = x0.device
-        x0 = prepare_batch_shape(x0)
-        eps = prepare_batch_shape(eps)
+        # Ensure tensors have the correct shape of [B, 1, L]
+        device = batch.device
+        batch = self._prepare_batch(batch)
+        eps = self._prepare_batch(eps)
 
         losses = []
         for t in timesteps:
             # Create tensor of timestep t for all batch elements
             t_tensor = tensor_to_device(
-                torch.full((x0.shape[0],), int(t.item()), dtype=torch.int32), device
+                torch.full((batch.shape[0],), int(t.item()), dtype=torch.int32), device
             )
 
             # Apply forward diffusion at timestep t
-            xt = self.forward_diffusion.sample(x0, t_tensor, eps)
+            xt = self.forward_diffusion.sample(batch, t_tensor, eps)
 
             # Predict noise
             eps_theta = self.predict_added_noise(xt, t_tensor)

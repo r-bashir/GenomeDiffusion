@@ -44,12 +44,25 @@ class NetworkBase(pl.LightningModule):
         This method is called by PyTorch Lightning before training/validation/testing.
         It handles dataset initialization and splitting.
 
+        Data shape:
+            - After dataset creation: [N, L] (N = total samples, L = sequence length)
+            - After splitting: train/val/test datasets, each with [n, L]
+
         Args:
             stage: Current stage ('fit', 'validate', 'test', or 'predict').
         """
         if not hasattr(self, "dataset") or self.dataset is None:
-            # Load dataset - override this in subclasses if needed
-            self.dataset = self._create_dataset()
+            # Load dataset
+            if "data" not in self.hparams or "input_path" not in self.hparams["data"]:
+                raise ValueError("input_path must be specified in hparams['data']")
+            seq_length = self.hparams["data"].get("seq_length", None)
+            print(f"Creating dataset with sequence length: {seq_length}")
+            print(f"Loading data from: {self.hparams['data']['input_path']}")
+
+            # Create and split dataset
+            from src import SNPDataset
+
+            self.dataset = SNPDataset(self.hparams)
             self._datasplit = self.hparams["data"]["datasplit"]
             self._train_dataset, self._val_dataset, self._test_dataset = random_split(
                 self.dataset,
@@ -57,44 +70,8 @@ class NetworkBase(pl.LightningModule):
                 generator=torch.Generator().manual_seed(42),
             )
 
-    def _create_dataset(self) -> Dataset:
-        """Create and return the dataset.
-
-        Returns:
-            Dataset: The created dataset.
-        """
-        # Check if input_path is in the data section of hparams
-        if "data" not in self.hparams or "input_path" not in self.hparams["data"]:
-            raise ValueError("input_path must be specified in hparams['data']")
-
-        # Get sequence length from config
-        seq_length = self.hparams["data"].get("seq_length", None)
-
-        # Import here to avoid circular imports
-        from src import SNPDataset
-
-        print(f"Creating dataset with sequence length: {seq_length}")
-        print(f"Loading data from: {self.hparams['data']['input_path']}")
-        return SNPDataset(self.hparams)
-
-    def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
-        """Prepare a batch for model input.
-
-        Ensures the batch has the correct shape [B, C, seq_len].
-        For non-sequence data, override this method.
-
-        Args:
-            batch: Input batch from dataloader.
-
-        Returns:
-            torch.Tensor: Prepared batch with shape [B, C, seq_len].
-        """
-        if len(batch.shape) == 2:
-            batch = batch.unsqueeze(1)  # Convert to (batch_size, 1, seq_len)
-        return batch
-
     def train_dataloader(self) -> DataLoader:
-        """Create and return the training dataloader."""
+        """Create and return the training dataloader with shape of [B, L]."""
         return DataLoader(
             self._train_dataset,
             batch_size=self.hparams["data"]["batch_size"],
@@ -104,7 +81,7 @@ class NetworkBase(pl.LightningModule):
         )
 
     def val_dataloader(self) -> DataLoader:
-        """Create and return the validation dataloader."""
+        """Create and return the validation dataloader with shape of [B, L]."""
         return DataLoader(
             self._val_dataset,
             batch_size=self.hparams["data"]["batch_size"],
@@ -114,7 +91,7 @@ class NetworkBase(pl.LightningModule):
         )
 
     def test_dataloader(self) -> DataLoader:
-        """Create and return the test dataloader."""
+        """Create and return the test dataloader with shape of [B, L]."""
         return DataLoader(
             self._test_dataset,
             batch_size=self.hparams["data"]["batch_size"],
@@ -123,11 +100,27 @@ class NetworkBase(pl.LightningModule):
             pin_memory=True,
         )
 
+    def _prepare_batch(self, batch: torch.Tensor) -> torch.Tensor:
+        """Prepare a batch for model input.
+
+        Converts input batch from shape [B, L] (from DataLoader) to [B, 1, L] for 1D SNP data.
+        This ensures the model always receives [B, C, L] with C=1.
+
+        Args:
+            batch: Input batch from dataloader, shape [B, L].
+
+        Returns:
+            torch.Tensor: Prepared batch with shape [B, 1, L].
+        """
+        if len(batch.shape) == 2:
+            batch = batch.unsqueeze(1)  # Convert to (B, 1, L)
+        return batch
+
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
         """Training step for model optimization.
 
         Args:
-            batch: Input batch from dataloader
+            batch: Input batch from dataloader, shape [B, L]. Will be converted to [B, 1, L].
             batch_idx: Index of the current batch
 
         Returns:
@@ -144,7 +137,7 @@ class NetworkBase(pl.LightningModule):
         """Validation step for model evaluation.
 
         Args:
-            batch: Input batch from validation dataloader
+            batch: Input batch from validation dataloader, shape [B, L]. Will be converted to [B, 1, L].
             batch_idx: Index of the current batch
 
         Returns:
@@ -156,11 +149,14 @@ class NetworkBase(pl.LightningModule):
         """Test step for model evaluation.
 
         Args:
-            batch: Input batch from test dataloader
+            batch: Input batch from test dataloader, shape [B, L]. Will be converted to [B, 1, L].
             batch_idx: Index of the current batch
 
         Returns:
             dict: Dictionary containing test loss, input targets, and reconstructions
+                - 'loss': scalar loss
+                - 'target': ground truth batch, shape [B, 1, L]
+                - 'reconstruction': model output, shape [B, 1, L]
         """
         return self._shared_evaluation(batch, "test")
 
@@ -170,12 +166,12 @@ class NetworkBase(pl.LightningModule):
         """Prediction step for model inference.
 
         Args:
-            batch: Input batch from prediction dataloader
+            batch: Input batch from prediction dataloader, shape [B, L]. Will be converted to [B, 1, L].
             batch_idx: Index of the current batch
             dataloader_idx: Index of the dataloader (for multiple dataloaders)
 
         Returns:
-            dict: Dictionary containing model reconstructions
+            dict: Dictionary containing model reconstructions, shape [B, 1, L]
         """
         return self._shared_evaluation(batch, "predict")
 
@@ -183,14 +179,14 @@ class NetworkBase(pl.LightningModule):
         """Shared evaluation logic for validation, test, and prediction stages.
 
         Args:
-            batch: Input batch from dataloader
+            batch: Input batch from dataloader, shape [B, L] (converted to [B, 1, L]).
             stage: Evaluation stage ('val', 'test', or 'predict')
 
         Returns:
             dict: Dictionary with stage-appropriate outputs:
-                - val: loss
-                - test: loss, target, reconstruction
-                - predict: reconstruction
+                - val: {'loss': scalar loss}
+                - test: {'loss': scalar loss, 'target': [B, 1, L], 'reconstruction': [B, 1, L]}
+                - predict: {'reconstruction': [B, 1, L]}
         """
         batch = self._prepare_batch(batch)
         loss = self.compute_loss(batch)

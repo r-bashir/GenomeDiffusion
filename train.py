@@ -235,16 +235,12 @@ def main():
         )
         print("Training completed successfully")
 
-        print("\nTo run evaluation and inference locally, execute:")
-        print(
-            f"python evaluate.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
-        )
+        print("\nTo run inference locally, execute:")
         print(
             f"python inference.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
         )
 
-        print("\nTo run evaluation and inference on cluster, execute:")
-        print(f"./evaluate.sh {trainer.checkpoint_callback.best_model_path}")
+        print("\nTo run inference on cluster, execute:")
         print(f"./inference.sh {trainer.checkpoint_callback.best_model_path}")
 
     except Exception as e:
