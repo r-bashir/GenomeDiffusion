@@ -141,73 +141,26 @@ def main():
     # Prepare Batch
     logger.info("Preparing a batch of test data...")
     test_batch = next(iter(test_loader)).to(device)
+    logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
 
     # Select a single sample and ensure shape [1, 1, seq_len]
+    logger.info(f"Adding channel dim, and selecting single sample")
     sample_idx = 0
-    if test_batch.dim() == 2:
-        # [batch, seq_len] -> [1, 1, seq_len]
-        x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
-    elif test_batch.dim() == 3:
-        # [batch, 1, seq_len] -> [1, 1, seq_len]
-        x0 = test_batch[sample_idx : sample_idx + 1]
-    else:
-        raise ValueError(f"Unexpected test_batch shape: {test_batch.shape}")
-
-    x0 = x0.to(device)
-    logger.info(
-        f"Selected x0 shape: {x0.shape}, dtype: {x0.dtype}, device: {x0.device}"
-    )
-    logger.info(f"Sample unique values: {torch.unique(x0)}")
-    logger.info(f"First 10 values: {x0[0, 0, :10]}")
-
-    # Full reverse diffusion process from x_t
-    T = 4
-    logger.info(f"Running Markov reverse process from x_t at t={T}...")
-
-    # === BEGIN: Locality Experiment ===
-    logger.info("Running SNP locality experiment (varying SNP 60)...")
-    seq_len = x0.shape[-1]
-    snp_index = 59  # SNP 60 (0-indexed)
-    values = np.linspace(0, 0.5, 11)
-    outputs = []
-
-    # Run experiment
-    for val in values:
-        x0_test = x0.clone()
-        x0_test[..., snp_index] = val
-        x_t_test = get_noisy_sample(model, x0_test, T)
-        samples_dict = run_markov_reverse_process(
-            model, x0_test, x_t_test, T, device, return_all_steps=False, print_mse=False
-        )
-        x_denoised = samples_dict[0].detach().cpu().numpy().squeeze()
-        outputs.append(x_denoised)
-
-    outputs = np.stack(outputs)  # shape: (len(values), seq_len)
-
-    # Compute metrics and generate plots
-    metrics = compute_locality_metrics(values, outputs, snp_index)
-    plot_locality_analysis(values, outputs, snp_index, output_dir)
-
-    # Save metrics report
-    report = format_metrics_report(metrics)
-    with open(output_dir / "snp60_locality_metrics.txt", "w") as f:
-        f.write(report)
-    logger.info(
-        f"Locality experiment metrics saved to: {output_dir / 'snp60_locality_metrics.txt'}"
-    )
-    logger.info("\nMetrics Report:")
-    print(report)
-    # === END: Locality Experiment ===
+    x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
+    logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")
+    logger.info(f"x0 unique values: {torch.unique(x0)}")
 
     # === BEGIN: Reverse Diffusion ===
+    logger.info(f"Running Markov reverse process from x_t at t=T...")
+    diffusion_steps = 1000
 
     # Generate noisy sample x_t at t=T
-    x_t = get_noisy_sample(model, x0, T)
+    x_t = get_noisy_sample(model, x0, diffusion_steps)
     # x_t = x0
 
     # Run Reverse Diffusion Process (Markov Chain)
     samples_dict = run_markov_reverse_process(
-        model, x0, x_t, T, device, return_all_steps=True, print_mse=True
+        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=True
     )
 
     # Plot and compare
@@ -216,7 +169,7 @@ def main():
         x0,
         x_t,
         x_t_minus_1,
-        T,
+        diffusion_steps,
         output_dir,
     )
 
@@ -230,7 +183,7 @@ def main():
         x0,
         x_t,
         samples_dict,
-        T,
+        diffusion_steps,
         output_dir,
     )
 

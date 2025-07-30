@@ -99,11 +99,11 @@ def run_markov_reverse_process(
         # Corr(x_t_minus_1, x_t) should decrease as we denoise (t → 0)
         if print_mse:
             mse_x0 = torch.mean((x_t_minus_1 - x0) ** 2).item()
-            corr_x0 = torch.corrcoef(
+            corr_x0 = torch.corrcoef(  # Pearson correlation coefficient
                 torch.stack([x_t_minus_1.flatten(), x0.flatten()])
             )[0, 1]
             mse_xt = torch.mean((x_t_minus_1 - x_t) ** 2).item()
-            corr_xt = torch.corrcoef(
+            corr_xt = torch.corrcoef(  # Pearson correlation coefficient
                 torch.stack([x_t_minus_1.flatten(), x_t.flatten()])
             )[0, 1]
             print(
@@ -122,10 +122,10 @@ def run_markov_reverse_process(
             if print_mse:
                 mse_x0 = torch.mean((x_t_minus_1 - x0) ** 2).item()
                 mse_xt = torch.mean((x_t_minus_1 - x_t) ** 2).item()
-                corr_x0 = torch.corrcoef(
+                corr_x0 = torch.corrcoef(  # Pearson correlation coefficient
                     torch.stack([x_t_minus_1.flatten(), x0.flatten()])
                 )[0, 1]
-                corr_xt = torch.corrcoef(
+                corr_xt = torch.corrcoef(  # Pearson correlation coefficient
                     torch.stack([x_t_minus_1.flatten(), x_t.flatten()])
                 )[0, 1]
                 print(
@@ -254,6 +254,7 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
     plt.close(fig)
 
 
+# === Locality Analysis ===
 def compute_locality_metrics(values, outputs, snp_index):
     """Compute on-target and off-target metrics for locality analysis.
 
@@ -289,6 +290,55 @@ def compute_locality_metrics(values, outputs, snp_index):
     }
 
     return metrics
+
+
+def format_metrics_report(metrics):
+    """Format metrics into a detailed report.
+
+    Args:
+        metrics (dict): Dictionary of computed metrics
+
+    Returns:
+        str: Formatted report string
+    """
+    sections = [
+        (
+            "On-Target Analysis",
+            [
+                f"Slope: {metrics['on_target']['slope']:.4f} (1.0 is ideal)",
+                f"Pearson r: {metrics['on_target']['correlation']:.4f} (1.0 is ideal, 0=no correlation)",
+                f"MSE: {metrics['on_target']['mse']:.6f}",
+                f"R²: {metrics['on_target']['r2']:.4f} (1.0 is ideal, 0=no fit)",
+            ],
+        ),
+        (
+            "Off-Target Analysis",
+            [
+                f"Mean absolute: {metrics['off_target']['mean_abs']:.6f}",
+                f"Max absolute: {metrics['off_target']['max_abs']:.6f}",
+                f"Total energy: {metrics['off_target']['total_energy']:.6f}",
+                f"Standard deviation: {metrics['off_target']['std_dev']:.6f}",
+            ],
+        ),
+        (
+            "Regional Analysis",
+            [
+                f"\nRegion 0 (SNPs 0-24):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_0']['mean']:.6f}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_0']['max']:.6f}",
+                f"\nRegion 0.25 (SNPs 25-74):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_025']['mean']:.6f}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_025']['max']:.6f}",
+                f"\nRegion 0.5 (SNPs 75-99):",
+                f"  Mean abs: {metrics['off_target']['regional_means']['region_05']['mean']:.6f}",
+                f"  Max abs: {metrics['off_target']['regional_means']['region_05']['max']:.6f}",
+            ],
+        ),
+    ]
+
+    return "\n\n".join(
+        f"=== {title} ===\n" + "\n".join(items) for title, items in sections
+    )
 
 
 def compute_regional_metrics(off_target):
@@ -392,52 +442,3 @@ def plot_locality_analysis(values, outputs, snp_index, output_dir):
         output_dir / "snp60_locality_offtarget.png", dpi=300, bbox_inches="tight"
     )
     plt.close(fig)
-
-
-def format_metrics_report(metrics):
-    """Format metrics into a detailed report.
-
-    Args:
-        metrics (dict): Dictionary of computed metrics
-
-    Returns:
-        str: Formatted report string
-    """
-    sections = [
-        (
-            "On-Target Analysis (SNP 60)",
-            [
-                f"Slope: {metrics['on_target']['slope']:.4f} (1.0 is ideal)",
-                f"Pearson r: {metrics['on_target']['correlation']:.4f}",
-                f"MSE: {metrics['on_target']['mse']:.6f}",
-                f"R²: {metrics['on_target']['r2']:.4f}",
-            ],
-        ),
-        (
-            "Off-Target Analysis",
-            [
-                f"Mean absolute: {metrics['off_target']['mean_abs']:.6e}",
-                f"Max absolute: {metrics['off_target']['max_abs']:.6e}",
-                f"Total energy: {metrics['off_target']['total_energy']:.6e}",
-                f"Standard deviation: {metrics['off_target']['std_dev']:.6e}",
-            ],
-        ),
-        (
-            "Regional Analysis",
-            [
-                f"\nRegion 0 (SNPs 0-24):",
-                f"  Mean abs: {metrics['off_target']['regional_means']['region_0']['mean']:.6e}",
-                f"  Max abs: {metrics['off_target']['regional_means']['region_0']['max']:.6e}",
-                f"\nRegion 0.25 (SNPs 25-74):",
-                f"  Mean abs: {metrics['off_target']['regional_means']['region_025']['mean']:.6e}",
-                f"  Max abs: {metrics['off_target']['regional_means']['region_025']['max']:.6e}",
-                f"\nRegion 0.5 (SNPs 75-99):",
-                f"  Mean abs: {metrics['off_target']['regional_means']['region_05']['mean']:.6e}",
-                f"  Max abs: {metrics['off_target']['regional_means']['region_05']['max']:.6e}",
-            ],
-        ),
-    ]
-
-    return "\n\n".join(
-        f"=== {title} ===\n" + "\n".join(items) for title, items in sections
-    )

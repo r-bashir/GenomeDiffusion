@@ -10,9 +10,12 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src import DiffusionModel
-from src.utils import load_config, set_seed, setup_logging
-from utils.ddpm_utils import plot_locality_analysis
+from src.utils import set_seed, setup_logging
+from utils.ddpm_utils import (
+    compute_locality_metrics,
+    format_metrics_report,
+    plot_locality_analysis,
+)
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,34 +103,56 @@ def main():
     logger.info("Running SNP locality experiment (varying SNP 60)...")
     batch_size = 1
     snp_index = 59
-    perturbed_values = np.round(np.arange(0, 0.51, 0.01), 2)
-    outputs = []
+    true_noise_values = np.round(np.arange(0, 0.51, 0.01), 2)
+    eps_thetas = []
 
     # Run experiment
-    for val in perturbed_values:
+    for val in true_noise_values:
         x0_test = x0.clone()
         x0_test[..., snp_index] = val
         with torch.no_grad():
-            noise = model.noise_predictor(
+            eps_theta = model.noise_predictor(
                 x0_test, torch.zeros(batch_size, device=device)
             )
-        outputs.append(noise.cpu().numpy().squeeze())
 
-    outputs = np.stack(outputs)  # shape: (len(perturbed_values), seq_len)
+            mean_pred_noise = eps_theta.mean().item()
+            print(f"Mean of predicted noise (ε_θ): {mean_pred_noise:.6f}")
+        eps_thetas.append(eps_theta.cpu().numpy().squeeze())
 
-    # Plot perturb_value vs model output at SNP 59
+    eps_thetas = np.stack(eps_thetas)  # shape: (len(true_noise_values), seq_len)
+
+    # Compute metrics and generate plots
+    metrics = compute_locality_metrics(true_noise_values, eps_thetas, snp_index)
+    plot_locality_analysis(true_noise_values, eps_thetas, snp_index, output_dir)
+
+    # Save metrics report
+    report = format_metrics_report(metrics)
+    with open(output_dir / f"snp{snp_index+1}_locality_metrics.txt", "w") as f:
+        f.write(report)
+    logger.info("Metrics Report:")
+    print(f"\n{report}\n")
+
+    # Plot true noise vs predicted noise at SNP 60
     plt.figure(figsize=(7, 5))
-    plt.plot(perturbed_values, outputs[:, snp_index], marker="o")
-    plt.xlabel(f"Perturbed Value at SNP {snp_index+1}")
-    plt.ylabel(f"Model Output at SNP {snp_index+1}")
+    plt.plot(true_noise_values, eps_thetas[:, snp_index], marker="o")
+    plt.xlabel(f"True Noise at SNP {snp_index+1}")
+    plt.ylabel(f"Predicted Noise at SNP {snp_index+1}")
     plt.title(f"Locality Curve: SNP {snp_index+1}")
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_dir / f"snp{snp_index+1}_locality_curve.png", dpi=150)
     plt.close()
 
-    # Plot locality analysis
-    plot_locality_analysis(perturbed_values, outputs, snp_index, output_dir)
+    # Predicted noise histogram at SNP 60
+    plt.figure(figsize=(7, 5))
+    plt.hist(eps_thetas.flatten(), bins=100, density=True)
+    plt.xlabel(f"Predicted Noise (ε_θ) at SNP {snp_index+1}")
+    plt.ylabel("Density")
+    plt.title("Noise Histogram")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_dir / f"snp{snp_index+1}_locality_hist.png", dpi=150)
+    plt.close()
 
     # === END: Locality Experiment ===
 

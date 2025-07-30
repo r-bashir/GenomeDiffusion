@@ -69,7 +69,7 @@ optimizer:
 
 # LR Scheduler
 scheduler:
-  type: "cosine"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
+  type: "reduce"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
 
   # For CosineLR
   eta_min: 1e-6                # Minimum learning rate for CosineAnnealingLR
@@ -80,4 +80,3 @@ scheduler:
   patience: 15                 # Epochs with no improvement before reducing LR
   threshold: 1e-4              # Minimum change to qualify as improvement
   min_lr: 1e-6                 # Minimum learning rate for ReduceLROnPlateau
-  verbose: false               # Print LR reduction events

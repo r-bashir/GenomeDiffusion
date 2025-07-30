@@ -244,7 +244,6 @@ class NetworkBase(pl.LightningModule):
                 patience=int(self.hparams["scheduler"]["patience"]),
                 threshold=float(self.hparams["scheduler"]["threshold"]),
                 min_lr=float(self.hparams["scheduler"]["min_lr"]),
-                verbose=bool(self.hparams["scheduler"]["verbose"]),
             )
 
         else:
