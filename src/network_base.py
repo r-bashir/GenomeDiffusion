@@ -212,7 +212,9 @@ class NetworkBase(pl.LightningModule):
             raise ValueError(f"Unknown stage: {stage}")
 
     def configure_optimizers(self):
-        """Configure optimizer and learning rate scheduler."""
+        """
+        Configure optimizer and learning rate scheduler (CosineAnnealingLR or ReduceLROnPlateau).
+        """
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=float(self.hparams["optimizer"]["lr"]),
@@ -222,12 +224,34 @@ class NetworkBase(pl.LightningModule):
             amsgrad=bool(self.hparams["optimizer"]["amsgrad"]),
         )
 
-        scheduler = {
-            "scheduler": torch.optim.lr_scheduler.CosineAnnealingLR(
+        # Get scheduler type from config (default to 'cosine')
+        scheduler_type = self.hparams["scheduler"]["type"]
+        scheduler = None
+        scheduler_dict = None
+
+        if scheduler_type == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=self.hparams["training"]["epochs"],
+                T_max=int(self.hparams["training"]["epochs"]),
                 eta_min=float(self.hparams["scheduler"]["eta_min"]),
-            ),
+            )
+
+        elif scheduler_type == "reduce":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode=str(self.hparams["scheduler"]["mode"]),
+                factor=float(self.hparams["scheduler"]["factor"]),
+                patience=int(self.hparams["scheduler"]["patience"]),
+                threshold=float(self.hparams["scheduler"]["threshold"]),
+                min_lr=float(self.hparams["scheduler"]["min_lr"]),
+                verbose=bool(self.hparams["scheduler"]["verbose"]),
+            )
+
+        else:
+            raise ValueError(f"Unknown scheduler type: {scheduler_type}")
+
+        scheduler_dict = {
+            "scheduler": scheduler,
             "monitor": "val_loss",
             "interval": "epoch",
             "frequency": 1,
@@ -235,25 +259,25 @@ class NetworkBase(pl.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": scheduler,
+            "lr_scheduler": scheduler_dict,
         }
 
     def on_before_optimizer_step(self, optimizer, *args, **kwargs):
-        """Apply learning rate warmup and minimum learning rate.
+        """Apply learning rate warmup and minimum learning rate (if enabled in config).
 
         Args:
             optimizer: The optimizer being used.
         """
-        warmup_epochs = self.hparams["training"].get("warmup_epochs", 0)
+        warmup_epochs = int(self.hparams["training"].get("warmup_epochs", 10))
 
         # Warmup period
         if warmup_epochs and (self.trainer.current_epoch < warmup_epochs):
             lr_scale = min(1.0, float(self.trainer.current_epoch + 1) / warmup_epochs)
             for pg in optimizer.param_groups:
-                pg["lr"] = lr_scale * self.hparams["optimizer"]["lr"]
+                pg["lr"] = lr_scale * float(self.hparams["optimizer"]["lr"])
 
         # Enforce minimum learning rate
-        min_lr = self.hparams["optimizer"].get("min_lr", 0.0)
+        min_lr = float(self.hparams["optimizer"].get("min_lr", 0.0))
         for pg in optimizer.param_groups:
             pg["lr"] = max(pg["lr"], min_lr)
 
