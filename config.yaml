@@ -11,9 +11,9 @@ data:
   input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 
   # Data Loading
-  batch_size: 64
-  num_workers: 4
-  datasplit: [1700, 200, 167]
+  batch_size: 64               # Batch size for DataLoader class
+  num_workers: 4               # Number of workers for DataLoader class
+  datasplit: [1700, 200, 167]  # Data split for Dataset class
 
   # Data Preprocessing
   seq_length: 100              # Total length is 160858
@@ -25,8 +25,8 @@ data:
 
 # Time Sampler
 time_sampler:
-  tmin: 1
-  tmax: 1000
+  tmin: 1                      # Min value for time sampler
+  tmax: 1000                   # Max value for time sampler, should match `timesteps`
 
 # DDPM
 diffusion:
@@ -69,11 +69,15 @@ optimizer:
 
 # LR Scheduler
 scheduler:
-  type: "reduce"               # Scheduler type: cosine (CosineAnnealingLR) or reduce (ReduceLROnPlateau)
-  eta_min: 1e-6                # Minimum learning rate for cosine scheduler
+  type: "cosine"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
+
+  # For CosineLR
+  eta_min: 1e-6                # Minimum learning rate for CosineAnnealingLR
+
+  # For ReduceLR
   mode: "min"                  # or "max"
   factor: 0.5                  # LR reduction factor
   patience: 15                 # Epochs with no improvement before reducing LR
   threshold: 1e-4              # Minimum change to qualify as improvement
-  min_lr: 1e-6                 # Minimum learning rate for reduce scheduler
+  min_lr: 1e-6                 # Minimum learning rate for ReduceLROnPlateau
   verbose: false               # Print LR reduction events
