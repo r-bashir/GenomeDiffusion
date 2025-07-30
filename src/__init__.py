@@ -13,9 +13,16 @@ from .dataset import SNPDataModule, SNPDataset
 from .ddpm import DiffusionModel
 from .forward_diffusion import ForwardDiffusion
 from .reverse_diffusion import ReverseDiffusion
+from .sinusoidal_embedding import SinusoidalPositionEmbeddings, SinusoidalTimeEmbeddings
 from .time_sampler import UniformContinuousTimeSampler, UniformDiscreteTimeSampler
 from .unet import UNet1D
-from .utils import load_config, set_seed
+from .utils import (
+    bcast_right,
+    load_config,
+    prepare_batch_shape,
+    set_seed,
+    tensor_to_device,
+)
 
 __version__ = "0.1.0"
 
@@ -34,10 +41,16 @@ __all__ = [
     "ForwardDiffusion",
     "ReverseDiffusion",
     "UNet1D",
-    # Time samplers
+    # Time Samplers
     "UniformContinuousTimeSampler",
     "UniformDiscreteTimeSampler",
-    # Utils
+    # Sinusoidal Embeddings
+    "SinusoidalTimeEmbeddings",
+    "SinusoidalPositionEmbeddings",
+    # Common Utils
     "load_config",
     "set_seed",
+    "bcast_right",
+    "tensor_to_device",
+    "prepare_batch_shape",
 ]

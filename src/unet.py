@@ -1,58 +1,15 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import math
 from functools import partial
-from typing import Dict, Sequence
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .sinusoidal_embedding import SinusoidalPositionEmbeddings, SinusoidalTimeEmbeddings
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# Time Embeddings
-class SinusoidalTimeEmbeddings(nn.Module):
-    """Sinusoidal positional embedding (used for time steps in diffusion models)."""
-
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, time):
-        device = time.device
-        half_dim = self.dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = time[:, None] * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings
-
-
-# Position Embeddings
-class SinusoidalPositionEmbeddings(nn.Module):
-    """Sinusoidal position embeddings for 1D sequences.
-
-    This class implements position embeddings using sine and cosine functions
-    of different frequencies, similar to the Transformer architecture.
-    """
-
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, positions):
-        device = positions.device
-        half_dim = self.dim // 2
-        # Create position indices for the sequence
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        # Calculate position embeddings
-        embeddings = positions.unsqueeze(-1) * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings  # Shape: [batch_size, seq_len, dim]
 
 
 # Residual Join

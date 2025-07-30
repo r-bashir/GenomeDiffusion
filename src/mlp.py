@@ -1,32 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import math
-
 import torch
 import torch.nn as nn
 
-from .all_models import SinusoidalTimeEmbeddings
+from .sinusoidal_embedding import SinusoidalTimeEmbeddings
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# === Time Embeddings ===
-class SinusoidalTimeEmbeddings(nn.Module):
-    """Sinusoidal positional embedding (used for time steps in diffusion models)."""
-
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, time):
-        device = time.device
-        half_dim = self.dim // 2
-        embeddings = math.log(10000) / (half_dim - 1)
-        embeddings = torch.exp(torch.arange(half_dim, device=device) * -embeddings)
-        embeddings = time[:, None] * embeddings[None, :]
-        embeddings = torch.cat((embeddings.sin(), embeddings.cos()), dim=-1)
-        return embeddings
 
 
 # === Identity Noise Predictor ===
