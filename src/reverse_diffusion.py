@@ -57,7 +57,7 @@ class ReverseDiffusion:
         self.denoise_step = denoise_step
         self.discretize = discretize
 
-    def reverse_diffusion_step(self, x_t, t, return_all=False):
+    def reverse_diffusion_step_Ho(self, x_t, t, return_all=False):
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
         Implements Algorithm 2 from the DDPM paper (Ho et al., 2020):
@@ -127,7 +127,7 @@ class ReverseDiffusion:
         coef = beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)
 
         # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
-        scaled_pred_noise = coef * epsilon_theta  # coef * ε_θ(x_t, t)
+        scaled_epsilon_theta = coef * epsilon_theta  # coef * ε_θ(x_t, t)
 
         # === Debugging: Print Important Variables per Timestep ===
         # print(
@@ -136,7 +136,7 @@ class ReverseDiffusion:
 
         # Compute mean for p(x_{t-1}|x_t) as in DDPM Algorithm 2:
         # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        # mean = inv_sqrt_alpha_t * (x_t - scaled_pred_noise)
+        # mean = inv_sqrt_alpha_t * (x_t - scaled_epsilon_theta)
 
         # TODO: Compute mean for p(x_{t-1}|x_t) slightly different from Algorithm 2
         # μ_θ(x_t, t) = x_t - ε_θ(x_t, t)
@@ -153,9 +153,6 @@ class ReverseDiffusion:
         # min_abs_diff = abs_diff.min().item()
         # print(f"t: {t.item()}, Mean |ε_theta|: {mean_abs_diff:.6f}, Max |ε_theta|: {max_abs_diff:.6f}, Min |ε_theta|: {min_abs_diff:.6f}")
 
-        # standard deviation = σ_t = √β_t
-        sigma_t = torch.sqrt(beta_t)  # σ_t
-
         # For t=1, z=0 (no noise); for t>1, z ~ N(0,I) as per Algorithm 2
         z = torch.zeros_like(x_t, device=device)
         if (t > 1).all():  # Only add noise if all timesteps are > 1
@@ -165,7 +162,8 @@ class ReverseDiffusion:
         # z = torch.zeros_like(x_t, device=device)
 
         # Sample from N(mean, σ_t^2 * I)
-        # x_{t-1} = μ_θ(x_t, t) + σ_t * z
+        # x_{t-1} = μ_θ(x_t, t) + σ_t * z, where σ_t = √β_t
+        sigma_t = torch.sqrt(beta_t)  # σ_t
         x_t_minus_1 = mean + sigma_t * z
 
         # === Debugging: Print & Return Important Variables per Timestep ===
@@ -175,20 +173,20 @@ class ReverseDiffusion:
                 f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
             )
             return {
-                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
                 "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
-                "scaled_pred_noise": scaled_pred_noise,  # β_t/√(1-ᾱ_t) * ε_θ(x_t, t): Scaled predicted noise
+                "scaled_epsilon_theta": scaled_epsilon_theta,  # coeff * ε_θ(x_t, t): Scaled predicted noise
+                "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/√α_t: factor for diagnostics
                 "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
+                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "alpha_t": alpha_t,  # α_t: Alpha for this step
-                "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/sqrt(alpha_t) for diagnostics
                 "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
                 "beta_t": beta_t,  # β_t: Noise schedule value for this step
                 "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β_t)
             }
         return x_t_minus_1
 
-    def reverse_diffusion_step_improved(self, x_t, t, return_all=False):
+    def reverse_diffusion_step(self, x_t, t, return_all=False):
         """
         Single reverse diffusion step to estimate x_{t-1} given x_t and t.
         Implements improved DDPM from Nichol & Dhariwal (2021).
@@ -262,11 +260,6 @@ class ReverseDiffusion:
         alpha_t = bcast_right(alpha_t, ndim)
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
-        # Numerical stability constant
-        eps = 1e-8
-
-        inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)
-
         # === Step 1: Predict x_0 using noise predictor ===
         epsilon_theta = self.noise_predictor(x_t, t)
         x_0 = x_t - epsilon_theta
@@ -296,26 +289,27 @@ class ReverseDiffusion:
         z = torch.randn_like(x_t) if not (t == 1).all() else torch.zeros_like(x_t)
 
         # x_{t-1} = μ̃_t(x_t,x_0) + σ_t * z, where σ_t = √β̃_t
-        x_t_minus_1 = mean + torch.sqrt(beta_tilde) * z
+        sigma_t = torch.sqrt(beta_tilde)  # σ_t
+        x_t_minus_1 = mean + sigma_t * z
 
         # === Debugging: Print Important Variables per Timestep ===
         if return_all:
             print(
-                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, β~_t: {beta_tilde.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
+                f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, β~_t: {beta_tilde.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
             )
             return {
-                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
-                "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
-                "scaled_pred_noise": scaled_pred_noise,  # β_t/√(1-ᾱ_t) * ε_θ(x_t, t): Scaled predicted noise
-                "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
+                "x0": x_0,  # x_0: predicted signal
+                "xt": x_t,  # x_t: noisy signal
+                "coef_x0": coef_x0,  # (√ᾱ_{t-1}*β_t)/(1-ᾱ_t): Coefficient for x_0
+                "coef_xt": coef_xt,  # (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t): Coefficient for x_t
+                "mean": mean,  # μ̃_t(x_t, x_0): Denoised mean before adding noise
+                "beta_tilde": beta_tilde,  # β̃_t: Posterior variance
+                "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "alpha_t": alpha_t,  # α_t: Alpha for this step
-                "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/sqrt(alpha_t) for diagnostics
                 "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
-                "alpha_bar_prev": alpha_bar_prev,  # ᾱ_{t-1}: Cumulative product up to t-1
                 "beta_t": beta_t,  # β_t: Noise schedule value for this step
-                "beta_tilde": beta_tilde,  # β~_t: Posterior variance
-                "sigma_t": sigma_t,  # σ_t: Noise std added at this step (√β~_t)
+                "sigma_t": sigma_t,  # √β̃_t: Noise std added at this step
             }
         return x_t_minus_1
 
@@ -338,7 +332,7 @@ class ReverseDiffusion:
         # Iterate over timesteps in reverse (Algorithm 2 from Ho et al., 2020)
         # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
-            x = self.reverse_diffusion_step_improved(x, t)
+            x = self.reverse_diffusion_step(x, t)
 
         # Post-processing for SNP data
         if discretize:

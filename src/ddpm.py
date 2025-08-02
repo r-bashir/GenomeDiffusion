@@ -198,7 +198,7 @@ class DiffusionModel(NetworkBase):
         return mse.mean()
 
     # ==================== Inference Methods ====================
-    def loss_per_timesteps(
+    def loss_per_timesteps_Ho(
         self, batch: torch.Tensor, eps: torch.Tensor, timesteps: torch.Tensor
     ) -> torch.Tensor:
         """
