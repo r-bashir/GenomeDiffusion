@@ -1,70 +1,132 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import argparse
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
 # Add project root
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.dataset import SNPDataset
+from src.forward_diffusion import ForwardDiffusion
+from src.unet import UNet1D
+from src.utils import load_config, set_seed, setup_logging
 
-from .utils import load_config
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def parse_args():
+    """Parse command line arguments.
+
+    Returns:
+        argparse.Namespace: Parsed command line arguments
+    """
+    parser = argparse.ArgumentParser(description="Forward Diffusion Investigation")
+
+    parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Path to configuration YAML file",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("output/forward_diffusion"),
+        help="Directory to save results",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode with more verbose output",
+    )
+    return parser.parse_args()
 
 
 def main():
-    print(f"Using device: {device}")
+    # Parse Arguments
+    args = parse_args()
 
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
+    # Setup logging
+    logger = setup_logging(name="unet")
+    logger.info("Starting 'run_unet.py' script.")
+
+    # Set global seed
+    set_seed(seed=42)
 
     # Load config
-    config = load_config("config.yaml")
-    input_path = config.get("input_path")
+    logger.info(f"Loading configuration from {args.config}")
+    config = load_config(args.config)
 
-    print(f"Using device: {device}")
-
-    # Initialize dataset
-    print("\nInitializing dataset...")
-    dataset = SNPDataset(input_path)
-
-    # Initialize dataloader
-    train_loader = DataLoader(
+    # Load dataset
+    logger.info("Loading dataset...")
+    dataset = SNPDataset(config)
+    dataloader = DataLoader(
         dataset, batch_size=32, shuffle=True, num_workers=4, pin_memory=True
     )
-
-    # Get batch
-    batch = next(iter(train_loader))  # Shape: [B, seq_len]
-    print(f"Batch shape [B, seq_len]: {batch.shape}")
+    batch = next(iter(dataloader))  # Shape: [B, L]
+    logger.info(f"Batch shape [B, L]: {batch.shape}, and dim: {batch.dim()}")
 
     # Prepare input (ensure [B, C, L] format for UNet)
-    batch = batch.unsqueeze(1).to(device)  # [B, 1, seq_len]
-    print(f"Batch shape [B, C, seq_len]: {batch.shape}")
+    batch = batch.unsqueeze(1).to(device)  # [B, 1, L]
+    logger.info(f"Batch shape [B, C, L]: {batch.shape}")
 
-    # Initialize DDPM
-    print("\nInitializing DDPM...")
-    forward_diffusion = DDPM(
-        num_diffusion_timesteps=1000, beta_start=0.0001, beta_end=0.02
-    )
+    # Prepare output directory
+    output_dir = Path(config["output_path"]) / "noise_prediction"
+    output_dir.mkdir(exist_ok=True, parents=True)
 
-    # Move forward diffusion tensors to device
-    forward_diffusion._alphas = forward_diffusion._alphas.to(device)
-    forward_diffusion._sigmas = forward_diffusion._sigmas.to(device)
+    # Initialize ForwardDiffusion
+    logger.info("Initializing ForwardDiffusion...")
+    forward_diff = ForwardDiffusion(
+        time_steps=config["diffusion"]["timesteps"],
+        beta_start=config["diffusion"]["beta_start"],
+        beta_end=config["diffusion"]["beta_end"],
+        schedule_type=config["diffusion"]["schedule_type"],
+    ).to(device)
 
     # Initialize UNet
-    print("\nInitializing UNet1D...")
+    logger.info("Initializing UNet1D...")
     unet_config = config.get("unet", {})
     unet = UNet1D(
         embedding_dim=unet_config.get("embedding_dim", 32),
         dim_mults=unet_config.get("dim_mults", [1, 2, 4]),
         channels=unet_config.get("channels", 1),
         with_time_emb=unet_config.get("with_time_emb", True),
-        resnet_block_groups=unet_config.get("resnet_block_groups", 8),
+        with_pos_emb=unet_config.get("with_pos_emb", False),
+        norm_groups=unet_config.get("norm_groups", 8),
+        seq_length=batch.shape[-1],  # Use actual sequence length
+        debug=False,  # Disable debug for cleaner output
     ).to(device)
+
+    # Print model information
+    total_params = sum(p.numel() for p in unet.parameters())
+    trainable_params = sum(p.numel() for p in unet.parameters() if p.requires_grad)
+    model_size_mb = total_params * 4 / (1024 * 1024)  # 4 bytes per float32
+
+    # Print model configuration and statistics
+    print(f"\nModel Configuration:")
+    print(f"  - Embedding dim: {unet_config.get('embedding_dim', 32)}")
+    print(f"  - Dimension multipliers: {unet_config.get('dim_mults', [1, 2, 4])}")
+    print(f"  - Norm groups: {unet_config.get('norm_groups', 8)}")
+    print(f"  - Sequence length: {batch.shape[-1]}")
+    print(f"Model Statistics:")
+    print(f"  - Total parameters: {total_params:,}")
+    print(f"  - Trainable parameters: {trainable_params:,}")
+    print(f"  - Model size: {model_size_mb:.2f} MB\n")
 
     # Test UNet with different timesteps
     timesteps = [0, 250, 500, 750, 999]
 
     # For visualization, use a single sample
     x0 = batch[0:1]  # [1, 1, seq_len]
-    print(f"Single sample shape: {x0.shape}")
+    print(f"Single sample shape: {x0.shape}\n")
 
     # Create figure for visualization
     fig, axs = plt.subplots(len(timesteps), 3, figsize=(15, 15))
@@ -75,7 +137,7 @@ def main():
         t_tensor = torch.tensor([t], device=device)
 
         # Apply forward diffusion to get noisy data
-        noisy_data = forward_diffusion.sample(x0, t_tensor, noise)
+        noisy_data = forward_diff.sample(x0, t_tensor, noise)
 
         # UNet should predict the noise that was added
         noise_pred = unet(noisy_data, t_tensor)
@@ -112,8 +174,8 @@ def main():
         axs[i, 2].set_title(f"t={t}: Noise (MSE: {mse_loss:.4f})")
         axs[i, 2].legend()
 
-    plt.tight_layout()
-    plt.savefig("unet_noise_prediction.png")
+    fig.tight_layout()
+    fig.savefig(output_dir / "unet_prediction.png")
     plt.close()
 
     # Test with full batch
@@ -122,7 +184,7 @@ def main():
     noise_batch = torch.randn_like(batch)
 
     # Apply forward diffusion
-    noisy_batch = forward_diffusion.sample(batch, t_batch, noise_batch)
+    noisy_batch = forward_diff.sample(batch, t_batch, noise_batch)
 
     # Predict noise with UNet
     pred_noise_batch = unet(noisy_batch, t_batch)
@@ -151,9 +213,12 @@ def main():
     has_gradients = any(
         p.grad is not None and p.grad.abs().sum().item() > 0 for p in unet.parameters()
     )
-    print(f"UNet has gradients: {has_gradients}")
 
-    print("\nUNet test complete!")
+    print(f"UNet has gradients: {has_gradients}\n")
+
+    # End of UNet1D Testing
+    logger.info("UNet1D complete!")
+    logger.info(f"Results saved to: {output_dir}")
 
 
 if __name__ == "__main__":

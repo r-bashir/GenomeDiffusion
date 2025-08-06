@@ -40,12 +40,12 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 128           # Sinusoidal (time, position) embedding dimension
-  dim_mults: [1, 2, 4, 8]      # Reduced from [1, 2, 4, 8]
+  embedding_dim: 64            # Sinusoidal (time, position) embedding dimension
+  dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
-  with_time_emb: false         # Sinusoidal time embeddings
-  with_pos_emb: false          # Sinusoidal position embeddings
-  resnet_block_groups: 8       # Number of resnet blocks
+  with_time_emb: false         # On/off sinusoidal time embeddings
+  with_pos_emb: false          # On/off sinusoidal position embeddings
+  norm_groups: 4               # Number of groups in GroupNorm layers
 
 # Trainer
 training:

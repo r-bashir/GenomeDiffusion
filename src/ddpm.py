@@ -60,7 +60,7 @@ class DiffusionModel(NetworkBase):
             channels=hparams["unet"]["channels"],
             with_time_emb=hparams["unet"]["with_time_emb"],
             with_pos_emb=hparams["unet"].get("with_pos_emb", True),
-            resnet_block_groups=hparams["unet"]["resnet_block_groups"],
+            norm_groups=hparams["unet"]["norm_groups"],
             seq_length=hparams["data"]["seq_length"],
         )
 

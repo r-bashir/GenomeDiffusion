@@ -23,7 +23,7 @@ class IdentityNoisePredictor(nn.Module):
         channels=1,
         with_time_emb=True,
         with_pos_emb=True,
-        resnet_block_groups=8,
+        norm_groups=8,
         seq_length=1000,
     ):
         super().__init__()
@@ -55,7 +55,7 @@ class LinearNoisePredictor(nn.Module):
         channels=1,  # Input channels (SNP data has a single channel)
         with_time_emb=False,  # Whether to include time embeddings
         with_pos_emb=False,  # Unused but kept for interface compatibility
-        resnet_block_groups=8,  # Unused but kept for interface compatibility
+        norm_groups=8,  # Unused but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
     ):
         super().__init__()
@@ -144,7 +144,7 @@ class SimpleNoisePredictor(nn.Module):
         channels=1,  # Input channels (SNP data has a single channel)
         with_time_emb=True,  # Whether to include time embeddings
         with_pos_emb=True,  # Not used in MLP but kept for interface compatibility
-        resnet_block_groups=8,  # Not used in MLP but kept for interface compatibility
+        norm_groups=8,  # Not used in MLP but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
     ):
         super().__init__()
@@ -249,7 +249,7 @@ class ComplexNoisePredictor(nn.Module):
         channels=1,  # Input channels (SNP data has a single channel)
         with_time_emb=True,  # Whether to include time embeddings
         with_pos_emb=True,  # Not used in MLP but kept for interface compatibility
-        resnet_block_groups=8,  # Not used in MLP but kept for interface compatibility
+        norm_groups=8,  # Not used in MLP but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
     ):
         super().__init__()

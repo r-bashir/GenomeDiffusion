@@ -106,7 +106,7 @@ def main():
             channels=config["unet"]["channels"],
             with_time_emb=config["unet"]["with_time_emb"],
             with_pos_emb=config["unet"]["with_pos_emb"],
-            resnet_block_groups=config["unet"]["resnet_block_groups"],
+            norm_groups=config["unet"]["norm_groups"],
         ).to(device)
         logger.info("Created IdentityNoisePredictor model")
         logger.info("Model config:")
