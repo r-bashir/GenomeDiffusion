@@ -1,5 +1,5 @@
 # Project name
-project_name: "NicDiff"
+project_name: "TestDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -11,9 +11,9 @@ data:
   input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 
   # Data Loading
-  batch_size: 64               # Batch size for DataLoader class
+  batch_size: 32               # Batch size for DataLoader class
   num_workers: 4               # Number of workers for DataLoader class
-  datasplit: [1700, 200, 167]  # Data split for Dataset class
+  datasplit: [1850, 150, 67]   # Data split, we can set 0 for test dataset
 
   # Data Preprocessing
   seq_length: 100              # Total length is 160858
@@ -40,43 +40,45 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 64            # Sinusoidal (time, position) embedding dimension
-  dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
+  embedding_dim: 16            # Sinusoidal (time, position) embedding dimension
+  dim_mults: [1, 2]            # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
   with_time_emb: false         # On/off sinusoidal time embeddings
   with_pos_emb: false          # On/off sinusoidal position embeddings
   norm_groups: 4               # Number of groups in GroupNorm layers
+  edge_pad: 2                  # Edge padding for boundary preservation
 
 # Trainer
 training:
-  epochs: 500                  # Number of epochs to train
+  epochs: 100                  # Number of epochs to train
   warmup_epochs: 10            # Number of warmup epochs
   early_stopping: false        # Whether to use early stopping
   patience: 10                 # Patience for early stopping
   save_top_k: 3                # Number of top models to save
-  num_samples: 10              # Number of samples to generate
   logger: "wandb"              # Logger to use
-  log_every_n_steps: 25        # Log every n steps
+  log_every_n_steps: 5         # More frequent logging for short training
+
+  num_samples: 10              # Number of samples to generate (Why I have it?)
 
 # Optimizer
 optimizer:
-  lr: 1e-4                     # Learning rate for AdamW optimizer
+  lr: 1e-3                     # Learning rate for AdamW optimizer
   min_lr: 1e-6                 # Minimum learning rate after warmup
   weight_decay: 0.001          # Weight decay (L2 regularization)
   betas: [0.9, 0.999]          # Beta coefficients for running averages of gradient and its square
   eps: 1e-8                    # Term for numerical stability
-  amsgrad: false               # Use AMSGrad variant of AdamW
+  amsgrad: true                # Use AMSGrad variant of AdamW
 
 # LR Scheduler
 scheduler:
-  type: "reduce"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
+  type: "cosine"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
 
   # For CosineLR
   eta_min: 1e-6                # Minimum learning rate for CosineAnnealingLR
 
   # For ReduceLR
   mode: "min"                  # or "max"
-  factor: 0.5                  # LR reduction factor
-  patience: 15                 # Epochs with no improvement before reducing LR
-  threshold: 1e-4              # Minimum change to qualify as improvement
-  min_lr: 1e-6                 # Minimum learning rate for ReduceLROnPlateau
+  factor: 0.7                  # Gentler LR reduction for fine-tuning
+  patience: 10                 # Shorter patience for fast convergence
+  threshold: 1e-5              # Smaller threshold for detecting subtle improvements
+  min_lr: 1e-7                 # Lower minimum LR for extended fine-tuning
