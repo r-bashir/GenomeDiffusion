@@ -54,7 +54,7 @@ class DiffusionModel(NetworkBase):
         )
 
         # Noise Predictor
-        self.noise_predictor = LinearNoisePredictor(
+        self.noise_predictor = UNet1D(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
@@ -62,6 +62,7 @@ class DiffusionModel(NetworkBase):
             with_pos_emb=hparams["unet"].get("with_pos_emb", True),
             norm_groups=hparams["unet"]["norm_groups"],
             seq_length=hparams["data"]["seq_length"],
+            edge_pad=hparams["unet"]["edge_pad"],
         )
 
         # ReverseDiffusion: Reverse diffusion process

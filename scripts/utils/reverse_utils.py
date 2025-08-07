@@ -374,6 +374,8 @@ def visualize_diffusion_process_lineplot(
             x_axis, x0_pred, "b--", linewidth=1, label=r"Predicted sample: $\hat{x_0}$"
         )
 
+        axes[i, 0].legend(fontsize=6)
+
         # Added noise
         axes[i, 1].plot(
             x_axis, epsilon, "r-", linewidth=1, label=r"Added noise: $\epsilon$"
