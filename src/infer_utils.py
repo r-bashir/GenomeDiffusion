@@ -469,6 +469,7 @@ def compute_quality_metrics(real_samples, generated_samples, max_value=0.5):
     Returns:
         float: Quick quality score (0-1, higher is better)
     """
+    # === CENTRALIZED DATA PREPARATION ===
     # Convert to numpy
     real = (
         real_samples.cpu().numpy()
@@ -481,46 +482,53 @@ def compute_quality_metrics(real_samples, generated_samples, max_value=0.5):
         else np.array(generated_samples)
     )
 
+    # Ensure consistent shape: [batch_size, sequence_length]
     if real.ndim == 3:
         real = real.squeeze(1)
     if gen.ndim == 3:
         gen = gen.squeeze(1)
 
-    print("=" * 40)
+    # Prepare different data views for various analyses
+    real_flat = real.flatten()  # For distribution analysis
+    gen_flat = gen.flatten()  # For distribution analysis
 
-    # 1. Allele frequency correlation
-    real_af = np.mean(real, axis=0)
-    gen_af = np.mean(gen, axis=0)
-    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
-    print(f"🧬 AF Correlation: {af_corr:.3f}")
+    # Calculate allele frequencies per SNP position (axis=0 means across samples)
+    real_af = np.mean(real, axis=0)  # Shape: [sequence_length]
+    gen_af = np.mean(gen, axis=0)  # Shape: [sequence_length]
 
-    # 2. MAF correlation
+    # Calculate MAF (Minor Allele Frequency)
     real_maf = np.minimum(real_af, max_value - real_af)
     gen_maf = np.minimum(gen_af, max_value - gen_af)
+
+    # === COMPUTE ALL METRICS ONCE ===
+    # Correlations
+    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
     maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
-    print(f"🔬 MAF Correlation: {maf_corr:.3f}")
 
-    # 3. Distribution similarity (KS test)
-    real_flat = real.flatten()
-    gen_flat = gen.flatten()
+    # Statistical tests
     ks_stat, ks_pvalue = stats.ks_2samp(real_flat, gen_flat)
-    print(f"📈 KS Test p-value: {ks_pvalue:.6f} (higher is better)")
-    print(f"📉 KS Statistic: {ks_stat:.6f} (lower is better)")
 
-    # 4. Basic statistics comparison
+    # Basic statistics comparison
     mean_diff = abs(np.mean(real_flat) - np.mean(gen_flat))
     std_diff = abs(np.std(real_flat) - np.std(gen_flat))
-    print(f"📊 Mean Difference: {mean_diff:.6f}")
-    print(f"📊 Std Difference: {std_diff:.6f}")
 
-    # 5. Range coverage
-    real_min, real_max = np.min(real), np.max(real)
-    gen_min, gen_max = np.min(gen), np.max(gen)
+    # Range coverage (using flattened arrays for consistency)
+    real_min, real_max = np.min(real_flat), np.max(real_flat)
+    gen_min, gen_max = np.min(gen_flat), np.max(gen_flat)
     range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / (
         real_max - real_min
     )
     range_coverage = max(0.0, range_coverage)
-    print(f"📏 Range Coverage: {range_coverage:.3f}")
+
+    # === PRINT RESULTS ===
+    print("=" * 40)
+    print(f"🧬 AF Correlation: {af_corr:.3f} (should be 1.0)")
+    print(f"🔬 MAF Correlation: {maf_corr:.3f} (should be 1.0)")
+    print(f"📈 KS Test p-value: {ks_pvalue:.6f} (should be >0.05)")
+    print(f"📉 KS Statistic: {ks_stat:.6f} (should be ~0.0)")
+    print(f"📊 Mean Difference: {mean_diff:.6f} (should be ~0.0)")
+    print(f"📊 Std Difference: {std_diff:.6f} (should be ~0.0)")
+    print(f"📏 Range Coverage: {range_coverage:.3f} (should be 1.0)")
 
     # Compute overall quick score
     scores = []
@@ -552,8 +560,7 @@ def compute_quality_metrics(real_samples, generated_samples, max_value=0.5):
 
     # Overall score
     overall_score = np.mean(scores) if scores else 0.0
-    print(f"🎯 Quick Quality Score: {overall_score:.3f}/1.000")
-    print("=" * 40)
+    print(f"🎯 Quality Score: {overall_score:.3f}/1.000")
 
     return float(overall_score)
 
@@ -570,6 +577,7 @@ def visualize_quality_metrics(
         output_path: Path to save the plot
         max_value: Maximum value for MAF calculations
     """
+    # === CENTRALIZED DATA PREPARATION ===
     # Convert to numpy
     real = (
         real_samples.cpu().numpy()
@@ -582,10 +590,55 @@ def visualize_quality_metrics(
         else np.array(generated_samples)
     )
 
+    # Ensure consistent shape: [batch_size, sequence_length]
     if real.ndim == 3:
         real = real.squeeze(1)
     if gen.ndim == 3:
         gen = gen.squeeze(1)
+
+    # Prepare different data views for various analyses
+    real_flat = real.flatten()  # For distribution analysis
+    gen_flat = gen.flatten()  # For distribution analysis
+
+    # Calculate allele frequencies per SNP position (axis=0 means across samples)
+    real_af = np.mean(real, axis=0)  # Shape: [sequence_length]
+    gen_af = np.mean(gen, axis=0)  # Shape: [sequence_length]
+
+    # Calculate MAF (Minor Allele Frequency)
+    real_maf = np.minimum(real_af, max_value - real_af)
+    gen_maf = np.minimum(gen_af, max_value - gen_af)
+
+    # === COMPUTE ALL METRICS ONCE ===
+    # Correlations
+    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
+    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+
+    # Statistical tests
+    ks_stat, ks_pvalue = stats.ks_2samp(real_flat, gen_flat)
+    mean_diff = abs(np.mean(real_flat) - np.mean(gen_flat))
+    std_diff = abs(np.std(real_flat) - np.std(gen_flat))
+
+    # Range coverage
+    real_min, real_max = np.min(real_flat), np.max(real_flat)
+    gen_min, gen_max = np.min(gen_flat), np.max(gen_flat)
+    range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / (
+        real_max - real_min
+    )
+    range_coverage = max(0.0, range_coverage)
+
+    # Basic statistics for comparison
+    real_stats = [
+        np.mean(real_flat),
+        np.std(real_flat),
+        np.min(real_flat),
+        np.max(real_flat),
+    ]
+    gen_stats = [
+        np.mean(gen_flat),
+        np.std(gen_flat),
+        np.min(gen_flat),
+        np.max(gen_flat),
+    ]
 
     # Create figure with subplots
     fig, axes = plt.subplots(2, 3, figsize=(15, 10))
@@ -593,30 +646,23 @@ def visualize_quality_metrics(
         "Quick Quality Assessment - Key Metrics", fontsize=16, fontweight="bold"
     )
 
-    # 1. Value distribution comparison (optimized for discrete genomic data)
+    # === SUBPLOT 1: Genotype Value Distribution ===
     ax = axes[0, 0]
 
     # Get unique values to determine if data is discrete
-    real_unique = np.unique(real.flatten())
-    gen_unique = np.unique(gen.flatten())
-    all_unique = np.unique(np.concatenate([real_unique, gen_unique]))
+    real_flat = real.flatten()
+    gen_flat = gen.flatten()
+    all_unique = np.unique(np.concatenate([real_flat, gen_flat]))
 
-    # If we have few unique values (typical for SNP data), use bar chart approach
+    # Use bar chart if we have few unique values (discrete data)
     if len(all_unique) <= 10:
-        # Count frequencies for each unique value
-        real_flat = real.flatten()
-        gen_flat = gen.flatten()
-
-        real_counts = []
-        gen_counts = []
-
-        for val in sorted(all_unique):
-            real_count = np.sum(real_flat == val) / len(
-                real_flat
-            )  # Normalize to get density
-            gen_count = np.sum(gen_flat == val) / len(gen_flat)
-            real_counts.append(real_count)
-            gen_counts.append(gen_count)
+        # Count occurrences of each unique value
+        real_counts = [
+            np.sum(np.isclose(real_flat, val, atol=1e-6)) for val in all_unique
+        ]
+        gen_counts = [
+            np.sum(np.isclose(gen_flat, val, atol=1e-6)) for val in all_unique
+        ]
 
         # Create bar chart
         x_pos = np.arange(len(all_unique))
@@ -641,30 +687,13 @@ def visualize_quality_metrics(
             edgecolor="darkred",
         )
 
-        # Set x-axis labels
+        ax.set_xlabel("Genotype Value")
+        ax.set_ylabel("Count")
+        ax.set_title("Genotype Value Distribution")
         ax.set_xticks(x_pos)
-        ax.set_xticklabels([f"{val:.2f}" for val in sorted(all_unique)])
-
-        # Add value labels on bars
-        for i, (real_val, gen_val) in enumerate(zip(real_counts, gen_counts)):
-            if real_val > 0:
-                ax.text(
-                    i - width / 2,
-                    real_val + 0.01,
-                    f"{real_val:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=8,
-                )
-            if gen_val > 0:
-                ax.text(
-                    i + width / 2,
-                    gen_val + 0.01,
-                    f"{gen_val:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=8,
-                )
+        ax.set_xticklabels([f"{val:.2f}" for val in all_unique])
+        ax.legend()
+        ax.grid(True, alpha=0.3)
 
     else:
         # Use regular binning for continuous data
@@ -686,38 +715,10 @@ def visualize_quality_metrics(
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # 2. Allele frequency correlation
+    # === SUBPLOT 2: Basic Statistics Comparison ===
     ax = axes[0, 1]
-    real_af = np.mean(real, axis=0)
-    gen_af = np.mean(gen, axis=0)
-    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
 
-    ax.scatter(real_af, gen_af, alpha=0.6, s=10, color="purple")
-    ax.plot([0, max_value], [0, max_value], "r--", alpha=0.8, linewidth=2)
-    ax.set_xlabel("Real Allele Frequency")
-    ax.set_ylabel("Generated Allele Frequency")
-    ax.set_title(f"Allele Frequency Correlation\n(r = {af_corr:.3f})")
-    ax.grid(True, alpha=0.3)
-
-    # 3. MAF correlation
-    ax = axes[0, 2]
-    real_maf = np.minimum(real_af, max_value - real_af)
-    gen_maf = np.minimum(gen_af, max_value - gen_af)
-    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
-
-    ax.scatter(real_maf, gen_maf, alpha=0.6, s=10, color="green")
-    ax.plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8, linewidth=2)
-    ax.set_xlabel("Real MAF")
-    ax.set_ylabel("Generated MAF")
-    ax.set_title(f"MAF Correlation\n(r = {maf_corr:.3f})")
-    ax.grid(True, alpha=0.3)
-
-    # 4. Sample statistics comparison
-    ax = axes[1, 0]
-    real_stats = [np.mean(real), np.std(real), np.min(real), np.max(real)]
-    gen_stats = [np.mean(gen), np.std(gen), np.min(gen), np.max(gen)]
     stat_names = ["Mean", "Std", "Min", "Max"]
-
     x = np.arange(len(stat_names))
     width = 0.35
 
@@ -731,21 +732,8 @@ def visualize_quality_metrics(
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # 5. Quality metrics summary
-    ax = axes[1, 1]
-
-    # Calculate key metrics for visualization
-    ks_stat, ks_pvalue = stats.ks_2samp(real.flatten(), gen.flatten())
-    mean_diff = abs(np.mean(real) - np.mean(gen))
-    std_diff = abs(np.std(real) - np.std(gen))
-
-    # Range coverage calculation (same as compute_quality_metrics)
-    real_min, real_max = np.min(real), np.max(real)
-    gen_min, gen_max = np.min(gen), np.max(gen)
-    range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / (
-        real_max - real_min
-    )
-    range_coverage = max(0.0, range_coverage)
+    # === SUBPLOT 3: Quality Metrics Summary ===
+    ax = axes[0, 2]
 
     # Normalize metrics for visualization (0-1 scale)
     metrics = {
@@ -761,11 +749,10 @@ def visualize_quality_metrics(
     bars = ax.bar(
         metrics.keys(),
         metrics.values(),
-        color=["blue", "green", "orange", "red", "purple", "brown"],
+        color=["blue", "green", "orange", "red", "purple", "brown", "gray"],
     )
     ax.set_ylabel("Quality Score")
     ax.set_title("Quality Metrics Summary")
-    ax.set_ylim(0, 1)
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     ax.grid(True, alpha=0.3)
 
@@ -781,67 +768,71 @@ def visualize_quality_metrics(
             fontsize=9,
         )
 
-    # 6. Overall quality score
+    # === SUBPLOT 4: Allele Frequency Correlation ===
+    ax = axes[1, 0]
+
+    ax.scatter(real_af, gen_af, alpha=0.6, s=10, color="purple")
+    ax.plot([0, max_value], [0, max_value], "r--", alpha=0.8, linewidth=2)
+    ax.set_xlabel("Real Allele Frequency")
+    ax.set_ylabel("Generated Allele Frequency")
+    ax.set_title(f"Allele Frequency Correlation\n(r = {af_corr:.3f})")
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 5: MAF Correlation ===
+    ax = axes[1, 1]
+
+    ax.scatter(real_maf, gen_maf, alpha=0.6, s=10, color="green")
+    ax.plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8, linewidth=2)
+    ax.set_xlabel("Real MAF")
+    ax.set_ylabel("Generated MAF")
+    ax.set_title(f"MAF Correlation\n(r = {maf_corr:.3f})")
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 6: Allele Frequency Residuals Plot ===
     ax = axes[1, 2]
-    overall_score = np.mean(list(metrics.values()))
 
-    # Create a gauge-like visualization
-    theta = np.linspace(0, np.pi, 100)
-    r = 1
-    x_circle = r * np.cos(theta)
-    y_circle = r * np.sin(theta)
+    # Calculate residuals (errors) for each SNP position
+    af_residuals = gen_af - real_af
+    positions = np.arange(len(af_residuals))
 
-    ax.plot(x_circle, y_circle, "k-", linewidth=2)
-    ax.fill_between(x_circle, 0, y_circle, alpha=0.3, color="lightgray")
+    # Create residuals scatter plot
+    ax.scatter(positions, af_residuals, alpha=0.6, s=8, color="red", edgecolors="none")
 
-    # Color code the score
-    if overall_score >= 0.8:
-        color = "green"
-        status = "EXCELLENT"
-    elif overall_score >= 0.6:
-        color = "orange"
-        status = "GOOD"
-    else:
-        color = "red"
-        status = "NEEDS WORK"
+    # Add zero line (perfect prediction)
+    ax.axhline(y=0, color="black", linestyle="-", alpha=0.8, linewidth=1)
 
-    # Draw score indicator
-    score_angle = np.pi * (1 - overall_score)  # Invert for gauge
-    score_x = r * np.cos(score_angle)
-    score_y = r * np.sin(score_angle)
-
-    ax.arrow(
-        0,
-        0,
-        score_x * 0.8,
-        score_y * 0.8,
-        head_width=0.1,
-        head_length=0.1,
-        fc=color,
-        ec=color,
-        linewidth=3,
+    # Add mean residual line
+    mean_residual = np.mean(af_residuals)
+    ax.axhline(
+        y=mean_residual,
+        color="blue",
+        linestyle="--",
+        alpha=0.6,
+        linewidth=1,
+        label=f"Mean: {mean_residual:.4f}",
     )
 
-    ax.set_xlim(-1.2, 1.2)
-    ax.set_ylim(-0.2, 1.2)
-    ax.set_aspect("equal")
-    ax.axis("off")
+    # Formatting
+    ax.set_xlabel("SNP Position")
+    ax.set_ylabel("AF Residual (Generated - Real)")
     ax.set_title(
-        f"Overall Quality Score\n{overall_score:.3f} - {status}",
-        fontweight="bold",
-        color=color,
+        f"Allele Frequency Residuals\n(RMSE: {np.sqrt(np.mean(af_residuals**2)):.4f})"
     )
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
 
-    # Add score text
+    # Add statistics text
+    rmse = np.sqrt(np.mean(af_residuals**2))
+    mae = np.mean(np.abs(af_residuals))
     ax.text(
-        0,
-        -0.1,
-        f"{overall_score:.3f}",
-        ha="center",
-        va="center",
-        fontsize=20,
-        fontweight="bold",
-        color=color,
+        0.02,
+        0.98,
+        f"RMSE: {rmse:.4f}\nMAE: {mae:.4f}",
+        transform=ax.transAxes,
+        fontsize=8,
+        alpha=0.8,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
 
     plt.tight_layout()

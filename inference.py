@@ -210,7 +210,9 @@ def main():
     print(f"Status: {status}")
     print(f"Recommendation: {recommendation}")
     print(f"📊 Visual metrics summary (quick_metrics.png) saved.\n")
-
+    print(
+        f"To run comprehensive analysis, run:\n python analyze_samples.py --input_dir {output_dir}\n"
+    )
     logger.info("Inference completed!")
     logger.info(f"Results saved to: {output_dir}")
 

@@ -1,0 +1,1393 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+"""
+Modular genomic sample analysis utilities organized as calculate → plot pairs.
+
+Functions are organized in logical groups:
+1. Linkage Disequilibrium: calculate_ld() → plot_ld_decay()
+2. Principal Component Analysis: run_pca_analysis() (includes plotting)
+3. Genetic Diversity: calculate_genetic_diversity()
+4. Dimensionality Metrics: compute_dimensionality_metrics()
+5. Reporting: print_evaluation_summary(), create_evaluation_report()
+
+Used by analyze_samples.py for transparent, modular genomic sample analysis.
+"""
+
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from scipy import stats
+from sklearn.decomposition import PCA
+
+# Standard plotting configuration for consistency
+PLOT_CONFIG = {
+    "figure_size": (10, 6),
+    "dpi": 300,
+    "font_size_title": 14,
+    "font_size_label": 12,
+    "colors": {"real": "blue", "generated": "red"},
+    "grid_alpha": 0.3,
+}
+
+# Try to import wasserstein_distance, use alternative if not available
+try:
+    from scipy.spatial.distance import wasserstein_distance
+
+    HAS_WASSERSTEIN = True
+except ImportError:
+    HAS_WASSERSTEIN = False
+    print(
+        "Warning: wasserstein_distance not available in this scipy version. Using alternative implementation."
+    )
+
+    def wasserstein_distance(u_values, v_values):
+        """
+        Simple alternative implementation of 1D Wasserstein distance.
+        This is a basic approximation using sorted values.
+        """
+        u_sorted = np.sort(u_values)
+        v_sorted = np.sort(v_values)
+
+        # Make arrays same length by interpolation
+        n = max(len(u_sorted), len(v_sorted))
+        u_interp = np.interp(
+            np.linspace(0, 1, n), np.linspace(0, 1, len(u_sorted)), u_sorted
+        )
+        v_interp = np.interp(
+            np.linspace(0, 1, n), np.linspace(0, 1, len(v_sorted)), v_sorted
+        )
+
+        return np.mean(np.abs(u_interp - v_interp))
+
+
+# =============================================================================
+# DIMENSIONALITY ANALYSIS
+# =============================================================================
+
+
+def compute_dimensionality_metrics(real_samples, generated_samples):
+    """
+    Compute high-dimensional similarity metrics using PCA.
+
+    Args:
+        real_samples: Real data [B, C, L] or [B, L]
+        generated_samples: Generated data [B, C, L] or [B, L]
+
+    Returns:
+        dict: Dimensionality metrics
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    metrics = {}
+
+    try:
+        # Combined PCA
+        combined = np.vstack([real, gen])
+        pca = PCA(n_components=min(10, combined.shape[1]))  # Up to 10 components
+        pca_result = pca.fit_transform(combined)
+
+        real_pca = pca_result[: real.shape[0]]
+        gen_pca = pca_result[real.shape[0] :]
+
+        # Centroid distance in PCA space
+        real_centroid = np.mean(real_pca, axis=0)
+        gen_centroid = np.mean(gen_pca, axis=0)
+        metrics["pca_centroid_distance"] = float(
+            np.linalg.norm(real_centroid - gen_centroid)
+        )
+
+        # Variance explained
+        metrics["pca_variance_explained"] = pca.explained_variance_ratio_.tolist()
+        metrics["pca_cumulative_variance"] = np.cumsum(
+            pca.explained_variance_ratio_
+        ).tolist()
+
+        # Distribution overlap in PCA space (first 2 components)
+        if pca.n_components_ >= 2:
+            # Calculate overlap using 2D histograms
+            real_pc12 = real_pca[:, :2]
+            gen_pc12 = gen_pca[:, :2]
+
+            # Create 2D histograms
+            x_range = [
+                min(real_pc12[:, 0].min(), gen_pc12[:, 0].min()),
+                max(real_pc12[:, 0].max(), gen_pc12[:, 0].max()),
+            ]
+            y_range = [
+                min(real_pc12[:, 1].min(), gen_pc12[:, 1].min()),
+                max(real_pc12[:, 1].max(), gen_pc12[:, 1].max()),
+            ]
+
+            bins = 20
+            real_hist, _, _ = np.histogram2d(
+                real_pc12[:, 0], real_pc12[:, 1], bins=bins, range=[x_range, y_range]
+            )
+            gen_hist, _, _ = np.histogram2d(
+                gen_pc12[:, 0], gen_pc12[:, 1], bins=bins, range=[x_range, y_range]
+            )
+
+            # Normalize
+            real_hist = real_hist / np.sum(real_hist)
+            gen_hist = gen_hist / np.sum(gen_hist)
+
+            # Calculate overlap (intersection over union)
+            intersection = np.sum(np.minimum(real_hist, gen_hist))
+            union = np.sum(np.maximum(real_hist, gen_hist))
+            metrics["pca_2d_overlap"] = (
+                float(intersection / union) if union > 0 else 0.0
+            )
+
+    except Exception as e:
+        print(f"Warning: PCA analysis failed: {e}")
+        metrics["pca_centroid_distance"] = None
+        metrics["pca_variance_explained"] = None
+        metrics["pca_cumulative_variance"] = None
+        metrics["pca_2d_overlap"] = None
+
+    return metrics
+
+
+# =============================================================================
+# VISUALIZATION UTILITIES
+# =============================================================================
+
+
+def create_evaluation_visualizations(
+    real_samples, generated_samples, metrics, output_dir
+):
+    """
+    Create comprehensive visualizations of the evaluation results.
+
+    Args:
+        real_samples: Real data
+        generated_samples: Generated data
+        metrics: Computed metrics dictionary
+        output_dir: Directory to save plots
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    # 1. Distribution comparison
+    plt.figure(figsize=(15, 5))
+
+    plt.subplot(1, 3, 1)
+    plt.hist(real.flatten(), bins=50, alpha=0.7, label="Real", density=True)
+    plt.hist(gen.flatten(), bins=50, alpha=0.7, label="Generated", density=True)
+    plt.xlabel("Value")
+    plt.ylabel("Density")
+    plt.title("Value Distribution Comparison")
+    plt.legend()
+
+    plt.subplot(1, 3, 2)
+    real_af = np.mean(real, axis=0)
+    gen_af = np.mean(gen, axis=0)
+    plt.scatter(real_af, gen_af, alpha=0.6, s=10)
+    plt.plot([0, 0.5], [0, 0.5], "r--", alpha=0.8)
+    plt.xlabel("Real Allele Frequency")
+    plt.ylabel("Generated Allele Frequency")
+    plt.title(
+        f'Allele Frequency Correlation\n(r = {metrics["genomic"]["allele_freq_correlation"]:.3f})'
+    )
+
+    plt.subplot(1, 3, 3)
+    # Quality score radar chart would go here, simplified as bar chart
+    quality_components = {
+        "AF Corr": max(0, metrics["genomic"]["allele_freq_correlation"] or 0),
+        "MAF Corr": max(0, metrics["genomic"]["maf_correlation"] or 0),
+        "Het Corr": max(0, metrics["genomic"]["heterozygosity_correlation"] or 0),
+        "KS Test": 1.0 - min(1.0, metrics["statistical"]["ks_statistic"] or 0),
+        "Overall": metrics["overall_quality_score"],
+    }
+
+    bars = plt.bar(quality_components.keys(), quality_components.values())
+    bars[-1].set_color("red")  # Highlight overall score
+    plt.ylabel("Quality Score")
+    plt.title("Quality Metrics Summary")
+    plt.xticks(rotation=45)
+    plt.ylim(0, 1)
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "evaluation_summary.png",
+        dpi=PLOT_CONFIG["dpi"],
+        bbox_inches="tight",
+    )
+    plt.close()
+
+    print(f"Evaluation visualizations saved to: {output_dir}")
+
+
+# =============================================================================
+# LINKAGE DISEQUILIBRIUM IMPLEMENTATION
+# =============================================================================
+
+
+def calculate_ld(samples, max_distance=100, n_pairs=1000):
+    """Calculate Linkage Disequilibrium (LD) patterns.
+
+    Args:
+        samples: Tensor or array of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
+        max_distance: Maximum distance between SNPs to consider
+        n_pairs: Number of random SNP pairs to sample
+
+    Returns:
+        tuple: (distances, r2_values) for LD decay plotting
+    """
+    # Convert tensor to numpy array on CPU if needed
+    if torch.is_tensor(samples):
+        samples = samples.cpu().numpy()
+
+    # Ensure 2D shape [batch_size, seq_len]
+    if len(samples.shape) == 3:
+        samples = samples.squeeze(1)
+
+    # Get dimensions
+    n_samples, n_snps = samples.shape
+
+    # Initialize arrays to store results
+    distances = []
+    r2_values = []
+
+    # Sample random pairs of SNPs within max_distance
+    np.random.seed(42)  # For reproducibility
+
+    # Try to sample n_pairs, but don't exceed available pairs
+    max_possible_pairs = n_snps * max_distance
+    n_pairs = min(n_pairs, max_possible_pairs)
+
+    sampled_pairs = 0
+    max_attempts = n_pairs * 10  # Limit attempts to avoid infinite loops
+    attempts = 0
+
+    while sampled_pairs < n_pairs and attempts < max_attempts:
+        attempts += 1
+
+        # Sample first SNP
+        snp1_idx = np.random.randint(0, n_snps - 1)
+
+        # Sample second SNP within max_distance
+        max_idx = min(snp1_idx + max_distance, n_snps - 1)
+        min_idx = max(snp1_idx - max_distance, 0)
+
+        # Ensure we don't sample the same SNP
+        if max_idx == snp1_idx:
+            continue
+        if min_idx == snp1_idx:
+            continue
+
+        # Randomly choose direction (up or down)
+        if np.random.random() < 0.5 and snp1_idx > min_idx:
+            # Sample below
+            snp2_idx = np.random.randint(min_idx, snp1_idx)
+        elif snp1_idx < max_idx:
+            # Sample above
+            snp2_idx = np.random.randint(snp1_idx + 1, max_idx + 1)
+        else:
+            continue
+
+        # Calculate distance
+        distance = abs(snp2_idx - snp1_idx)
+
+        # Extract alleles
+        a = samples[:, snp1_idx]
+        b = samples[:, snp2_idx]
+
+        # Calculate allele frequencies
+        p_a = np.mean(a)
+        p_b = np.mean(b)
+
+        # Skip if either SNP is monomorphic (no variation)
+        if p_a == 0 or p_a == 1 or p_b == 0 or p_b == 1:
+            continue
+
+        # Calculate observed haplotype frequency
+        p_ab = np.mean(a * b)
+
+        # Calculate D
+        d = p_ab - (p_a * p_b)
+
+        # Calculate D'
+        if d > 0:
+            d_max = min(p_a * (1 - p_b), (1 - p_a) * p_b)
+        else:
+            d_max = min(p_a * p_b, (1 - p_a) * (1 - p_b))
+
+        # Avoid division by zero
+        if d_max == 0:
+            continue
+
+        d_prime = d / d_max
+
+        # Calculate r^2
+        denominator = p_a * (1 - p_a) * p_b * (1 - p_b)
+        if denominator == 0:
+            continue
+
+        r2 = (d * d) / denominator
+
+        # Store results
+        distances.append(distance)
+        r2_values.append(r2)
+        sampled_pairs += 1
+
+    return np.array(distances), np.array(r2_values)
+
+
+def plot_ld_decay(
+    real_samples, gen_samples, output_dir, max_distance=100, n_pairs=1000
+):
+    """Plot LD decay for real and generated data.
+
+    Args:
+        real_samples: Real SNP data
+        gen_samples: Generated SNP data
+        output_dir: Directory to save plots
+        max_distance: Maximum distance between SNPs to consider
+        n_pairs: Number of random SNP pairs to sample
+
+    Returns:
+        float: LD pattern correlation
+    """
+    # Calculate LD for both datasets
+    real_distances, real_r2 = calculate_ld(real_samples, max_distance, n_pairs)
+    gen_distances, gen_r2 = calculate_ld(gen_samples, max_distance, n_pairs)
+
+    # Create distance bins for averaging
+    max_dist = min(max_distance, max(np.max(real_distances), np.max(gen_distances)))
+    bins = np.arange(1, max_dist + 1, max(1, max_dist // 20))
+
+    # Bin the data
+    real_binned_r2 = []
+    gen_binned_r2 = []
+    bin_centers = []
+
+    for i in range(len(bins) - 1):
+        bin_start, bin_end = bins[i], bins[i + 1]
+        bin_center = (bin_start + bin_end) / 2
+
+        # Real data
+        mask_real = (real_distances >= bin_start) & (real_distances < bin_end)
+        if np.sum(mask_real) > 0:
+            real_binned_r2.append(np.mean(real_r2[mask_real]))
+        else:
+            real_binned_r2.append(0)
+
+        # Generated data
+        mask_gen = (gen_distances >= bin_start) & (gen_distances < bin_end)
+        if np.sum(mask_gen) > 0:
+            gen_binned_r2.append(np.mean(gen_r2[mask_gen]))
+        else:
+            gen_binned_r2.append(0)
+
+        bin_centers.append(bin_center)
+
+    # Calculate correlation between LD patterns
+    real_binned_r2 = np.array(real_binned_r2)
+    gen_binned_r2 = np.array(gen_binned_r2)
+
+    # Remove bins with no data
+    valid_bins = (real_binned_r2 > 0) | (gen_binned_r2 > 0)
+    if np.sum(valid_bins) > 1:
+        ld_correlation = np.corrcoef(
+            real_binned_r2[valid_bins], gen_binned_r2[valid_bins]
+        )[0, 1]
+        if np.isnan(ld_correlation):
+            ld_correlation = 0.0
+    else:
+        ld_correlation = 0.0
+
+    # Create the plot
+    plt.figure(figsize=(10, 6))
+
+    # Plot raw data as scatter
+    plt.scatter(
+        real_distances, real_r2, alpha=0.3, s=10, label="Real (raw)", color="blue"
+    )
+    plt.scatter(
+        gen_distances, gen_r2, alpha=0.3, s=10, label="Generated (raw)", color="red"
+    )
+
+    # Plot binned averages as lines
+    plt.plot(
+        bin_centers,
+        real_binned_r2,
+        "b-",
+        linewidth=2,
+        label="Real (binned avg)",
+        marker="o",
+    )
+    plt.plot(
+        bin_centers,
+        gen_binned_r2,
+        "r-",
+        linewidth=2,
+        label="Generated (binned avg)",
+        marker="s",
+    )
+
+    plt.xlabel("Distance (SNPs)")
+    plt.ylabel("LD (r²)")
+    plt.title(f"Linkage Disequilibrium Decay\nCorrelation: {ld_correlation:.3f}")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.xlim(0, max_dist)
+    plt.ylim(0, 1)
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "ld_decay.png", dpi=PLOT_CONFIG["dpi"], bbox_inches="tight"
+    )
+    plt.close()
+
+    return float(ld_correlation)
+
+
+# =============================================================================
+# PRINCIPAL COMPONENT ANALYSIS IMPLEMENTATION
+# =============================================================================
+
+
+def run_pca_analysis(real_samples, gen_samples, output_dir, n_components=2):
+    """Run PCA analysis on real and generated samples.
+
+    Args:
+        real_samples: Real SNP data
+        gen_samples: Generated SNP data
+        output_dir: Directory to save plots
+        n_components: Number of PCA components to compute
+
+    Returns:
+        tuple: (avg_wasserstein_distance, component_distances)
+    """
+    # Convert tensors to numpy arrays if needed
+    if torch.is_tensor(real_samples):
+        real_samples = real_samples.cpu().numpy()
+    if torch.is_tensor(gen_samples):
+        gen_samples = gen_samples.cpu().numpy()
+
+    # Ensure 2D shape [batch_size, seq_len]
+    if len(real_samples.shape) == 3:
+        real_samples = real_samples.squeeze(1)
+    if len(gen_samples.shape) == 3:
+        gen_samples = gen_samples.squeeze(1)
+
+    # Combine data for PCA fitting
+    combined = np.vstack([real_samples, gen_samples])
+
+    # Fit PCA
+    pca = PCA(n_components=n_components)
+    pca.fit(combined)
+
+    # Transform data
+    real_pca = pca.transform(real_samples)
+    gen_pca = pca.transform(gen_samples)
+
+    # Calculate Wasserstein distance between distributions
+    w_distances = []
+    for i in range(n_components):
+        w_distances.append(wasserstein_distance(real_pca[:, i], gen_pca[:, i]))
+
+    avg_w_distance = np.mean(w_distances)
+
+    # Plot PCA results
+    plt.figure(figsize=PLOT_CONFIG["figure_size"])
+
+    # Plot first two components
+    plt.scatter(real_pca[:, 0], real_pca[:, 1], alpha=0.5, label="Real", s=30)
+    plt.scatter(gen_pca[:, 0], gen_pca[:, 1], alpha=0.5, label="Generated", s=30)
+
+    # Add explained variance
+    explained_var = pca.explained_variance_ratio_
+
+    # Plot formatting
+    plt.title("PCA of Real and Generated SNP Data", fontsize=14)
+    plt.xlabel(f"PC1 ({explained_var[0]:.2%} variance)", fontsize=12)
+    plt.ylabel(f"PC2 ({explained_var[1]:.2%} variance)", fontsize=12)
+    plt.legend(fontsize=12)
+    plt.grid(True, alpha=0.3)
+
+    # Add Wasserstein distance text
+    plt.text(
+        0.95,
+        0.95,
+        f"Avg. Wasserstein Distance: {avg_w_distance:.4f}\n"
+        f"PC1 W-Distance: {w_distances[0]:.4f}\n"
+        f"PC2 W-Distance: {w_distances[1]:.4f}",
+        transform=plt.gca().transAxes,
+        verticalalignment="top",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "pca_analysis.png", dpi=300)
+    plt.close()
+
+    # If we have more than 2 components, create a scree plot
+    if n_components > 2:
+        plt.figure(figsize=PLOT_CONFIG["figure_size"])
+        plt.bar(range(1, n_components + 1), explained_var)
+        plt.plot(range(1, n_components + 1), np.cumsum(explained_var), "r-o")
+
+        plt.title("PCA Scree Plot", fontsize=PLOT_CONFIG["font_size_title"])
+        plt.xlabel("Principal Component", fontsize=PLOT_CONFIG["font_size_label"])
+        plt.ylabel("Explained Variance Ratio", fontsize=PLOT_CONFIG["font_size_label"])
+        plt.xticks(range(1, n_components + 1))
+        plt.grid(True, alpha=PLOT_CONFIG["grid_alpha"])
+
+        plt.tight_layout()
+        plt.savefig(output_dir / "pca_scree_plot.png", dpi=PLOT_CONFIG["dpi"])
+        plt.close()
+
+    return avg_w_distance, w_distances
+
+
+# =============================================================================
+# GENETIC DIVERSITY IMPLEMENTATION
+# =============================================================================
+
+
+def calculate_genetic_diversity(samples):
+    """Calculate genetic diversity metrics.
+
+    Args:
+        samples: SNP data
+
+    Returns:
+        dict: Dictionary of genetic diversity metrics
+    """
+    # Convert tensor to numpy array if needed
+    if torch.is_tensor(samples):
+        samples = samples.cpu().numpy()
+
+    # Ensure 2D shape [batch_size, seq_len]
+    if len(samples.shape) == 3:
+        samples = samples.squeeze(1)
+
+    # Calculate allele frequencies
+    freq = np.mean(samples, axis=0)
+
+    # Calculate heterozygosity (expected)
+    het_exp = 2 * freq * (1 - freq)
+    mean_het_exp = float(np.mean(het_exp))
+
+    # Calculate heterozygosity (observed)
+    # For discrete SNP data with values [0.0, 0.5, 1.0], heterozygotes are exactly 0.5
+    # Use a small tolerance for floating point comparison
+    het_obs = np.mean(np.abs(samples - 0.5) < 1e-6, axis=0)
+    mean_het_obs = float(np.mean(het_obs))
+
+    # Calculate polymorphic sites ratio
+    polymorphic = np.logical_and(freq > 0, freq < 1)
+    polymorphic_ratio = float(np.mean(polymorphic))
+
+    # Calculate nucleotide diversity (pi)
+    # For SNP data, this is approximately the average heterozygosity
+    pi = mean_het_exp
+
+    return {
+        "expected_heterozygosity": mean_het_exp,
+        "observed_heterozygosity": mean_het_obs,
+        "polymorphic_ratio": polymorphic_ratio,
+        "nucleotide_diversity": pi,
+    }
+
+
+# =============================================================================
+# ADVANCED GENOMIC ANALYSIS PLOTS
+# =============================================================================
+
+
+def plot_haplotype_blocks(real_samples, generated_samples, output_dir, window_size=50):
+    """
+    Create heatmap showing linkage patterns across genomic regions.
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save plots
+        window_size: Size of sliding window for LD calculation
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    def calculate_ld_matrix(data, max_snps=100):
+        """Calculate LD matrix for visualization (limited for performance)"""
+        n_snps = min(data.shape[1], max_snps)
+        data_subset = data[:, :n_snps]
+        ld_matrix = np.zeros((n_snps, n_snps))
+
+        for i in range(n_snps):
+            for j in range(i, n_snps):
+                if i == j:
+                    ld_matrix[i, j] = 1.0
+                else:
+                    # Calculate r-squared
+                    corr = np.corrcoef(data_subset[:, i], data_subset[:, j])[0, 1]
+                    ld_matrix[i, j] = ld_matrix[j, i] = (
+                        corr**2 if not np.isnan(corr) else 0
+                    )
+
+        return ld_matrix
+
+    # Calculate LD matrices
+    real_ld = calculate_ld_matrix(real)
+    gen_ld = calculate_ld_matrix(gen)
+
+    # Create heatmap
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # Real data LD
+    im1 = axes[0].imshow(real_ld, cmap="Reds", vmin=0, vmax=1)
+    axes[0].set_title("Real Data LD Structure")
+    axes[0].set_xlabel("SNP Position")
+    axes[0].set_ylabel("SNP Position")
+    plt.colorbar(im1, ax=axes[0], label="r²")
+
+    # Generated data LD
+    im2 = axes[1].imshow(gen_ld, cmap="Reds", vmin=0, vmax=1)
+    axes[1].set_title("Generated Data LD Structure")
+    axes[1].set_xlabel("SNP Position")
+    axes[1].set_ylabel("SNP Position")
+    plt.colorbar(im2, ax=axes[1], label="r²")
+
+    # Difference
+    ld_diff = np.abs(real_ld - gen_ld)
+    im3 = axes[2].imshow(ld_diff, cmap="Blues", vmin=0, vmax=1)
+    axes[2].set_title("LD Structure Difference")
+    axes[2].set_xlabel("SNP Position")
+    axes[2].set_ylabel("SNP Position")
+    plt.colorbar(im3, ax=axes[2], label="|Δr²|")
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "haplotype_blocks.png", dpi=PLOT_CONFIG["dpi"], bbox_inches="tight"
+    )
+    plt.close()
+
+    # Calculate summary metric
+    ld_similarity = 1.0 - np.mean(ld_diff)
+    print(f"🧬 Haplotype Block Similarity: {ld_similarity:.3f}")
+    return float(ld_similarity)
+
+
+def plot_maf_spectrum(real_samples, generated_samples, output_dir, max_value=0.5):
+    """
+    Create histogram comparing Minor Allele Frequency distributions.
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save plots
+        max_value: Maximum allele frequency value
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    # Calculate allele frequencies
+    real_af = np.mean(real, axis=0)
+    gen_af = np.mean(gen, axis=0)
+
+    # Calculate MAF (Minor Allele Frequency)
+    real_maf = np.minimum(real_af, max_value - real_af)
+    gen_maf = np.minimum(gen_af, max_value - gen_af)
+
+    # Create MAF spectrum plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    # MAF distributions
+    axes[0, 0].hist(
+        real_maf, bins=50, alpha=0.7, label="Real", density=True, color="blue"
+    )
+    axes[0, 0].hist(
+        gen_maf, bins=50, alpha=0.7, label="Generated", density=True, color="red"
+    )
+    axes[0, 0].set_xlabel("Minor Allele Frequency")
+    axes[0, 0].set_ylabel("Density")
+    axes[0, 0].set_title("MAF Distribution Comparison")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+
+    # MAF correlation
+    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+    axes[0, 1].scatter(real_maf, gen_maf, alpha=0.6, s=10)
+    axes[0, 1].plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8)
+    axes[0, 1].set_xlabel("Real MAF")
+    axes[0, 1].set_ylabel("Generated MAF")
+    axes[0, 1].set_title(f"MAF Correlation (r = {maf_corr:.3f})")
+    axes[0, 1].grid(True, alpha=0.3)
+
+    # Rare variants (MAF < 0.05)
+    rare_threshold = 0.05
+    real_rare = np.sum(real_maf < rare_threshold)
+    gen_rare = np.sum(gen_maf < rare_threshold)
+
+    axes[1, 0].bar(
+        ["Real", "Generated"], [real_rare, gen_rare], color=["blue", "red"], alpha=0.7
+    )
+    axes[1, 0].set_ylabel("Number of Rare Variants")
+    axes[1, 0].set_title(f"Rare Variants (MAF < {rare_threshold})")
+    axes[1, 0].grid(True, alpha=0.3)
+
+    # MAF residuals
+    maf_residuals = gen_maf - real_maf
+    axes[1, 1].scatter(real_maf, maf_residuals, alpha=0.6, s=10)
+    axes[1, 1].axhline(y=0, color="r", linestyle="--", alpha=0.8)
+    axes[1, 1].set_xlabel("Real MAF")
+    axes[1, 1].set_ylabel("MAF Residuals (Gen - Real)")
+    axes[1, 1].set_title("MAF Prediction Errors")
+    axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "maf_spectrum.png", dpi=PLOT_CONFIG["dpi"], bbox_inches="tight"
+    )
+    plt.close()
+
+    print(f"🔬 MAF Correlation: {maf_corr:.3f}")
+    print(f"📊 Rare Variants - Real: {real_rare}, Generated: {gen_rare}")
+    return float(maf_corr)
+
+
+def plot_hardy_weinberg_deviation(real_samples, generated_samples, output_dir):
+    """
+    Create scatter plot of Hardy-Weinberg Equilibrium deviations.
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save plots
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    def calculate_hwe_stats(data):
+        """Calculate Hardy-Weinberg statistics for each SNP"""
+        n_samples, n_snps = data.shape
+        hwe_stats = []
+
+        for i in range(n_snps):
+            snp_data = data[:, i]
+
+            # Count genotypes (assuming 0, 0.25, 0.5 for diploid)
+            # For simplicity, treat as allele frequencies
+            p = np.mean(snp_data)  # Frequency of reference allele
+            q = 0.5 - p  # Frequency of alternative allele (assuming max_value=0.5)
+
+            if p <= 0 or q <= 0:
+                hwe_stats.append(0)
+                continue
+
+            # Expected heterozygosity under HWE
+            expected_het = 2 * p * q
+
+            # Observed heterozygosity (approximate for continuous data)
+            # Count values that are not at extremes
+            het_mask = (snp_data > 0.1) & (snp_data < 0.4)  # Approximate heterozygotes
+            observed_het = np.mean(het_mask)
+
+            # HWE deviation (Inbreeding coefficient approximation)
+            if expected_het > 0:
+                f_is = 1 - (observed_het / expected_het)
+            else:
+                f_is = 0
+
+            hwe_stats.append(f_is)
+
+        return np.array(hwe_stats)
+
+    # Calculate HWE statistics
+    real_hwe = calculate_hwe_stats(real)
+    gen_hwe = calculate_hwe_stats(gen)
+
+    # Create HWE deviation plot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    # HWE deviation distributions
+    axes[0, 0].hist(
+        real_hwe, bins=30, alpha=0.7, label="Real", density=True, color="blue"
+    )
+    axes[0, 0].hist(
+        gen_hwe, bins=30, alpha=0.7, label="Generated", density=True, color="red"
+    )
+    axes[0, 0].set_xlabel("Inbreeding Coefficient (F_IS)")
+    axes[0, 0].set_ylabel("Density")
+    axes[0, 0].set_title("HWE Deviation Distribution")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].axvline(x=0, color="black", linestyle="--", alpha=0.5, label="HWE")
+
+    # HWE correlation
+    hwe_corr = np.corrcoef(real_hwe, gen_hwe)[0, 1]
+    axes[0, 1].scatter(real_hwe, gen_hwe, alpha=0.6, s=10)
+    axes[0, 1].plot([-1, 1], [-1, 1], "r--", alpha=0.8)
+    axes[0, 1].set_xlabel("Real F_IS")
+    axes[0, 1].set_ylabel("Generated F_IS")
+    axes[0, 1].set_title(f"HWE Deviation Correlation (r = {hwe_corr:.3f})")
+    axes[0, 1].grid(True, alpha=0.3)
+
+    # SNP position vs HWE deviation
+    positions = np.arange(len(real_hwe))
+    axes[1, 0].scatter(positions, real_hwe, alpha=0.6, s=5, label="Real", color="blue")
+    axes[1, 0].scatter(
+        positions, gen_hwe, alpha=0.6, s=5, label="Generated", color="red"
+    )
+    axes[1, 0].set_xlabel("SNP Position")
+    axes[1, 0].set_ylabel("F_IS")
+    axes[1, 0].set_title("HWE Deviation by Position")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].axhline(y=0, color="black", linestyle="--", alpha=0.5)
+
+    # HWE residuals
+    hwe_residuals = gen_hwe - real_hwe
+    axes[1, 1].scatter(real_hwe, hwe_residuals, alpha=0.6, s=10)
+    axes[1, 1].axhline(y=0, color="r", linestyle="--", alpha=0.8)
+    axes[1, 1].set_xlabel("Real F_IS")
+    axes[1, 1].set_ylabel("F_IS Residuals (Gen - Real)")
+    axes[1, 1].set_title("HWE Prediction Errors")
+    axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "hardy_weinberg_deviation.png",
+        dpi=PLOT_CONFIG["dpi"],
+        bbox_inches="tight",
+    )
+    plt.close()
+
+    print(f"🧪 HWE Deviation Correlation: {hwe_corr:.3f}")
+    return float(hwe_corr)
+
+
+def plot_genomic_position_effects(
+    real_samples, generated_samples, output_dir, window_size=50
+):
+    """
+    Create line plot showing quality metrics across genomic positions.
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save plots
+        window_size: Size of sliding window
+    """
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    n_snps = real.shape[1]
+    n_windows = max(1, n_snps // window_size)
+
+    # Calculate metrics in sliding windows
+    window_positions = []
+    af_correlations = []
+    maf_correlations = []
+    mean_differences = []
+
+    for i in range(n_windows):
+        start_idx = i * window_size
+        end_idx = min((i + 1) * window_size, n_snps)
+
+        if end_idx - start_idx < 10:  # Skip small windows
+            continue
+
+        # Extract window data
+        real_window = real[:, start_idx:end_idx]
+        gen_window = gen[:, start_idx:end_idx]
+
+        # Calculate window metrics
+        real_af = np.mean(real_window, axis=0)
+        gen_af = np.mean(gen_window, axis=0)
+
+        af_corr = np.corrcoef(real_af, gen_af)[0, 1] if len(real_af) > 1 else 0
+
+        real_maf = np.minimum(real_af, 0.5 - real_af)
+        gen_maf = np.minimum(gen_af, 0.5 - gen_af)
+        maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1] if len(real_maf) > 1 else 0
+
+        mean_diff = np.abs(np.mean(real_window) - np.mean(gen_window))
+
+        window_positions.append((start_idx + end_idx) / 2)
+        af_correlations.append(af_corr if not np.isnan(af_corr) else 0)
+        maf_correlations.append(maf_corr if not np.isnan(maf_corr) else 0)
+        mean_differences.append(mean_diff)
+
+    # Create position effects plot
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+    # AF correlation by position
+    axes[0, 0].plot(window_positions, af_correlations, "b-", linewidth=2, alpha=0.8)
+    axes[0, 0].set_xlabel("Genomic Position")
+    axes[0, 0].set_ylabel("AF Correlation")
+    axes[0, 0].set_title("Allele Frequency Correlation by Position")
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].axhline(y=1.0, color="r", linestyle="--", alpha=0.5, label="Perfect")
+    axes[0, 0].legend()
+
+    # MAF correlation by position
+    axes[0, 1].plot(window_positions, maf_correlations, "g-", linewidth=2, alpha=0.8)
+    axes[0, 1].set_xlabel("Genomic Position")
+    axes[0, 1].set_ylabel("MAF Correlation")
+    axes[0, 1].set_title("Minor Allele Frequency Correlation by Position")
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].axhline(y=1.0, color="r", linestyle="--", alpha=0.5, label="Perfect")
+    axes[0, 1].legend()
+
+    # Mean difference by position
+    axes[1, 0].plot(window_positions, mean_differences, "r-", linewidth=2, alpha=0.8)
+    axes[1, 0].set_xlabel("Genomic Position")
+    axes[1, 0].set_ylabel("Mean Difference")
+    axes[1, 0].set_title("Mean Value Difference by Position")
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].axhline(y=0.0, color="black", linestyle="--", alpha=0.5, label="Perfect")
+    axes[1, 0].legend()
+
+    # Summary statistics
+    avg_af_corr = np.mean(af_correlations)
+    avg_maf_corr = np.mean(maf_correlations)
+    avg_mean_diff = np.mean(mean_differences)
+
+    summary_metrics = ["AF Correlation", "MAF Correlation", "Mean Difference"]
+    summary_values = [
+        avg_af_corr,
+        avg_maf_corr,
+        1.0 - avg_mean_diff,
+    ]  # Invert mean diff for consistency
+
+    bars = axes[1, 1].bar(
+        summary_metrics, summary_values, color=["blue", "green", "red"], alpha=0.7
+    )
+    axes[1, 1].set_ylabel("Average Quality Score")
+    axes[1, 1].set_title("Position-wise Quality Summary")
+    axes[1, 1].set_ylim(0, 1)
+    axes[1, 1].grid(True, alpha=0.3)
+
+    # Add value labels on bars
+    for bar, value in zip(bars, summary_values):
+        axes[1, 1].text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.01,
+            f"{value:.3f}",
+            ha="center",
+            va="bottom",
+        )
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "genomic_position_effects.png",
+        dpi=PLOT_CONFIG["dpi"],
+        bbox_inches="tight",
+    )
+    plt.close()
+
+    print(f"📍 Average AF Correlation by Position: {avg_af_corr:.3f}")
+    print(f"📍 Average MAF Correlation by Position: {avg_maf_corr:.3f}")
+    return float(avg_af_corr)
+
+
+def plot_sample_clustering(
+    real_samples, generated_samples, output_dir, max_samples=100
+):
+    """
+    Create hierarchical clustering heatmap of sample similarities.
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save plots
+        max_samples: Maximum number of samples to include (for performance)
+    """
+    from scipy.cluster.hierarchy import dendrogram, linkage
+    from scipy.spatial.distance import pdist
+
+    # Convert to numpy
+    real = (
+        real_samples.cpu().numpy()
+        if torch.is_tensor(real_samples)
+        else np.array(real_samples)
+    )
+    gen = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else np.array(generated_samples)
+    )
+
+    if real.ndim == 3:
+        real = real.squeeze(1)
+    if gen.ndim == 3:
+        gen = gen.squeeze(1)
+
+    # Subsample for performance
+    n_real = min(max_samples // 2, real.shape[0])
+    n_gen = min(max_samples // 2, gen.shape[0])
+
+    real_subset = real[:n_real]
+    gen_subset = gen[:n_gen]
+
+    # Combine samples
+    all_samples = np.vstack([real_subset, gen_subset])
+    sample_labels = ["Real"] * n_real + ["Generated"] * n_gen
+
+    # Calculate pairwise distances
+    distances = pdist(all_samples, metric="euclidean")
+
+    # Perform hierarchical clustering
+    linkage_matrix = linkage(distances, method="ward")
+
+    # Create clustering plot
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Dendrogram
+    dendro = dendrogram(
+        linkage_matrix,
+        ax=axes[0],
+        labels=sample_labels,
+        leaf_rotation=90,
+        leaf_font_size=8,
+    )
+    axes[0].set_title("Sample Clustering Dendrogram")
+    axes[0].set_xlabel("Samples")
+    axes[0].set_ylabel("Distance")
+
+    # Distance matrix heatmap
+    from scipy.spatial.distance import squareform
+
+    distance_matrix = squareform(distances)
+
+    im = axes[1].imshow(distance_matrix, cmap="viridis", aspect="auto")
+    axes[1].set_title("Sample Distance Matrix")
+    axes[1].set_xlabel("Sample Index")
+    axes[1].set_ylabel("Sample Index")
+
+    # Add colorbar
+    plt.colorbar(im, ax=axes[1], label="Euclidean Distance")
+
+    # Add dividing lines to show real vs generated
+    axes[1].axhline(y=n_real - 0.5, color="red", linestyle="--", alpha=0.8, linewidth=2)
+    axes[1].axvline(x=n_real - 0.5, color="red", linestyle="--", alpha=0.8, linewidth=2)
+
+    plt.tight_layout()
+    plt.savefig(
+        output_dir / "sample_clustering.png",
+        dpi=PLOT_CONFIG["dpi"],
+        bbox_inches="tight",
+    )
+    plt.close()
+
+    # Calculate clustering quality metric
+    # Average within-group distance vs between-group distance
+    real_indices = np.arange(n_real)
+    gen_indices = np.arange(n_real, n_real + n_gen)
+
+    # Within-group distances
+    real_within = distance_matrix[np.ix_(real_indices, real_indices)]
+    gen_within = distance_matrix[np.ix_(gen_indices, gen_indices)]
+    avg_within = (np.mean(real_within) + np.mean(gen_within)) / 2
+
+    # Between-group distances
+    between = distance_matrix[np.ix_(real_indices, gen_indices)]
+    avg_between = np.mean(between)
+
+    # Clustering quality (lower is better - samples should be similar)
+    clustering_score = avg_within / avg_between if avg_between > 0 else 1.0
+
+    print(f"🔗 Sample Clustering Score: {clustering_score:.3f} (lower is better)")
+    print(f"📊 Average within-group distance: {avg_within:.3f}")
+    print(f"📊 Average between-group distance: {avg_between:.3f}")
+
+    return float(clustering_score)
+
+
+# =============================================================================
+# REPORTING AND SUMMARY FUNCTIONS
+# =============================================================================
+
+
+def print_evaluation_summary(metrics):
+    """
+    Print a human-readable summary of evaluation results.
+
+    Args:
+        metrics: Dictionary of computed metrics (new structure)
+    """
+    print("\n" + "=" * 60)
+    print("📊 COMPREHENSIVE SAMPLE ANALYSIS SUMMARY")
+    print("=" * 60)
+
+    print(f"\n🎯 Overall Quality Score: {metrics['overall_quality_score']:.3f}/1.000")
+
+    # Basic quality metrics (from infer_utils.py)
+    print(f"\n📊 Basic Quality Assessment: {metrics['basic_quality_score']:.3f}/1.000")
+
+    # Dimensionality metrics
+    if metrics.get("dimensionality"):
+        dim_metrics = metrics["dimensionality"]
+        print(f"\n🔍 High-Dimensional Analysis:")
+        if dim_metrics.get("pca_centroid_distance") is not None:
+            print(
+                f"  • PCA Centroid Distance: {dim_metrics['pca_centroid_distance']:.6f}"
+            )
+        if dim_metrics.get("pca_2d_overlap") is not None:
+            print(f"  • PCA 2D Overlap: {dim_metrics['pca_2d_overlap']:.3f}")
+
+    # Advanced genomic analysis
+    if metrics.get("advanced_genomics"):
+        adv_metrics = metrics["advanced_genomics"]
+        print(f"\n🧬 Advanced Genomic Analysis:")
+
+        if adv_metrics.get("ld_pattern_correlation") is not None:
+            print(
+                f"  • LD Pattern Correlation: {adv_metrics['ld_pattern_correlation']:.3f}"
+            )
+
+        if adv_metrics.get("pca_wasserstein_distance") is not None:
+            print(
+                f"  • PCA Wasserstein Distance: {adv_metrics['pca_wasserstein_distance']:.6f}"
+            )
+
+        if adv_metrics.get("genetic_diversity_real") and adv_metrics.get(
+            "genetic_diversity_generated"
+        ):
+            real_div = adv_metrics["genetic_diversity_real"]
+            gen_div = adv_metrics["genetic_diversity_generated"]
+            print(
+                f"  • Expected Heterozygosity (Real): {real_div['expected_heterozygosity']:.3f}"
+            )
+            print(
+                f"  • Expected Heterozygosity (Generated): {gen_div['expected_heterozygosity']:.3f}"
+            )
+            print(f"  • Polymorphic Ratio (Real): {real_div['polymorphic_ratio']:.3f}")
+            print(
+                f"  • Polymorphic Ratio (Generated): {gen_div['polymorphic_ratio']:.3f}"
+            )
+
+    # Interpretation
+    quality = metrics["overall_quality_score"]
+    if quality >= 0.9:
+        interpretation = "🟢 EXCELLENT - Generated samples are very close to real data"
+    elif quality >= 0.8:
+        interpretation = (
+            "🟡 GOOD - Generated samples are reasonably similar to real data"
+        )
+    elif quality >= 0.7:
+        interpretation = "🟠 FAIR - Generated samples show some similarity to real data"
+    else:
+        interpretation = (
+            "🔴 POOR - Generated samples differ significantly from real data"
+        )
+
+    print(f"\n💡 Interpretation: {interpretation}")
+    print("=" * 60)
+
+
+def create_evaluation_report(metrics, real_samples, generated_samples, output_dir):
+    """Create a comprehensive evaluation report in markdown format."""
+
+    report_file = output_dir / "evaluation_report.md"
+
+    # Convert samples to numpy for statistics
+    real_np = (
+        real_samples.cpu().numpy() if torch.is_tensor(real_samples) else real_samples
+    )
+    gen_np = (
+        generated_samples.cpu().numpy()
+        if torch.is_tensor(generated_samples)
+        else generated_samples
+    )
+
+    if real_np.ndim == 3:
+        real_np = real_np.squeeze(1)
+    if gen_np.ndim == 3:
+        gen_np = gen_np.squeeze(1)
+
+    with open(report_file, "w") as f:
+        f.write("# Genomic Sample Evaluation Report\n\n")
+
+        # Basic info
+        f.write("## Dataset Information\n\n")
+        f.write(f"- **Real Data**: {args.real_data}\n")
+        f.write(f"- **Generated Data**: {args.generated_data}\n")
+        f.write(f"- **Sample Shape**: {real_samples.shape}\n")
+        f.write(f"- **Discretized**: {'Yes' if args.discretize else 'No'}\n")
+        f.write(f"- **Evaluation Date**: {Path().cwd()}\n\n")
+
+        # Overall score
+        quality = metrics["overall_quality_score"]
+        f.write("## Overall Quality Assessment\n\n")
+        f.write(f"**Quality Score: {quality:.3f}/1.000**\n\n")
+
+        if quality >= 0.9:
+            interpretation = (
+                "🟢 **EXCELLENT** - Generated samples are very close to real data"
+            )
+        elif quality >= 0.8:
+            interpretation = (
+                "🟡 **GOOD** - Generated samples are reasonably similar to real data"
+            )
+        elif quality >= 0.7:
+            interpretation = (
+                "🟠 **FAIR** - Generated samples show some similarity to real data"
+            )
+        else:
+            interpretation = (
+                "🔴 **POOR** - Generated samples differ significantly from real data"
+            )
+
+        f.write(f"{interpretation}\n\n")
+
+        # Detailed metrics
+        f.write("## Detailed Metrics\n\n")
+
+        f.write("### Genomic Similarity\n")
+        f.write(
+            f"- Allele Frequency Correlation: **{metrics['genomic']['allele_freq_correlation']:.3f}**\n"
+        )
+        f.write(f"- MAF Correlation: **{metrics['genomic']['maf_correlation']:.3f}**\n")
+        f.write(
+            f"- Heterozygosity Correlation: **{metrics['genomic']['heterozygosity_correlation']:.3f}**\n\n"
+        )
+
+        f.write("### Statistical Similarity\n")
+        f.write(
+            f"- Kolmogorov-Smirnov p-value: {metrics['statistical']['ks_pvalue']:.6f}\n"
+        )
+        f.write(
+            f"- Jensen-Shannon Divergence: {metrics['statistical']['jensen_shannon_divergence']:.6f}\n"
+        )
+        f.write(
+            f"- Wasserstein Distance: {metrics['statistical']['wasserstein_distance']:.6f}\n\n"
+        )
+
+        f.write("### Distributional Similarity\n")
+        f.write(
+            f"- Range Coverage: {metrics['distributional']['range_coverage']:.3f}\n"
+        )
+        f.write(
+            f"- Mean Sample Correlation: {metrics['distributional']['mean_sample_correlation']:.3f}\n\n"
+        )
+
+        f.write("### High-Dimensional Similarity\n")
+        f.write(
+            f"- PCA Centroid Distance: {metrics['dimensionality']['pca_centroid_distance']:.6f}\n"
+        )
+        f.write(
+            f"- PCA 2D Overlap: {metrics['dimensionality']['pca_2d_overlap']:.3f}\n\n"
+        )
+
+        # Basic statistics comparison
+        f.write("## Sample Statistics Comparison\n\n")
+        f.write("| Metric | Real Samples | Generated Samples | Difference |\n")
+        f.write("|--------|-------------|------------------|------------|\n")
+        f.write(
+            f"| Mean | {np.mean(real_np):.4f} | {np.mean(gen_np):.4f} | {abs(np.mean(real_np) - np.mean(gen_np)):.4f} |\n"
+        )
+        f.write(
+            f"| Std Dev | {np.std(real_np):.4f} | {np.std(gen_np):.4f} | {abs(np.std(real_np) - np.std(gen_np)):.4f} |\n"
+        )
+        f.write(
+            f"| Min | {np.min(real_np):.4f} | {np.min(gen_np):.4f} | {abs(np.min(real_np) - np.min(gen_np)):.4f} |\n"
+        )
+        f.write(
+            f"| Max | {np.max(real_np):.4f} | {np.max(gen_np):.4f} | {abs(np.max(real_np) - np.max(gen_np)):.4f} |\n\n"
+        )
+
+        # Files generated
+        f.write("## Generated Files\n\n")
+        f.write("- `comprehensive_evaluation.json` - Complete metrics in JSON format\n")
+        f.write("- `sample_comparison.png` - Side-by-side sample comparison\n")
+        f.write("- `sample_visualization.png` - Detailed sample visualization\n")
+        f.write("- `evaluation_summary.png` - Visual summary of key metrics\n")
+        f.write("- `evaluation_report.md` - This report\n\n")
+
+        f.write("---\n")
+        f.write("*Report generated by GenomeDiffusion evaluation pipeline*\n")
+
+    print(f"📄 Evaluation report saved to: {report_file}")
