@@ -62,8 +62,8 @@ def get_noisy_sample(
     return x_t
 
 
-# Markov Chain Reverse Process: Denoising from Noisy x_t at T
-def run_markov_reverse_process(
+# Denoising Wrapper: Denoising from Noisy x_t at T
+def run_denoising_process(
     model: "DiffusionModel",
     x0: Tensor,  # Original clean sample
     x_t: Tensor,  # Noisy sample at T
@@ -138,6 +138,7 @@ def run_markov_reverse_process(
         return {0: samples[0]}
 
 
+# Denoising Comparison Plots
 def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
     """
     Plots and saves a comparison of original, noisy, and denoised signals using matplotlib OOP API.
@@ -195,8 +196,16 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
     )
 
     fig.tight_layout()
-    fig.savefig(str(output_path / f"markov_reverse_t{T}.png"))
-    fig.savefig(str(output_path / f"markov_reverse_t{T}.pdf"))
+    fig.savefig(
+        str(output_path / f"denoising_comparison_t{T}.png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        str(output_path / f"denoising_comparison_t{T}.pdf"),
+        dpi=300,
+        bbox_inches="tight",
+    )
     plt.close(fig)
 
     return mse_x0, corr_x0, mse_xt, corr_xt
@@ -237,6 +246,7 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
         x0_recon_flat = x0_recon.flatten()
         if timesteps[i] < 10:
             axs[1].plot(x0_recon_flat, label=f"Step {timesteps[i]}", alpha=0.7)
+
     axs[1].set_title(f"Denoising Trajectory (T={T})")
     axs[1].set_xlabel("Position")
     axs[1].legend(fontsize=8)

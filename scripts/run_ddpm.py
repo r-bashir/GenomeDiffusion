@@ -24,17 +24,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # We need to disable the import-not-at-top lint rule
 # ruff: noqa: E402
 
-from src import DiffusionModel
-from src.mlp import IdentityNoisePredictor
-from src.utils import load_config, load_model_from_checkpoint, set_seed, setup_logging
+from src.utils import load_model_from_checkpoint, set_seed, setup_logging
 from utils.ddpm_utils import (
-    compute_locality_metrics,
-    format_metrics_report,
     get_noisy_sample,
     plot_denoising_comparison,
     plot_denoising_trajectory,
-    plot_locality_analysis,
-    run_markov_reverse_process,
+    run_denoising_process,
 )
 
 # Set global device
@@ -109,8 +104,8 @@ def main():
     # x_t = x0
 
     # Run Reverse Diffusion Process (Markov Chain)
-    samples_dict = run_markov_reverse_process(
-        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=True
+    samples_dict = run_denoising_process(
+        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=False
     )
 
     # Plot and compare
