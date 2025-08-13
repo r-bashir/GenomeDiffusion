@@ -26,7 +26,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import DiffusionModel
 from src.mlp import IdentityNoisePredictor
-from src.utils import load_config, set_seed, setup_logging
+from src.utils import load_config, load_model_from_checkpoint, set_seed, setup_logging
 from utils.ddpm_utils import (
     compute_locality_metrics,
     format_metrics_report,
@@ -41,31 +41,6 @@ from utils.ddpm_utils import (
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
-    """
-    Loads a DiffusionModel from a checkpoint and moves it to the specified device.
-
-    Args:
-        checkpoint_path (str): Path to the checkpoint file.
-        device (torch.device): Device to load the model onto.
-
-    Returns:
-        model: The loaded DiffusionModel (on the correct device, in eval mode)
-        config: The config/hparams dictionary from the checkpoint
-    """
-    from src import DiffusionModel
-
-    model = DiffusionModel.load_from_checkpoint(
-        checkpoint_path,
-        map_location=device,
-        strict=True,
-    )
-    config = model.hparams
-    model = model.to(device)
-    model.eval()
-    return model, config
-
-
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="DDPM Full-Cycle Diagnostic")
@@ -76,9 +51,9 @@ def parse_args():
         "--num_samples", type=int, default=1, help="Number of samples to analyze"
     )
     parser.add_argument(
-        "--identity-model",
+        "--discretize",
         action="store_true",
-        help="Use identity noise predictor for debugging (ignore checkpoint)",
+        help="Discretize generated samples to 0, 0.5, and 1.0",
     )
     return parser.parse_args()
 
@@ -95,42 +70,17 @@ def main():
     set_seed(seed=42)
 
     # Load Model
-    if args.identity_model:
-        logger.info("Using IdentityNoisePredictor for debugging")
-        config = load_config(config_path="config.yaml")
-        model = DiffusionModel(config).to(device)
-        model.noise_predictor = IdentityNoisePredictor(
-            seq_length=config["data"]["seq_length"],
-            embedding_dim=config["unet"]["embedding_dim"],
-            dim_mults=config["unet"]["dim_mults"],
-            channels=config["unet"]["channels"],
-            with_time_emb=config["unet"]["with_time_emb"],
-            with_pos_emb=config["unet"]["with_pos_emb"],
-            norm_groups=config["unet"]["norm_groups"],
-        ).to(device)
-        logger.info("Created IdentityNoisePredictor model")
-        logger.info("Model config:")
+    try:
+        logger.info(f"Loading model from checkpoint: {args.checkpoint}")
+        model, config = load_model_from_checkpoint(args.checkpoint, device)
+        logger.info("Model loaded successfully from checkpoint on %s", device)
+        logger.info("Model config loaded from checkpoint:")
         print(f"\n{config}\n")
-    else:
-        if not args.checkpoint:
-            raise ValueError(
-                "Must provide --checkpoint when not using --identity-model"
-            )
-        try:
-            logger.info(f"Loading model from checkpoint: {args.checkpoint}")
-            model, config = load_model_from_checkpoint(args.checkpoint, device)
-            logger.info("Model loaded successfully from checkpoint on %s", device)
-            logger.info("Model config loaded from checkpoint:")
-            print(f"\n{config}\n")
-        except Exception as e:
-            raise RuntimeError(f"Failed to load model from checkpoint: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    if args.identity_model:
-        output_dir = Path("outputs/analysis") / "identity_model"
-    else:
-        output_dir = Path(args.checkpoint).parent.parent / "ddpm_diffusion"
-
+    output_dir = Path(args.checkpoint).parent.parent / "ddpm_diffusion"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load Dataset (Test)

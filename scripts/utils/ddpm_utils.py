@@ -232,7 +232,7 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
     axs[0].set_ylim(axs[0].get_ylim())  # Match y-axis
 
     # Right subplot: all x0_recon
-    axs[1].plot(x_t_np, "m--", label=r"Noisy $x_t$", alpha=0.6)
+    # axs[1].plot(x_t_np, "m--", label=r"Noisy $x_t$", alpha=0.6)
     for i, x0_recon in enumerate(x0_recon_arr):
         x0_recon_flat = x0_recon.flatten()
         if timesteps[i] < 10:
