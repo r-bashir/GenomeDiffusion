@@ -177,7 +177,7 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
 
     # Right subplot: x0, x_t, x0_recon
     axs[1].plot(x0_np, label=r"Original $x_0$", color="blue")
-    axs[1].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
+    # axs[1].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
     axs[1].plot(x_t_minus_1_np, label=r"Denoised $x_{t-1}$", color="green", alpha=0.7)
     axs[1].set_title(f"Denoising Comparison (T={T})")
     axs[1].set_xlabel("Position")
@@ -235,7 +235,8 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
     axs[1].plot(x_t_np, "m--", label=r"Noisy $x_t$", alpha=0.6)
     for i, x0_recon in enumerate(x0_recon_arr):
         x0_recon_flat = x0_recon.flatten()
-        axs[1].plot(x0_recon_flat, label=f"Step {timesteps[i]}", alpha=0.7)
+        if timesteps[i] < 10:
+            axs[1].plot(x0_recon_flat, label=f"Step {timesteps[i]}", alpha=0.7)
     axs[1].set_title(f"Denoising Trajectory (T={T})")
     axs[1].set_xlabel("Position")
     axs[1].legend(fontsize=8)
