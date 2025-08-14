@@ -10,3 +10,7 @@ outputs
 logs
 test
 slurm*
+current_sweep.yaml
+sweep_analysis_*.txt
+sweeps/
+wandb/
