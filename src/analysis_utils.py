@@ -64,6 +64,137 @@ except ImportError:
 
 
 # =============================================================================
+# SAMPLE DIVERSITY ANALYSIS (Critical for detecting mode collapse)
+# =============================================================================
+
+
+def calculate_sample_diversity(samples):
+    """
+    Calculate diversity metrics between generated samples to detect mode collapse.
+
+    Args:
+        samples: Generated samples [batch_size, seq_len] or [batch_size, channels, seq_len]
+
+    Returns:
+        dict: Sample diversity metrics
+    """
+    # Convert to numpy
+    data = samples.cpu().numpy() if torch.is_tensor(samples) else np.array(samples)
+
+    if data.ndim == 3:
+        data = data.squeeze(1)
+
+    n_samples, seq_len = data.shape
+
+    # Calculate pairwise sample correlations
+    sample_correlations = []
+    for i in range(n_samples):
+        for j in range(i + 1, n_samples):
+            corr = np.corrcoef(data[i], data[j])[0, 1]
+            if not np.isnan(corr):
+                sample_correlations.append(corr)
+
+    avg_sample_correlation = (
+        np.mean(sample_correlations) if sample_correlations else 1.0
+    )
+
+    # Calculate position-wise standard deviation across samples
+    position_std = np.std(data, axis=0)
+    avg_position_std = np.mean(position_std)
+    min_position_std = np.min(position_std)
+    max_position_std = np.max(position_std)
+
+    # Calculate sample-wise standard deviation (diversity within each sample)
+    sample_std = np.std(data, axis=1)
+    avg_sample_std = np.mean(sample_std)
+
+    # Effective number of unique patterns (rough estimate)
+    # Count samples that are significantly different from each other
+    unique_patterns = 0
+    threshold = 0.95  # Correlation threshold for "same" pattern
+
+    for i in range(n_samples):
+        is_unique = True
+        for j in range(i):
+            corr = np.corrcoef(data[i], data[j])[0, 1]
+            if not np.isnan(corr) and corr > threshold:
+                is_unique = False
+                break
+        if is_unique:
+            unique_patterns += 1
+
+    effective_diversity = unique_patterns / n_samples if n_samples > 0 else 0
+
+    return {
+        "avg_sample_correlation": float(avg_sample_correlation),
+        "avg_position_std": float(avg_position_std),
+        "min_position_std": float(min_position_std),
+        "max_position_std": float(max_position_std),
+        "avg_sample_std": float(avg_sample_std),
+        "effective_diversity": float(effective_diversity),
+        "n_unique_patterns": int(unique_patterns),
+        "total_samples": int(n_samples),
+    }
+
+
+def detect_mode_collapse(real_samples, generated_samples):
+    """
+    Detect mode collapse by comparing sample diversity between real and generated data.
+
+    Args:
+        real_samples: Real data
+        generated_samples: Generated data
+
+    Returns:
+        dict: Mode collapse detection results with warnings
+    """
+    real_diversity = calculate_sample_diversity(real_samples)
+    gen_diversity = calculate_sample_diversity(generated_samples)
+
+    warnings = []
+
+    # Check for mode collapse indicators
+    if gen_diversity["avg_sample_correlation"] > 0.95:
+        warnings.append(
+            "🚨 CRITICAL: Generated samples are nearly identical (avg correlation > 0.95)"
+        )
+
+    if gen_diversity["avg_position_std"] < 0.01:
+        warnings.append(
+            "🚨 CRITICAL: No variation across samples (position std < 0.01)"
+        )
+
+    if gen_diversity["effective_diversity"] < 0.1:
+        warnings.append("🚨 CRITICAL: Less than 10% of samples are unique patterns")
+
+    # Compare to real data
+    diversity_ratio = gen_diversity["effective_diversity"] / max(
+        real_diversity["effective_diversity"], 0.01
+    )
+    if diversity_ratio < 0.5:
+        warnings.append(
+            f"⚠️  Generated diversity is {diversity_ratio:.1%} of real data diversity"
+        )
+
+    correlation_ratio = gen_diversity["avg_sample_correlation"] / max(
+        real_diversity["avg_sample_correlation"], 0.01
+    )
+    if correlation_ratio > 2.0:
+        warnings.append(
+            f"⚠️  Generated samples are {correlation_ratio:.1f}x more correlated than real samples"
+        )
+
+    return {
+        "real_diversity": real_diversity,
+        "generated_diversity": gen_diversity,
+        "diversity_ratio": float(diversity_ratio),
+        "correlation_ratio": float(correlation_ratio),
+        "warnings": warnings,
+        "mode_collapse_detected": len([w for w in warnings if "CRITICAL" in w]) > 0,
+    }
+
+
+# =============================================================================
 # DIMENSIONALITY ANALYSIS
 # =============================================================================
 
@@ -470,6 +601,30 @@ def plot_ld_decay(
         output_dir / "ld_decay.png", dpi=PLOT_CONFIG["dpi"], bbox_inches="tight"
     )
     plt.close()
+
+    # Add diagnostic warnings for LD analysis
+    ld_warnings = []
+
+    if ld_correlation < 0.1:
+        ld_warnings.append(
+            "🚨 CRITICAL: LD correlation < 0.1 - spatial correlations destroyed"
+        )
+    elif ld_correlation < 0.3:
+        ld_warnings.append(
+            "⚠️  WARNING: LD correlation < 0.3 - poor spatial correlation preservation"
+        )
+
+    # Check for flat LD patterns (indicator of staircase/uniform generation)
+    if len(gen_binned_r2) > 0:
+        gen_ld_std = np.std(gen_binned_r2)
+        if gen_ld_std < 0.01:
+            ld_warnings.append(
+                "🚨 CRITICAL: Generated LD pattern is flat (std < 0.01) - possible uniform generation"
+            )
+
+    # Print warnings
+    for warning in ld_warnings:
+        print(warning)
 
     return float(ld_correlation)
 
@@ -1293,10 +1448,12 @@ def create_evaluation_report(metrics, real_samples, generated_samples, output_di
 
         # Basic info
         f.write("## Dataset Information\n\n")
-        f.write(f"- **Real Data**: {args.real_data}\n")
-        f.write(f"- **Generated Data**: {args.generated_data}\n")
-        f.write(f"- **Sample Shape**: {real_samples.shape}\n")
-        f.write(f"- **Discretized**: {'Yes' if args.discretize else 'No'}\n")
+        f.write(f"- **Real Data Shape**: {real_samples.shape}\n")
+        f.write(f"- **Generated Data Shape**: {generated_samples.shape}\n")
+        f.write(f"- **Sequence Length**: {real_samples.shape[-1]}\n")
+        f.write(
+            f"- **Number of Samples**: Real: {real_samples.shape[0]}, Generated: {generated_samples.shape[0]}\n"
+        )
         f.write(f"- **Evaluation Date**: {Path().cwd()}\n\n")
 
         # Overall score
@@ -1326,32 +1483,38 @@ def create_evaluation_report(metrics, real_samples, generated_samples, output_di
         # Detailed metrics
         f.write("## Detailed Metrics\n\n")
 
+        f.write("### Critical Diagnostic Metrics\n")
+        f.write(
+            f"- **Mode Collapse Detected**: {metrics.get('mode_collapse_detected', 'Unknown')}\n"
+        )
+        f.write(
+            f"- **Sample Diversity Ratio**: {metrics.get('sample_diversity_ratio', 0):.3f}\n"
+        )
+        f.write(f"- **LD Correlation**: {metrics.get('ld_correlation', 0):.6f}\n")
+        f.write(f"- **Status**: {metrics.get('status', 'Unknown')}\n\n")
+
         f.write("### Genomic Similarity\n")
+        f.write(f"- **MAF Correlation**: {metrics.get('maf_correlation', 0):.6f}\n")
         f.write(
-            f"- Allele Frequency Correlation: **{metrics['genomic']['allele_freq_correlation']:.3f}**\n"
+            f"- **Genetic Diversity (Real)**: {metrics.get('genetic_diversity_real', 0):.6f}\n"
         )
-        f.write(f"- MAF Correlation: **{metrics['genomic']['maf_correlation']:.3f}**\n")
         f.write(
-            f"- Heterozygosity Correlation: **{metrics['genomic']['heterozygosity_correlation']:.3f}**\n\n"
+            f"- **Genetic Diversity (Generated)**: {metrics.get('genetic_diversity_generated', 0):.6f}\n"
         )
+        f.write(f"- **PCA Distance**: {metrics.get('pca_distance', 0):.4f}\n\n")
 
-        f.write("### Statistical Similarity\n")
+        f.write("### Additional Metrics\n")
         f.write(
-            f"- Kolmogorov-Smirnov p-value: {metrics['statistical']['ks_pvalue']:.6f}\n"
+            f"- **Haplotype Block Similarity**: {metrics.get('haplotype_similarity', 0):.3f}\n"
         )
         f.write(
-            f"- Jensen-Shannon Divergence: {metrics['statistical']['jensen_shannon_divergence']:.6f}\n"
+            f"- **HWE Deviation Correlation**: {metrics.get('hwe_correlation', 0):.3f}\n"
         )
         f.write(
-            f"- Wasserstein Distance: {metrics['statistical']['wasserstein_distance']:.6f}\n\n"
-        )
-
-        f.write("### Distributional Similarity\n")
-        f.write(
-            f"- Range Coverage: {metrics['distributional']['range_coverage']:.3f}\n"
+            f"- **Position Effects Correlation**: {metrics.get('position_correlation', 0):.3f}\n"
         )
         f.write(
-            f"- Mean Sample Correlation: {metrics['distributional']['mean_sample_correlation']:.3f}\n\n"
+            f"- **Sample Clustering Score**: {metrics.get('clustering_score', 0):.3f}\n\n"
         )
 
         f.write("### High-Dimensional Similarity\n")
@@ -1391,3 +1554,192 @@ def create_evaluation_report(metrics, real_samples, generated_samples, output_di
         f.write("*Report generated by GenomeDiffusion evaluation pipeline*\n")
 
     print(f"📄 Evaluation report saved to: {report_file}")
+
+
+# =============================================================================
+# COMPREHENSIVE DIAGNOSTIC EVALUATION
+# =============================================================================
+
+
+def run_comprehensive_evaluation(real_samples, generated_samples, output_dir):
+    """
+    Run comprehensive diagnostic evaluation with improved metrics and warnings.
+
+    This function integrates all analysis metrics in a meaningful order:
+    1. Sample diversity analysis (detects mode collapse)
+    2. Linkage disequilibrium analysis (detects spatial correlation preservation)
+    3. Traditional genomic metrics (MAF, diversity, etc.)
+    4. Overall assessment with diagnostic warnings
+
+    Args:
+        real_samples: Real genomic data
+        generated_samples: Generated genomic data
+        output_dir: Directory to save results
+
+    Returns:
+        dict: Comprehensive evaluation results with diagnostics
+    """
+    print("\n" + "=" * 80)
+    print("🧬 COMPREHENSIVE GENOMIC MODEL EVALUATION")
+    print("=" * 80)
+
+    results = {}
+
+    # 1. CRITICAL: Sample Diversity Analysis (Mode Collapse Detection)
+    print("\n🔍 1. SAMPLE DIVERSITY ANALYSIS (Mode Collapse Detection)")
+    print("-" * 60)
+
+    mode_collapse_results = detect_mode_collapse(real_samples, generated_samples)
+    results["mode_collapse"] = mode_collapse_results
+
+    print(
+        f"Real sample diversity: {mode_collapse_results['real_diversity']['effective_diversity']:.3f}"
+    )
+    print(
+        f"Generated sample diversity: {mode_collapse_results['generated_diversity']['effective_diversity']:.3f}"
+    )
+    print(f"Diversity ratio: {mode_collapse_results['diversity_ratio']:.3f}")
+    print(f"Sample correlation ratio: {mode_collapse_results['correlation_ratio']:.3f}")
+
+    if mode_collapse_results["warnings"]:
+        print("\n⚠️  DIAGNOSTIC WARNINGS:")
+        for warning in mode_collapse_results["warnings"]:
+            print(f"   {warning}")
+    else:
+        print("✅ No mode collapse detected")
+
+    # 2. CRITICAL: Linkage Disequilibrium Analysis (Spatial Correlation Preservation)
+    print("\n🧬 2. LINKAGE DISEQUILIBRIUM ANALYSIS (Spatial Correlation Preservation)")
+    print("-" * 70)
+
+    ld_correlation = plot_ld_decay(real_samples, generated_samples, output_dir)
+    results["ld_correlation"] = ld_correlation
+    print(f"LD correlation: {ld_correlation:.6f}")
+
+    # 3. Traditional Genomic Metrics
+    print("\n📊 3. TRADITIONAL GENOMIC METRICS")
+    print("-" * 40)
+
+    # MAF analysis
+    maf_correlation = plot_maf_spectrum(real_samples, generated_samples, output_dir)
+    results["maf_correlation"] = maf_correlation
+    print(f"MAF correlation: {maf_correlation:.6f}")
+
+    # Genetic diversity
+    real_diversity = calculate_genetic_diversity(real_samples)
+    gen_diversity = calculate_genetic_diversity(generated_samples)
+    results["genetic_diversity"] = {
+        "real": real_diversity["nucleotide_diversity"],
+        "generated": gen_diversity["nucleotide_diversity"],
+        "difference": abs(
+            real_diversity["nucleotide_diversity"]
+            - gen_diversity["nucleotide_diversity"]
+        ),
+    }
+    print(
+        f"Genetic diversity - Real: {real_diversity['nucleotide_diversity']:.6f}, Generated: {gen_diversity['nucleotide_diversity']:.6f}"
+    )
+
+    # PCA analysis
+    pca_distance, _ = run_pca_analysis(real_samples, generated_samples, output_dir)
+    results["pca_distance"] = pca_distance
+    print(f"PCA distance: {pca_distance:.6f}")
+
+    # 4. Overall Assessment with Diagnostic Interpretation
+    print("\n🎯 4. OVERALL ASSESSMENT")
+    print("-" * 30)
+
+    # Calculate weighted score with emphasis on critical metrics
+    weights = {
+        "ld_correlation": 0.4,  # Most important - spatial structure
+        "diversity_ratio": 0.3,  # Second most important - sample diversity
+        "maf_correlation": 0.15,  # Traditional metric
+        "genetic_diversity_similarity": 0.1,  # Traditional metric
+        "pca_distance_inv": 0.05,  # Traditional metric
+    }
+
+    # Normalize metrics to 0-1 scale
+    ld_score = max(0, min(1, ld_correlation))
+    diversity_score = max(0, min(1, mode_collapse_results["diversity_ratio"]))
+    maf_score = max(0, min(1, maf_correlation))
+    genetic_div_score = max(0, min(1, 1 - results["genetic_diversity"]["difference"]))
+    pca_score = max(0, min(1, 1 - min(pca_distance, 1)))
+
+    overall_score = (
+        weights["ld_correlation"] * ld_score
+        + weights["diversity_ratio"] * diversity_score
+        + weights["maf_correlation"] * maf_score
+        + weights["genetic_diversity_similarity"] * genetic_div_score
+        + weights["pca_distance_inv"] * pca_score
+    )
+
+    results["overall_score"] = overall_score
+    results["component_scores"] = {
+        "ld_score": ld_score,
+        "diversity_score": diversity_score,
+        "maf_score": maf_score,
+        "genetic_diversity_score": genetic_div_score,
+        "pca_score": pca_score,
+    }
+
+    # Diagnostic interpretation
+    print(f"Overall Score: {overall_score:.3f}/1.000")
+
+    # Critical failure detection
+    critical_failures = []
+    if ld_correlation < 0.1:
+        critical_failures.append(
+            "Spatial correlations destroyed (LD correlation < 0.1)"
+        )
+    if mode_collapse_results["mode_collapse_detected"]:
+        critical_failures.append("Mode collapse detected")
+    if mode_collapse_results["diversity_ratio"] < 0.1:
+        critical_failures.append("Severe lack of sample diversity")
+
+    if critical_failures:
+        print("\n🚨 CRITICAL FAILURES DETECTED:")
+        for failure in critical_failures:
+            print(f"   • {failure}")
+        print(
+            "\n💡 DIAGNOSIS: Model likely learned uniform/staircase pattern instead of real genomic variation"
+        )
+        print(
+            "   Recommendation: Retrain with real genomic data, check loss function and architecture"
+        )
+        results["status"] = "CRITICAL_FAILURE"
+    elif overall_score < 0.5:
+        print(f"\n⚠️  POOR PERFORMANCE (Score: {overall_score:.3f})")
+        print("   Model shows significant issues with genomic data generation")
+        results["status"] = "POOR"
+    elif overall_score < 0.8:
+        print(f"\n🟡 MODERATE PERFORMANCE (Score: {overall_score:.3f})")
+        print("   Model shows some issues but captures basic genomic properties")
+        results["status"] = "MODERATE"
+    else:
+        print(f"\n🟢 GOOD PERFORMANCE (Score: {overall_score:.3f})")
+        print("   Model successfully captures genomic properties and structure")
+        results["status"] = "GOOD"
+
+    # Save comprehensive results
+    results_file = output_dir / "comprehensive_evaluation.json"
+    import json
+
+    with open(results_file, "w") as f:
+        # Convert numpy types to Python types for JSON serialization
+        json_results = {}
+        for key, value in results.items():
+            if isinstance(value, dict):
+                json_results[key] = {
+                    k: float(v) if isinstance(v, (np.floating, np.integer)) else v
+                    for k, v in value.items()
+                }
+            elif isinstance(value, (np.floating, np.integer)):
+                json_results[key] = float(value)
+            else:
+                json_results[key] = value
+        json.dump(json_results, f, indent=2)
+
+    print(f"\n📄 Comprehensive results saved to: {results_file}")
+    print("=" * 80)
+
+    return results
