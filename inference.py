@@ -106,12 +106,15 @@ def main():
             real_samples.append(batch)
     real_samples = torch.cat(real_samples, dim=0)
 
-    # Select samples matching the number to be generated
-    logger.info(f"Selecting {args.num_samples} real samples from test dataset...")
-    if args.num_samples > len(real_samples):
+    # Select samples to use
+    if args.num_samples is None:
         num_samples_to_use = len(real_samples)
+        logger.info(f"Using all {num_samples_to_use} real samples from test dataset...")
     else:
         num_samples_to_use = args.num_samples
+        if num_samples_to_use > len(real_samples):
+            num_samples_to_use = len(real_samples)
+        logger.info(f"Selecting {num_samples_to_use} real samples from test dataset...")
 
     # Select samples and ensure shape [num_samples, 1, L]
     real_samples = real_samples[:num_samples_to_use].unsqueeze(1)
