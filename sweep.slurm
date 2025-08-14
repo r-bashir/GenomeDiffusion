@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J GenDiff-HPO           # Job name
+#SBATCH -J HPO                   # Job name
 #SBATCH -t 24:00:00              # Time limit (HH:MM:SS)
 #SBATCH -n 1                     # Number of tasks
 #SBATCH --cpus-per-task=8        # Allocate CPU cores
@@ -8,17 +8,14 @@
 #SBATCH -e slurm_logs/%x-%j.err  # Standard error log
 
 # W&B Sweep SLURM Script for GenomeDiffusion HPO
-# Usage: sbatch sweep.slurm <sweep_id> [count]
+# Usage: sbatch sweep.slurm [config_file] [count]
 
-# Check if sweep ID is provided
-if [ -z "$1" ]; then
-    echo "Error: Sweep ID required"
-    echo "Usage: sbatch sweep.slurm <sweep_id> [count]"
-    exit 1
-fi
-
-SWEEP_ID=$1
+# Set default config file if not provided
+CONFIG_FILE=${1:-"sweep_small.yaml"}
 COUNT=${2:-10}  # Default to 10 runs if not specified
+
+echo "Using sweep config: $CONFIG_FILE"
+echo "Agent run count: $COUNT"
 
 # Create logs directory if it doesn't exist
 mkdir -p slurm_logs
@@ -40,12 +37,16 @@ SECONDS=0  # Start timer
 
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 echo "Using GPU: $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)"
-echo "Sweep ID: $SWEEP_ID"
 echo "Run Count: $COUNT"
+
 # Set W&B settings for cluster
 export WANDB_MODE=online
 export WANDB_CACHE_DIR=$PROJECT_ROOT/.wandb_cache
 export WANDB_CONFIG_DIR=$PROJECT_ROOT/.wandb_config
+
+# Create wandb directories
+mkdir -p $WANDB_CACHE_DIR
+mkdir -p $WANDB_CONFIG_DIR
 
 # Run the container with CUDA environment variables
 apptainer exec --nv \
@@ -54,14 +55,27 @@ apptainer exec --nv \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
     --env CUDA_LAUNCH_BLOCKING=$CUDA_LAUNCH_BLOCKING \
-    $CONTAINER bash -c "cd /workspace && python run_sweep.py --agent $SWEEP_ID --count $COUNT 2>&1 | tee sweep_${SLURM_JOB_ID}.log" || {
+    $CONTAINER bash -c "cd /workspace && \
+    echo 'Initializing sweep with config $CONFIG_FILE...' && \
+    python run_sweep.py --init --config $CONFIG_FILE --project HPO && \
+    echo 'Parsing sweep ID from current_sweep.yaml...' && \
+    SWEEP_ID=\$(python - <<'PY' \
+    import yaml \
+    with open('current_sweep.yaml') as f: \
+        info = yaml.safe_load(f) or {} \
+    print(info.get('sweep_id','')) \
+    PY\
+    ) && \
+    if [[ -z \"\$SWEEP_ID\" ]]; then echo '[ERROR] Could not read sweep_id from current_sweep.yaml' >&2; exit 2; fi && \
+    echo \"Sweep ID: \$SWEEP_ID\" && \
+    echo 'Starting sweep agent...' && \
+    python run_sweep.py --agent \"\$SWEEP_ID\" --count $COUNT 2>&1 | tee sweep_${SLURM_JOB_ID}.log && \
+    echo 'Sweep agent completed. Analyzing best parameters...' && \
+    python run_sweep.py --analyze \"\$SWEEP_ID\" 2>&1 | tee -a sweep_${SLURM_JOB_ID}.log \
+    " || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
-
-# Create wandb directories
-mkdir -p $WANDB_CACHE_DIR
-mkdir -p $WANDB_CONFIG_DIR
 
 # Log End Time
 END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
