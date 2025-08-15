@@ -12,13 +12,16 @@ This script provides utilities to:
 
 Usage:
     # Initialize a new sweep
-    python run_sweep.py --init
+    python run_sweep.py --init --config <config_path> --project <project_name>
 
     # Run sweep agent (after initialization)
-    python run_sweep.py --agent <sweep_id>
+    python run_sweep.py --agent <sweep_id> --count <count>
 
     # Monitor sweep progress
-    python run_sweep.py --monitor <sweep_id>
+    python run_sweep.py --monitor <sweep_id> --project <project_name>
+
+    # Analyze sweep results
+    python run_sweep.py --analyze <sweep_id> --project <project_name>
 """
 
 import argparse

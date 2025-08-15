@@ -35,4 +35,4 @@ parameters:
     value: 20
 
 # Small number of runs for testing
-count: 8
+# Note: count is specified via --count flag when running the agent
