@@ -59,13 +59,7 @@ apptainer exec --nv \
     echo 'Initializing sweep with config $CONFIG_FILE...' && \
     python run_sweep.py --init --config $CONFIG_FILE --project HPO && \
     echo 'Parsing sweep ID from current_sweep.yaml...' && \
-    SWEEP_ID=\$(python - <<'PY' \
-    import yaml \
-    with open('current_sweep.yaml') as f: \
-        info = yaml.safe_load(f) or {} \
-    print(info.get('sweep_id','')) \
-    PY\
-    ) && \
+    SWEEP_ID=\$(cat current_sweep.yaml | python -c 'import sys, yaml; print(yaml.safe_load(sys.stdin).get("sweep_id", ""))') && \
     if [[ -z \"\$SWEEP_ID\" ]]; then echo '[ERROR] Could not read sweep_id from current_sweep.yaml' >&2; exit 2; fi && \
     echo \"Sweep ID: \$SWEEP_ID\" && \
     echo 'Starting sweep agent...' && \
