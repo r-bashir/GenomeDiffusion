@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH -J HPO                   # Job name
-#SBATCH -t 24:00:00              # Time limit (HH:MM:SS)
+#SBATCH -t 01:00:00              # Time limit (HH:MM:SS)
 #SBATCH -n 1                     # Number of tasks
 #SBATCH --cpus-per-task=8        # Allocate CPU cores
 #SBATCH --gpus=1                 # Request GPU
+#SBATCH --reservation=devel      # Use development reservation
 #SBATCH -o slurm_logs/%x-%j.out  # Standard output log
 #SBATCH -e slurm_logs/%x-%j.err  # Standard error log
 #SBATCH --mail-type=ALL
