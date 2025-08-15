@@ -19,14 +19,10 @@ early_terminate:
 parameters:
   # === OPTIMIZER ===
   learning_rate:
-    distribution: log_uniform
-    min: 1e-4
-    max: 1e-2
+    values: [1e-4, 3e-4, 5e-4, 1e-3, 3e-3, 5e-3, 1e-2]
   
   weight_decay:
-    distribution: log_uniform
-    min: 1e-5
-    max: 1e-3
+    values: [1e-5, 1e-4, 1e-3]
   
   # === SCHEDULER ===
   scheduler_type:
