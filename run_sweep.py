@@ -345,10 +345,12 @@ def analyze_sweep_results(sweep_id: str, project: str):
             # Extract key parameters (try both simple and nested config keys)
             config = run.config
             lr = config.get("learning_rate", config.get("optimizer.lr", "N/A"))
-            emb = config.get("embedding_dim", config.get("unet.embedding_dim", "N/A"))
+            wd = config.get("weight_decay", config.get("optimizer.weight_decay", "N/A"))
+            sched = config.get("scheduler_type", config.get("scheduler.type", "N/A"))
             bs = config.get("batch_size", config.get("data.batch_size", "N/A"))
+            epochs = config.get("epochs", config.get("training.epochs", "N/A"))
 
-            key_params = f"lr={lr}, emb={emb}, bs={bs}"
+            key_params = f"lr={lr}, wd={wd}, sched={sched}, bs={bs}, epochs={epochs}"
 
             print(f"{i+1:<5} {run.name:<20} {val_loss:<12.6f} {key_params}")
 
@@ -367,17 +369,42 @@ def analyze_sweep_results(sweep_id: str, project: str):
             print(f"   Best Learning Rate: {best_lr:.1e}")
             print(f"   LR Range: {min(lr_values):.1e} - {max(lr_values):.1e}")
 
-        # Model size analysis
-        emb_dims = []
+        # Weight decay analysis
+        wd_values = []
         for r in valid_runs:
-            emb = r.config.get("embedding_dim") or r.config.get("unet.embedding_dim")
-            if emb:
-                emb_dims.append(int(emb))
+            wd = r.config.get("weight_decay") or r.config.get("optimizer.weight_decay")
+            if wd:
+                wd_values.append(float(wd))
 
-        if emb_dims:
-            best_emb = emb_dims[0]  # First in sorted list
-            print(f"   Best Embedding Dim: {best_emb}")
-            print(f"   Embedding Range: {min(emb_dims)} - {max(emb_dims)}")
+        if wd_values:
+            best_wd = wd_values[0]  # First in sorted list
+            print(f"   Best Weight Decay: {best_wd:.1e}")
+            print(f"   WD Range: {min(wd_values):.1e} - {max(wd_values):.1e}")
+
+        # Scheduler analysis
+        sched_types = []
+        for r in valid_runs:
+            sched = r.config.get("scheduler_type") or r.config.get("scheduler.type")
+            if sched:
+                sched_types.append(sched)
+
+        if sched_types:
+            best_sched = sched_types[0]  # First in sorted list
+            print(f"   Best Scheduler: {best_sched}")
+            unique_scheds = list(set(sched_types))
+            print(f"   Schedulers tested: {unique_scheds}")
+
+        # Batch size analysis
+        batch_sizes = []
+        for r in valid_runs:
+            bs = r.config.get("batch_size") or r.config.get("data.batch_size")
+            if bs:
+                batch_sizes.append(int(bs))
+
+        if batch_sizes:
+            best_bs = batch_sizes[0]  # First in sorted list
+            print(f"   Best Batch Size: {best_bs}")
+            print(f"   Batch Size Range: {min(batch_sizes)} - {max(batch_sizes)}")
 
         # Recommendations
         print(f"\n💡 Recommendations:")
@@ -387,11 +414,17 @@ def analyze_sweep_results(sweep_id: str, project: str):
         best_lr = best_config.get("learning_rate") or best_config.get(
             "optimizer.lr", "N/A"
         )
-        best_emb = best_config.get("embedding_dim") or best_config.get(
-            "unet.embedding_dim", "N/A"
+        best_wd = best_config.get("weight_decay") or best_config.get(
+            "optimizer.weight_decay", "N/A"
+        )
+        best_sched = best_config.get("scheduler_type") or best_config.get(
+            "scheduler.type", "N/A"
         )
         best_bs = best_config.get("batch_size") or best_config.get(
             "data.batch_size", "N/A"
+        )
+        best_epochs = best_config.get("epochs") or best_config.get(
+            "training.epochs", "N/A"
         )
 
         print(
@@ -399,12 +432,16 @@ def analyze_sweep_results(sweep_id: str, project: str):
             if best_lr != "N/A"
             else "   1. Learning rate: N/A"
         )
-        print(f"   2. Use embedding dimension of {best_emb}")
-        print(f"   3. Use batch size of {best_bs}")
-
-        scheduler_type = best_config.get("scheduler_type") or best_config.get(
-            "scheduler.type", "N/A"
+        print(
+            f"   2. Use weight decay around {float(best_wd):.1e}"
+            if best_wd != "N/A"
+            else "   2. Weight decay: N/A"
         )
+        print(f"   3. Use scheduler type: {best_sched}")
+        print(f"   4. Use batch size of {best_bs}")
+        print(f"   5. Use epochs: {best_epochs}")
+
+        scheduler_type = best_sched
         print(f"   4. Use {scheduler_type} scheduler")
 
         # Save analysis to file
