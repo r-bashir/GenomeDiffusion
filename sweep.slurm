@@ -6,6 +6,8 @@
 #SBATCH --gpus=1                 # Request GPU
 #SBATCH -o slurm_logs/%x-%j.out  # Standard output log
 #SBATCH -e slurm_logs/%x-%j.err  # Standard error log
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
 # W&B Sweep SLURM Script for GenomeDiffusion HPO
 # Usage: sbatch sweep.slurm [config_file] [count]

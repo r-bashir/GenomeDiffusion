@@ -7,6 +7,8 @@
 #SBATCH --reservation=devel      # Use development reservation
 #SBATCH -o slurm_logs/%x-%j.out  # Standard output log
 #SBATCH -e slurm_logs/%x-%j.err  # Standard error log
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
 # Create logs directory if it doesn't exist
 mkdir -p slurm_logs
