@@ -32,7 +32,7 @@ import argparse
 import logging
 from pathlib import Path
 from pprint import pprint
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -107,7 +107,49 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     # 4. Handle augmentation
     if data_config.get("augment", False):
         logger.info("Applying data augmentation")
-        data = augment_data(data)
+
+        # Get pattern configuration for augmentation
+        augment_pattern = data_config.get("augment_pattern", [])
+
+        if not augment_pattern:
+            # Default augmentation pattern if none specified
+            augment_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
+            logger.info("Using default augmentation pattern: 100 SNPs")
+
+        # Convert to list of tuples
+        augment_pattern = [
+            (int(start), int(end), float(value))
+            for start, end, value in augment_pattern
+        ]
+
+        logger.info(f"Augmentation pattern: {augment_pattern}")
+
+        data = augment_data(data, augment_pattern)
+        logger.info(f"Uniques values: {np.unique(data)}")
+
+    # 4b. Handle imputation with pattern injection
+    if data_config.get("imputate", False):
+        logger.info("Applying pattern imputation")
+
+        # Get pattern configuration
+        imputate_pattern = data_config.get("pattern", [])
+        injection_interval = data_config.get("injection_interval", 100)
+
+        if not imputate_pattern:
+            # Default pattern if none specified
+            imputate_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
+            logger.info("Using default pattern: 40 SNPs staircase")
+
+        # Convert to list of tuples
+        imputate_pattern = [
+            (int(start), int(end), float(value))
+            for start, end, value in imputate_pattern
+        ]
+
+        logger.info(f"Pattern: {imputate_pattern}")
+        logger.info(f"Injection interval: {injection_interval}")
+
+        data = imputate_data(data, imputate_pattern, injection_interval)
         logger.info(f"Uniques values: {np.unique(data)}")
 
     # 5. Handle scaling (always last)
@@ -212,34 +254,68 @@ def scale_data(
 
 
 # Augment data
-def augment_data(data: np.ndarray) -> np.ndarray:
+def augment_data(data: np.ndarray, pattern: List[Tuple[int, int, float]]) -> np.ndarray:
     """Apply test patterns to the data for debugging.
 
-    Applies the following fixed patterns to the data:
-    - First 25 markers: 0.0
-    - Next 50 markers: 0.5
-    - Next 25 markers: 1.0
+    Applies a given pattern only at the beginning of the sequence.
 
     Args:
         data: Input data array of shape (n_samples, n_markers)
+        pattern: List of tuples (start_offset, end_offset, value) defining the pattern
+            Example: [(0, 25, 0.0), (25, 75, 0.5), (75, 100, 1.0)]
 
     Returns:
         Copy of input data with test patterns applied
     """
     data = data.copy()
-    n_markers = data.shape[1]
+    n_samples, n_markers = data.shape
 
-    # Define pattern ranges [start, end, value]
-    patterns = [
-        (0, 25, 0.0),  # First 25 markers set to 0.0
-        (25, 75, 0.5),  # Next 50 markers set to 0.5
-        (75, 100, 1.0),  # Next 25 markers set to 1.0
-    ]
+    # Get pattern length from the last end_offset
+    pattern_length = max(end for _, end, _ in pattern)
 
-    # Apply each pattern
-    for start, end, value in patterns:
-        if start < n_markers:  # Only apply if start is within bounds
-            end = min(end, n_markers)  # Don't exceed array bounds
+    # Apply pattern only at the beginning (position 0)
+    if pattern_length <= n_markers:
+        for start_offset, end_offset, value in pattern:
+            data[:, start_offset:end_offset] = value
+
+    return data
+
+
+# Imputate data
+def imputate_data(
+    data: np.ndarray, pattern: List[Tuple[int, int, float]], injection_interval: int
+) -> np.ndarray:
+    """Inject a pattern at regular intervals in the sequence.
+
+    Args:
+        data: Input data array of shape (n_samples, n_markers)
+        pattern: List of tuples (start_offset, end_offset, value) defining the pattern
+            Example: [(0, 10, 0.0), (10, 30, 0.5), (30, 40, 1.0)]
+        injection_interval: Number indicating interval between pattern repetitions
+            Example: 100 means inject at positions 0, 100, 200, 300, etc.
+
+    Returns:
+        Copy of input data with patterns injected
+    """
+    data = data.copy()
+    n_samples, n_markers = data.shape
+
+    # Get pattern length from the last end_offset
+    pattern_length = max(end for _, end, _ in pattern)
+
+    # Generate injection points starting from 0 with given interval
+    injection_points = list(range(0, n_markers, injection_interval))
+
+    # Inject pattern at each position
+    for pos in injection_points:
+        # Skip if we don't have enough space for the full pattern
+        if pos + pattern_length > n_markers:
+            break
+
+        # Apply each part of the pattern
+        for start_offset, end_offset, value in pattern:
+            start = pos + start_offset
+            end = pos + end_offset
             data[:, start:end] = value
 
     return data

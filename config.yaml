@@ -1,5 +1,5 @@
 # Project name
-project_name: "TestDiff"
+project_name: "NewDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -19,9 +19,22 @@ data:
   seq_length: 100              # Total length is 160858
   missing_value: 9             # None, to not handle missing values
   normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
+
+  augment: true                # Augment data with staircase structure
+  augment_pattern:
+    - [0, 25, 0.0]
+    - [25, 75, 0.5]
+    - [75, 100, 1.0]
+
+  imputate: false              # Impute data with staircase structure
+  imputate_pattern:
+    - [0, 15, 0.0]
+    - [15, 35, 0.5]
+    - [35, 50, 1.0]
+  injection_interval: 100
+
   scaling: true                # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
-  augment: true                # Mock data with staircase structure
 
 # Time Sampler
 time_sampler:
