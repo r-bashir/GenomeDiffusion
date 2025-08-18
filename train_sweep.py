@@ -294,11 +294,16 @@ def main():
 
     # Create consistent sweep output structure: ./sweeps/<project_name>/<run_number>/
     run_name = wandb.run.name or wandb.run.id
-    project_name = config.get("project_name", "GenomeDiffusion")
+    # Use the project name from the sweep (passed via wandb.init) for consistency
+    sweep_project_name = (
+        wandb.run.project
+        if wandb.run
+        else config.get("project_name", "GenomeDiffusion")
+    )
 
     # Use PROJECT_ROOT for consistent paths
     project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
-    sweep_output_path = f"{project_root}/sweeps/{project_name}/{run_name}"
+    sweep_output_path = f"{project_root}/sweeps/{sweep_project_name}/{run_name}"
 
     # Create directory structure
     os.makedirs(sweep_output_path, exist_ok=True)
@@ -342,8 +347,10 @@ def main():
         return
 
     # Setup logger (W&B) - save to sweep output directory
+    # Use the project name from the sweep (passed via wandb.init)
+    sweep_project = wandb.run.project if wandb.run else project_name
     logger = WandbLogger(
-        project=f"{project_name}-HPO",
+        project=sweep_project,
         name=run_name,
         save_dir=sweep_output_path,
         log_model=False,  # Don't log model artifacts to save space
