@@ -36,18 +36,25 @@ import yaml
 import wandb
 
 
-def initialize_sweep(config_path: str, project: str) -> str:
+def initialize_sweep(config_path: str, base_config_path: str = "config.yaml") -> str:
     """Initialize a new W&B sweep.
 
     Args:
         config_path: Path to sweep configuration file
-        project: W&B project name
+        base_config_path: Path to base configuration file (for project name)
 
     Returns:
         Sweep ID
     """
+    # Load base config to get project name
+    from src.utils import load_config
+
+    base_config = load_config(base_config_path)
+    project = base_config.get("project_name", "GenDiffusion")
+
     print(f"🚀 Initializing W&B Sweep...")
-    print(f"Config: {config_path}")
+    print(f"Sweep Config: {config_path}")
+    print(f"Base Config: {base_config_path}")
     print(f"Project: {project}")
 
     # Check if config file exists
@@ -175,13 +182,22 @@ def run_sweep_agent(sweep_id: str, count: int = None):
         sys.exit(1)
 
 
-def monitor_sweep(sweep_id: str, project: str):
+def monitor_sweep(
+    sweep_id: str, project: str = None, base_config_path: str = "config.yaml"
+):
     """Monitor sweep progress.
 
     Args:
         sweep_id: W&B sweep ID (can be just ID or full path)
-        project: W&B project name (used as fallback)
+        project: W&B project name (used as fallback, if None loads from config)
+        base_config_path: Path to base configuration file (for project name)
     """
+    # Load project name from config if not provided
+    if project is None:
+        from src.utils import load_config
+
+        base_config = load_config(base_config_path)
+        project = base_config.get("project_name", "GenDiffusion")
     print(f"📊 Monitoring Sweep Progress...")
 
     # Resolve sweep ID to full path
@@ -277,13 +293,22 @@ def monitor_sweep(sweep_id: str, project: str):
         print(f"❌ Failed to monitor sweep: {e}")
 
 
-def analyze_sweep_results(sweep_id: str, project: str):
+def analyze_sweep_results(
+    sweep_id: str, project: str = None, base_config_path: str = "config.yaml"
+):
     """Analyze sweep results and provide recommendations.
 
     Args:
         sweep_id: W&B sweep ID (can be just ID or full path)
-        project: W&B project name (used as fallback)
+        project: W&B project name (used as fallback, if None loads from config)
+        base_config_path: Path to base configuration file (for project name)
     """
+    # Load project name from config if not provided
+    if project is None:
+        from src.utils import load_config
+
+        base_config = load_config(base_config_path)
+        project = base_config.get("project_name", "GenDiffusion")
     print(f"🔍 Analyzing Sweep Results...")
 
     # Resolve sweep ID to full path
@@ -476,7 +501,7 @@ def parse_args():
     parser.add_argument(
         "--config",
         type=str,
-        default="sweep_config.yaml",
+        default="sweep.yaml",
         help="Path to sweep configuration file",
     )
     parser.add_argument(
@@ -485,7 +510,18 @@ def parse_args():
         default=None,
         help="Number of runs for this agent (overrides config)",
     )
-    parser.add_argument("--project", type=str, default="HPO", help="W&B project name")
+    parser.add_argument(
+        "--project",
+        type=str,
+        default=None,
+        help="W&B project name (if not provided, loads from config.yaml)",
+    )
+    parser.add_argument(
+        "--base-config",
+        type=str,
+        default="config.yaml",
+        help="Path to base configuration file (for project name)",
+    )
 
     return parser.parse_args()
 
@@ -501,7 +537,9 @@ def main():
     try:
         if args.init:
             # Initialize new sweep
-            sweep_id = initialize_sweep(args.config, args.project)
+            sweep_id = initialize_sweep(
+                args.config, getattr(args, "base_config", "config.yaml")
+            )
             print(f"\n🎯 Next steps:")
             print(f"   1. Run agent: python run_sweep.py --agent {sweep_id}")
             print(f"   2. Monitor: python run_sweep.py --monitor {sweep_id}")
@@ -512,11 +550,15 @@ def main():
 
         elif args.monitor:
             # Monitor sweep
-            monitor_sweep(args.monitor, args.project)
+            monitor_sweep(
+                args.monitor, args.project, getattr(args, "base_config", "config.yaml")
+            )
 
         elif args.analyze:
             # Analyze results
-            analyze_sweep_results(args.analyze, args.project)
+            analyze_sweep_results(
+                args.analyze, args.project, getattr(args, "base_config", "config.yaml")
+            )
 
     except KeyboardInterrupt:
         print("\n⏹️  Operation cancelled by user")

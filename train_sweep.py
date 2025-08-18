@@ -31,6 +31,50 @@ from src import DiffusionModel
 from src.utils import load_config, set_seed
 
 
+def setup_logger(config: Dict) -> WandbLogger:
+    """Setup W&B logger for sweep runs.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        WandbLogger instance
+    """
+    # Get base directory for logs
+    base_dir = pathlib.Path(config.get("output_path", "outputs"))
+    project_name = config.get("project_name", "GenDiffusion")
+    project_logs_dir = base_dir / "sweeps"
+    project_logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Common logger parameters
+    logger_params = {"name": "", "save_dir": project_logs_dir, "version": None}
+
+    try:
+        # Try loading API key from environment variable first
+        import wandb
+
+        api_key = os.environ.get("WANDB_API_KEY")
+        if api_key:
+            wandb.login(key=api_key)
+        elif not wandb.api.api_key:
+            print("Wandb API key not found. Attempting to log in...")
+            wandb.login()
+
+        # Create WandbLogger with consistent parameters (same pattern as train.py)
+        wandb_logger = WandbLogger(
+            **logger_params,
+            project=project_name,
+            config=config,
+            log_model=False,  # Don't log model artifacts to save space
+            log_graph=False,  # Don't log model graph to save space
+        )
+        return wandb_logger
+
+    except Exception as e:
+        print(f"Warning: Failed to initialize wandb logger: {str(e)}")
+        raise e
+
+
 def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
     """Update configuration with W&B sweep parameters.
 
@@ -183,9 +227,8 @@ def validate_config(config: Dict) -> Dict:
 def setup_callbacks(config: Dict) -> List:
     """Setup training callbacks optimized for sweeps."""
     callbacks = [
-        # Save only the best checkpoint to save space
+        # Model checkpoint, save only best one
         ModelCheckpoint(
-            dirpath=f"{config['output_path']}/checkpoints",
             filename="best-{epoch}-{val_loss:.4f}",
             monitor="val_loss",
             save_top_k=1,  # Only save best model
@@ -195,7 +238,7 @@ def setup_callbacks(config: Dict) -> List:
         ),
         # Monitor learning rate
         LearningRateMonitor(logging_interval="step"),
-        # Always use early stopping for sweeps to save compute
+        # Always use early stopping for sweeps
         EarlyStopping(
             monitor="val_loss",
             patience=config["training"].get("patience", 15),
@@ -292,29 +335,10 @@ def main():
     # Log the final configuration
     wandb.config.update(config, allow_val_change=True)
 
-    # Create consistent sweep output structure: ./sweeps/<project_name>/<run_number>/
-    run_name = wandb.run.name or wandb.run.id
-    # Use the project name from the sweep (passed via wandb.init) for consistency
-    sweep_project_name = (
-        wandb.run.project
-        if wandb.run
-        else config.get("project_name", "GenomeDiffusion")
-    )
-
-    # Use PROJECT_ROOT for consistent paths
-    project_root = os.environ.get("PROJECT_ROOT", os.getcwd())
-    sweep_output_path = f"{project_root}/sweeps/{sweep_project_name}/{run_name}"
-
-    # Create directory structure
-    os.makedirs(sweep_output_path, exist_ok=True)
-    os.makedirs(f"{sweep_output_path}/checkpoints", exist_ok=True)
-
-    # Update config to use sweep output path
-    config["output_path"] = sweep_output_path
-
     # Print key configuration for debugging
+    run_name = wandb.run.name or wandb.run.id
     print(f"\n=== SWEEP RUN: {run_name} ===")
-    print(f"Output Path: {sweep_output_path}")
+    print(f"Output Path: {config['output_path']}")
     print(f"Learning Rate: {config.get('optimizer', {}).get('lr', 'N/A')}")
     print(f"Scheduler Type: {config.get('scheduler', {}).get('type', 'N/A')}")
     print(f"Batch Size: {config.get('data', {}).get('batch_size', 'N/A')}")
@@ -340,22 +364,13 @@ def main():
                 "model/size_mb": total_params * 4 / (1024 * 1024),  # Assuming float32
             }
         )
-
     except Exception as e:
         print(f"Failed to initialize model: {e}")
         wandb.finish(exit_code=1)
         return
 
-    # Setup logger (W&B) - save to sweep output directory
-    # Use the project name from the sweep (passed via wandb.init)
-    sweep_project = wandb.run.project if wandb.run else project_name
-    logger = WandbLogger(
-        project=sweep_project,
-        name=run_name,
-        save_dir=sweep_output_path,
-        log_model=False,  # Don't log model artifacts to save space
-        log_graph=False,  # Don't log model graph to save space
-    )
+    # Setup logger
+    logger = setup_logger(config)
 
     # Configure W&B for better plotting
     if logger.experiment:
@@ -373,14 +388,14 @@ def main():
     # Setup callbacks
     callbacks = setup_callbacks(config)
 
-    # Initialize trainer with sweep output directory
+    # Initialize trainer (same pattern as train.py)
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
         callbacks=callbacks,
         logger=logger,
-        default_root_dir=sweep_output_path,
+        default_root_dir=config["output_path"],  # Same as train.py
         log_every_n_steps=config["training"].get("log_every_n_steps", 10),
         enable_checkpointing=True,
         enable_progress_bar=False,  # Disable for cleaner sweep logs

@@ -82,15 +82,16 @@ def setup_logger(
         Logger instance (TensorBoardLogger, WandbLogger, or CSVLogger)
     """
     # Get base directory for logs
-    base_dir = config.get("output_path", "output")
-    logs_dir = os.path.join(base_dir, "lightning_logs")
-    os.makedirs(logs_dir, exist_ok=True)
+    base_dir = pathlib.Path(config.get("output_path", "outputs"))
+    project_name = config.get("project_name", "GenDiffusion")
+    project_logs_dir = base_dir / "lightning_logs"
+    project_logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Get version from checkpoint if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
 
     # Common logger parameters
-    logger_params = {"name": "", "save_dir": logs_dir, "version": version}
+    logger_params = {"name": "", "save_dir": project_logs_dir, "version": version}
 
     # Select logger type from config
     logger_type = config["training"]["logger"]
@@ -110,7 +111,7 @@ def setup_logger(
             # Create WandbLogger with consistent parameters
             wandb_logger = WandbLogger(
                 **logger_params,
-                project=config.get("project_name", "GenomeDiffusion"),
+                project=project_name,
                 config=config,
                 resume="allow" if resume_from_checkpoint else None,
             )
@@ -155,7 +156,7 @@ def setup_callbacks(config: Dict) -> List:
         LearningRateMonitor(logging_interval="step"),
     ]
 
-    # Add early stopping if enabled in config
+    # Early stopping if enabled in config
     if config["training"].get("early_stopping", False):
         callbacks.append(
             EarlyStopping(
