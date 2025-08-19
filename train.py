@@ -24,7 +24,7 @@ from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
 
 from src import DiffusionModel
-from src.utils import load_config, set_seed
+from src.utils import load_config, set_seed, setup_logging
 
 
 def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]:
@@ -177,6 +177,10 @@ def main():
     # Parse arguments
     args = parse_args()
 
+    # Setup logging
+    logger = setup_logging(name="train")
+    logger.info("Starting `train.py` script.")
+
     # Set a seed for reproducibility
     set_seed(42)
 
@@ -188,59 +192,60 @@ def main():
     config = load_config(args.config)
 
     # Print key paths for verification
-    print(f"\nUsing PROJECT_ROOT: {os.environ.get('PROJECT_ROOT')}")
-    print(f"Input path: {config['data']['input_path']}")
-    print(f"Output path: {config['output_path']}\n")
+    logger.info(f"Using PROJECT_ROOT: {os.environ.get('PROJECT_ROOT')}")
+    logger.info(f"Input path: {config['data']['input_path']}")
+    logger.info(f"Output path: {config['output_path']}")
 
     # Ensure output directory exists
     os.makedirs(config["output_path"], exist_ok=True)
 
     # Initialize model
     try:
-        print("Initializing model...")
+        logger.info("Initializing model...")
         model = DiffusionModel(config)
-        print(f"Model initialized successfully")
+        logger.info("Model initialized successfully")
     except Exception as e:
         raise RuntimeError(f"Failed to initialize model: {e}")
 
     # Set up loggers
-    logger = setup_logger(config, args.resume)
+    train_logger = setup_logger(config, args.resume)
 
     # Set up callbacks
     callbacks = setup_callbacks(config)
 
     # Initialize trainer
-    print("\nInitializing trainer...")
+    logger.info("Initializing trainer...")
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
         callbacks=callbacks,
-        logger=logger,
+        logger=train_logger,
         default_root_dir=config["output_path"],
         log_every_n_steps=config["training"].get("log_every_n_steps", 50),
         enable_checkpointing=True,  # overridden by checkpoint callback
         enable_progress_bar=True,
         enable_model_summary=True,
     )
+    logger.info("Trainer initialized successfully...\n")
 
     # Train model
     try:
-        print("Training is started...")
+        logger.info("Training is started...\n")
         trainer.fit(
             model,
             ckpt_path=args.resume,
         )
-        print("Training is finished...")
+        logger.info("Training is finished...\n")
 
         # Best checkpoint path
         best_checkpoint_path = trainer.checkpoint_callback.best_model_path
 
-        print("\nTo run inference locally, execute:")
-        print(f"python inference.py --checkpoint {best_checkpoint_path}")
+        print("To run inference locally, execute:")
+        print(f"$ python inference.py --checkpoint {best_checkpoint_path}")
 
         print("\nTo run inference on cluster, execute:")
-        print(f"./inference.sh {best_checkpoint_path}")
+        print(f"$ ./inference.sh {best_checkpoint_path}")
 
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")

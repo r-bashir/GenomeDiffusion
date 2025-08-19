@@ -56,8 +56,9 @@ class NetworkBase(pl.LightningModule):
             if "data" not in self.hparams or "input_path" not in self.hparams["data"]:
                 raise ValueError("input_path must be specified in hparams['data']")
             seq_length = self.hparams["data"].get("seq_length", None)
-            print(f"Creating dataset with sequence length: {seq_length}")
-            print(f"Loading data from: {self.hparams['data']['input_path']}")
+
+            # print(f"Creating dataset with sequence length: {seq_length}")
+            # print(f"Loading data from: {self.hparams['data']['input_path']}")
 
             # Create and split dataset
             from src import SNPDataset
