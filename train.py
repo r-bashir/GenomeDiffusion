@@ -27,26 +27,6 @@ from src import DiffusionModel
 from src.utils import load_config, set_seed
 
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Train a diffusion model for SNP data generation"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        required=True,
-        help="Path to configuration file",
-    )
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to checkpoint file to resume training from",
-    )
-    return parser.parse_args()
-
-
 def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]:
     """Extract version number from checkpoint path if resuming.
 
@@ -83,9 +63,11 @@ def setup_logger(
     """
     # Get base directory for logs
     base_dir = pathlib.Path(config.get("output_path", "outputs"))
-    project_name = config.get("project_name", "GenDiffusion")
     project_logs_dir = base_dir / "lightning_logs"
     project_logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get project name
+    project_name = config.get("project_name", "GenDiff")
 
     # Get version from checkpoint if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
@@ -169,6 +151,26 @@ def setup_callbacks(config: Dict) -> List:
     return callbacks
 
 
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Train a diffusion model for SNP data generation"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        required=True,
+        help="Path to configuration file",
+    )
+    parser.add_argument(
+        "--resume",
+        type=str,
+        default=None,
+        help="Path to checkpoint file to resume training from",
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main training function."""
 
@@ -181,13 +183,8 @@ def main():
     # Only set PROJECT_ROOT if it's not already defined in the environment
     if "PROJECT_ROOT" not in os.environ:
         os.environ["PROJECT_ROOT"] = os.getcwd()
-        print(f"Setting PROJECT_ROOT to current directory: {os.getcwd()}")
-    else:
-        print(
-            f"Using existing PROJECT_ROOT from environment: {os.environ['PROJECT_ROOT']}"
-        )
 
-    # Use the utility function to load and process the config
+    # Load configuration
     config = load_config(args.config)
 
     # Print key paths for verification
@@ -229,20 +226,21 @@ def main():
 
     # Train model
     try:
-        print("Starting training...")
+        print("Training is started...")
         trainer.fit(
             model,
             ckpt_path=args.resume,
         )
-        print("Training completed successfully")
+        print("Training is finished...")
+
+        # Best checkpoint path
+        best_checkpoint_path = trainer.checkpoint_callback.best_model_path
 
         print("\nTo run inference locally, execute:")
-        print(
-            f"python inference.py --checkpoint {trainer.checkpoint_callback.best_model_path}"
-        )
+        print(f"python inference.py --checkpoint {best_checkpoint_path}")
 
         print("\nTo run inference on cluster, execute:")
-        print(f"./inference.sh {trainer.checkpoint_callback.best_model_path}")
+        print(f"./inference.sh {best_checkpoint_path}")
 
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")
