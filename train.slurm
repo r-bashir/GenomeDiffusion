@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH -J GenDiff               # Job name
-#SBATCH -t 01:00:00              # Time limit (HH:MM:SS)
-#SBATCH -n 1                     # Number of tasks
-#SBATCH --cpus-per-task=8        # Allocate CPU cores
+#SBATCH -t 08:00:00              # Time limit (HH:MM:SS)
+#SBATCH --ntasks=1               # Number of tasks
 #SBATCH --gpus=1                 # Request GPU
+#SBATCH --cpus-per-task=16       # 1 GPU –> Allocate 16 CPU tasks
 #SBATCH --reservation=devel      # Use development reservation
 #SBATCH -o slurm_logs/%x-%j.out  # Standard output log
 #SBATCH -e slurm_logs/%x-%j.err  # Standard error log
