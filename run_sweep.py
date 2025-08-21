@@ -31,9 +31,8 @@ import sys
 import time
 from pathlib import Path
 
-import yaml
-
 import wandb
+import yaml
 
 
 def initialize_sweep(config_path: str, base_config_path: str = "config.yaml") -> str:
@@ -357,7 +356,15 @@ def analyze_sweep_results(
                 print(list(completed_runs[0].summary.keys()))
             return
 
-        valid_runs.sort(key=lambda x: x.summary[val_loss_key])
+        # Sort by val_loss, handling mixed types
+        def safe_sort_key(run):
+            val = run.summary[val_loss_key]
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return float("inf")  # Put invalid values at the end
+
+        valid_runs.sort(key=safe_sort_key)
 
         # Top 5 runs
         print(f"\n🏆 Top 5 Runs:")
