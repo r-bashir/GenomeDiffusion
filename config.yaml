@@ -1,5 +1,5 @@
 # Project name
-project_name: "RealDiff"
+project_name: "MixDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -11,12 +11,12 @@ data:
   input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
 
   # Data Loading
-  batch_size: 32               # Batch size for DataLoader class
+  batch_size: 16               # Batch size for DataLoader class
   num_workers: 4               # Number of workers for DataLoader class
   datasplit: [1850, 150, 67]   # Data split, we can set 0 for test dataset
 
   # Data Preprocessing
-  seq_length: 100              # Total length is 160858
+  seq_length: 1000             # Total length is 160858
   missing_value: 9             # None, to not handle missing values
   normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
 
@@ -26,12 +26,12 @@ data:
     - [25, 75, 0.5]
     - [75, 100, 1.0]
 
-  imputate: false              # Impute data with staircase structure
-  imputate_pattern:
-    - [0, 15, 0.0]
-    - [15, 35, 0.5]
-    - [35, 50, 1.0]
-  injection_interval: 100
+  mixing: true                 # Mix data with staircase structure
+  mixing_pattern:
+    - [0, 3, 0.0]
+    - [3, 7, 0.5]
+    - [7, 10, 1.0]
+  mixing_interval: 10
 
   scaling: true                # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
@@ -77,10 +77,10 @@ training:
 optimizer:
   lr: 0.001                    # Learning rate for AdamW optimizer
   min_lr: 1.0e-06              # Minimum learning rate after warmup
-  weight_decay: 0.0001         # Weight decay (L2 regularization)
+  weight_decay: 0.001         # Weight decay (L2 regularization)
   betas: [0.9, 0.999]          # Beta coefficients for running averages of gradient and its square
   eps: 1.0e-08                 # Term for numerical stability
-  amsgrad: true                # Use AMSGrad variant of AdamW
+  amsgrad: false                # Use AMSGrad variant of AdamW
 
 # LR Scheduler
 scheduler:

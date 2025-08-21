@@ -127,32 +127,31 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
         data = augment_data(data, augment_pattern)
         logger.info(f"Uniques values: {np.unique(data)}")
 
-    # 4b. Handle imputation with pattern injection
-    if data_config.get("imputate", False):
-        logger.info("Applying pattern imputation")
+    # 5. Handle mixing with pattern injection
+    if data_config.get("mixing", False):
+        logger.info("Applying pattern mixing")
 
         # Get pattern configuration
-        imputate_pattern = data_config.get("pattern", [])
-        injection_interval = data_config.get("injection_interval", 100)
+        mixing_pattern = data_config.get("mixing_pattern", [])
+        mixing_interval = data_config.get("mixing_interval", 100)
 
-        if not imputate_pattern:
+        if not mixing_pattern:
             # Default pattern if none specified
-            imputate_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
+            mixing_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
             logger.info("Using default pattern: 40 SNPs staircase")
 
         # Convert to list of tuples
-        imputate_pattern = [
-            (int(start), int(end), float(value))
-            for start, end, value in imputate_pattern
+        mixing_pattern = [
+            (int(start), int(end), float(value)) for start, end, value in mixing_pattern
         ]
 
-        logger.info(f"Pattern: {imputate_pattern}")
-        logger.info(f"Injection interval: {injection_interval}")
+        logger.info(f"Pattern: {mixing_pattern}")
+        logger.info(f"Mixing interval: {mixing_interval}")
 
-        data = imputate_data(data, imputate_pattern, injection_interval)
+        data = mix_data(data, mixing_pattern, mixing_interval)
         logger.info(f"Uniques values: {np.unique(data)}")
 
-    # 5. Handle scaling (always last)
+    # 6. Handle scaling (always last)
     if data_config.get("scaling", False):
         scale_factor = data_config.get("scale_factor")
         logger.info(f"Scaling data by factor {scale_factor}")
@@ -281,21 +280,30 @@ def augment_data(data: np.ndarray, pattern: List[Tuple[int, int, float]]) -> np.
     return data
 
 
-# Imputate data
-def imputate_data(
+# Mix data
+def mix_data(
     data: np.ndarray, pattern: List[Tuple[int, int, float]], injection_interval: int
 ) -> np.ndarray:
-    """Inject a pattern at regular intervals in the sequence.
+    """Inject a pattern, skip interval, inject pattern again, repeat.
+
+    Pattern: inject pattern at current position
+    Skip: skip injection_interval positions
+    Repeat: inject pattern again at new position
 
     Args:
         data: Input data array of shape (n_samples, n_markers)
         pattern: List of tuples (start_offset, end_offset, value) defining the pattern
-            Example: [(0, 10, 0.0), (10, 30, 0.5), (30, 40, 1.0)]
-        injection_interval: Number indicating interval between pattern repetitions
-            Example: 100 means inject at positions 0, 100, 200, 300, etc.
+            Example: [(0, 3, 0.0), (3, 7, 0.5), (7, 10, 1.0)] for 10 SNP pattern
+        injection_interval: Number of positions to skip after each pattern injection
+            Example: 10 means skip 10 positions between pattern injections
 
     Returns:
-        Copy of input data with patterns injected
+        Copy of input data with patterns injected with skipped intervals
+
+    Examples:
+        Pattern=10, Interval=10: pattern at 0-9, skip 10-19, pattern at 20-29, skip 30-39, etc.
+        Pattern=20, Interval=10: pattern at 0-19, skip 20-29, pattern at 30-49, skip 50-59, etc.
+        Pattern=20, Interval=20: pattern at 0-19, skip 20-39, pattern at 40-59, skip 60-79, etc.
     """
     data = data.copy()
     n_samples, n_markers = data.shape
@@ -303,20 +311,27 @@ def imputate_data(
     # Get pattern length from the last end_offset
     pattern_length = max(end for _, end, _ in pattern)
 
-    # Generate injection points starting from 0 with given interval
-    injection_points = list(range(0, n_markers, injection_interval))
+    # Start at position 0
+    current_pos = 0
 
-    # Inject pattern at each position
-    for pos in injection_points:
-        # Skip if we don't have enough space for the full pattern
-        if pos + pattern_length > n_markers:
-            break
+    while current_pos < n_markers:
+        # Apply pattern at current position (if there's space)
+        if current_pos + pattern_length <= n_markers:
+            # Apply the full pattern
+            for start_offset, end_offset, value in pattern:
+                start = current_pos + start_offset
+                end = current_pos + end_offset
+                data[:, start:end] = value
+        else:
+            # Apply partial pattern if we're near the end
+            for start_offset, end_offset, value in pattern:
+                start = current_pos + start_offset
+                end = min(current_pos + end_offset, n_markers)
+                if start < n_markers and end > start:
+                    data[:, start:end] = value
 
-        # Apply each part of the pattern
-        for start_offset, end_offset, value in pattern:
-            start = pos + start_offset
-            end = pos + end_offset
-            data[:, start:end] = value
+        # Move to next position: skip pattern_length + injection_interval
+        current_pos += pattern_length + injection_interval
 
     return data
 

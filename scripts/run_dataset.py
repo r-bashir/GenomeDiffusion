@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -36,6 +37,32 @@ from src.utils import load_config
 
 
 # Print data statistics
+def plot_batch_sample(batch: torch.Tensor, save_path: Path) -> None:
+    """Plot the first sample from a batch of data.
+
+    Args:
+        batch: A batch of data from the dataloader.
+        save_path: Path to save the plot image.
+    """
+    if batch is None or len(batch) == 0:
+        print("Batch is empty, skipping plot.")
+        return
+
+    sample = batch[0].cpu().numpy()
+
+    fig, ax = plt.subplots(figsize=(12, 3))
+
+    ax.plot(sample, "o-", color="blue", alpha=0.7, markersize=3)
+    ax.set_title("First Sample in Batch")
+    ax.set_xlabel("SNP Index")
+    ax.set_ylabel("Genotype Value")
+    ax.grid(True, alpha=0.3)
+
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def print_data_stats(data: Union[np.ndarray, torch.Tensor], title: str = "") -> None:
     """Print statistics about the data.
 
@@ -250,9 +277,11 @@ def main() -> int:
 
         if len(test_loader) > 0:
             batch = next(iter(test_loader))
-            logger.info(f"Batch length: {len(batch)}")
-            logger.info(f"First example shape: {batch[0].shape}")
+            logger.info(f"Batch shape: {batch.shape}, and dim: {batch.dim()}")
             logger.debug(f"First example values: {batch[0][:10]}")
+
+        # Plot one example from the batch
+        plot_batch_sample(batch, PROJECT_ROOT / "batch_sample.png")
 
     except Exception as e:
         logger.error(f"Error during dataset testing: {e}")

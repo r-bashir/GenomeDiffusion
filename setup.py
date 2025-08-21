@@ -16,6 +16,7 @@ setup(
         "pytorch-lightning>=1.5.0",
         "pyyaml>=6.0",
         "scipy>=1.7.0",
+        "matplotlib>=3.4.0",
     ],
     extras_require={
         "test": [
