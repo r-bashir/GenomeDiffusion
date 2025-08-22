@@ -27,25 +27,41 @@ from src import DiffusionModel
 from src.utils import load_config, set_seed, setup_logging
 
 
-def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[int]:
-    """Extract version number from checkpoint path if resuming.
+def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[str]:
+    """Extract version string from checkpoint path if resuming.
 
     Args:
         checkpoint_path: Path to checkpoint for resuming training
 
     Returns:
-        Version number if found, None otherwise
+        Version string if found, None otherwise
     """
     if not checkpoint_path:
         return None
 
-    # Try to extract version from checkpoint path (e.g., output/lightning_logs/version_0/checkpoints/...)
+    # Extract version from checkpoint path, assuming path structure:
+    # as `lightning_logs/<project_name>/<version>/checkpoints/last.ckpt`
     path = pathlib.Path(checkpoint_path)
     for parent in path.parents:
-        if parent.name.startswith("version_"):
-            version = int(parent.name.split("_")[1])
-            print(f"Resuming logging to version directory: {parent}")
-            return version
+        # Check if this is a version directory under lightning_logs/<project_name>/
+        if (
+            parent.parent
+            and parent.parent.parent
+            and parent.parent.parent.name == "lightning_logs"
+            and (parent / "checkpoints").exists()
+        ):
+
+            version = parent.name
+
+            # Determine if it's a standard numeric version or WandB random string
+            if parent.name.startswith("version_"):
+                print(f"Resuming logging to standard version directory: {parent}")
+                # Return just the numeric part for standard versions
+                return parent.name.split("_")[1]
+            else:
+                print(f"Resuming logging to WandB version directory: {parent}")
+                # Return the full random string for WandB versions
+                return version
     return None
 
 
@@ -72,37 +88,44 @@ def setup_logger(
     # Get version from checkpoint if resuming
     version = get_version_from_checkpoint(resume_from_checkpoint)
 
-    # Common logger parameters
-    logger_params = {"name": "", "save_dir": project_logs_dir, "version": version}
+    # Common params (only for tb and csv)
+    logger_params = {
+        "save_dir": project_logs_dir,
+        "name": project_name,  # project directory name for tb/csv
+        "version": version,
+    }
 
     # Select logger type from config
     logger_type = config["training"]["logger"]
 
     if logger_type == "wandb":
         try:
-            # Try loading API key from environment variable first
             import wandb
 
             api_key = os.environ.get("WANDB_API_KEY")
-            if api_key:
-                wandb.login(key=api_key)
-            elif not wandb.api.api_key:
-                print("Wandb API key not found. Attempting to log in...")
-                wandb.login()
+            if not api_key and not wandb.api.api_key:
+                raise ValueError(
+                    "WANDB_API_KEY not found in environment variables and no API key configured.\n"
+                    "Please either:\n"
+                    "1. Set WANDB_API_KEY environment variable, or\n"
+                    "2. Change logger type in config.yaml to 'tb' or 'csv'"
+                )
 
-            # Create WandbLogger with consistent parameters
             wandb_logger = WandbLogger(
-                **logger_params,
-                project=project_name,
+                save_dir=project_logs_dir,
+                version=version,
+                project=project_name,  # WandB project name
                 config=config,
                 resume="allow" if resume_from_checkpoint else None,
             )
             return wandb_logger
 
+        except ValueError as e:
+            # Re-raise ValueError (missing API key) as-is
+            raise e
         except Exception as e:
-            print(f"Warning: Failed to initialize wandb: {str(e)}")
-            print("Falling back to TensorBoard logger")
-            logger_type = "tb"  # Fall back to TensorBoard
+            # Handle other WandB initialization errors
+            raise RuntimeError(f"WandB initialization failed: {str(e)}")
 
     elif logger_type == "tb":
         return TensorBoardLogger(**logger_params)
@@ -116,7 +139,7 @@ def setup_logger(
         )
 
 
-def setup_callbacks(config: Dict) -> List:
+def setup_callbacks(config: Dict) -> List[pl.Callback]:
     """Setup training callbacks.
 
     Returns a list of callbacks for model training:

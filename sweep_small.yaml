@@ -18,18 +18,21 @@ parameters:
   # === OPTIMIZER ===
   learning_rate:
     values: [1e-4, 3e-4, 5e-4, 1e-3, 3e-3]
-  
+
   weight_decay:
     values: [1e-5, 1e-4, 1e-3]
-  
+
+  amsgrad:
+    values: [true, false]
+
   # === SCHEDULER ===
   scheduler_type:
     values: ['cosine', 'reduce']
-  
+
   # === DATA ===
   batch_size:
     values: [16, 32, 64]
-  
+
   # === TRAINING ===
   epochs:
     value: 20

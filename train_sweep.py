@@ -191,28 +191,33 @@ def setup_logger(config: Dict) -> WandbLogger:
     """
     # Get base directory for logs
     base_dir = pathlib.Path(config.get("output_path", "outputs"))
-    project_name = config.get("project_name", "GenDiffusion")
     project_logs_dir = base_dir / "sweeps"
     project_logs_dir.mkdir(parents=True, exist_ok=True)
 
-    # Common logger parameters
-    logger_params = {"name": "", "save_dir": project_logs_dir, "version": None}
+    # Get project name
+    project_name = config.get("project_name", "GenDiff")
 
+    # Common logger parameters
+    logger_params = {
+        "name": project_name,  # project on local machine
+        "save_dir": project_logs_dir,
+        "version": None,
+    }
     try:
-        # Try loading API key from environment variable first
         import wandb
 
         api_key = os.environ.get("WANDB_API_KEY")
-        if api_key:
-            wandb.login(key=api_key)
-        elif not wandb.api.api_key:
-            print("Wandb API key not found. Attempting to log in...")
-            wandb.login()
+        if not api_key and not wandb.api.api_key:
+            raise ValueError(
+                "WANDB_API_KEY not found in environment variables and no API key configured.\n"
+                "Please either:\n"
+                "1. Set WANDB_API_KEY environment variable, or\n"
+                "2. Change logger type in config.yaml to 'tb' or 'csv'"
+            )
 
-        # Create WandbLogger with consistent parameters (same pattern as train.py)
         wandb_logger = WandbLogger(
             **logger_params,
-            project=project_name,
+            project=project_name,  # project on W&B cloud
             config=config,
             log_model=False,  # Don't log model artifacts to save space
             log_graph=False,  # Don't log model graph to save space
@@ -224,7 +229,7 @@ def setup_logger(config: Dict) -> WandbLogger:
         raise e
 
 
-def setup_callbacks(config: Dict) -> List:
+def setup_callbacks(config: Dict) -> List[pl.Callback]:
     """Setup training callbacks optimized for sweeps."""
     callbacks = [
         # Model checkpoint, save only best one
