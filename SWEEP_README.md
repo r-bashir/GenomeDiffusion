@@ -1,125 +1,117 @@
-# W&B Sweeps for GenomeDiffusion HPO
+# W&B Sweeps: Hierarchical Guide
 
-This setup provides automated hyperparameter optimization to address the training issues you've been experiencing (stagnant loss ~0.02, increasing MSE).
+This document explains how to run hyperparameter sweeps for the SNP diffusion model using Weights & Biases. It is aligned with the current scripts and flags in this repository.
 
-## 🎯 Key Issues Addressed
+## 1) Prerequisites
 
-1. **Learning Rate Problems**: Fixed lr=1e-3 with min_lr=3e-3 (min > max)
-2. **Model Architecture**: Testing deeper UNet configurations
-3. **Missing Embeddings**: Exploring time/position embeddings
-4. **Diffusion Parameters**: Optimizing beta schedules and timesteps
-5. **Training Duration**: Testing longer training periods
+- WANDB account and API key configured:
+  - Export once per shell: `export WANDB_API_KEY=...`
+  - Or run `wandb login`
+- Base config exists: `config.yaml`
+- Sweep config exists: `sweep.yaml`
+- Training entrypoint for sweeps: `train_sweep.py`
+- Optional cluster scripts: `sweep.slurm`, `sweep_parallel.slurm`
 
-## 📁 Files Created
+## 2) File Overview
 
-- `sweep_config.yaml` - W&B sweep configuration with 50 hyperparameter combinations
-- `train_sweep.py` - Modified training script integrated with W&B sweeps
-- `run_sweep.py` - Management script for initializing and monitoring sweeps
-- `sweep.slurm` - SLURM script for cluster execution
+- `sweep.yaml` — W&B sweep configuration (method, metric, parameter space). Should set `program: train_sweep.py`.
+- `train_sweep.py` — Training script used by agents. Supports dynamic param overrides via CLI or `wandb.config`.
+- `run_sweep.py` — CLI helper to init sweeps, run agents, monitor, and analyze.
+- `sweep.slurm` — SLURM script to run a single agent on a cluster.
+- `sweep_parallel.slurm` — SLURM script to run multiple agents in parallel (if desired).
 
-## 🚀 Quick Start
+## 3) Local Workflow (recommended for smoke tests)
 
-### 1. Initialize Sweep
+1. Initialize a sweep (creates a sweep on W&B and saves `current_sweep.yaml`):
+   ```bash
+   python run_sweep.py --init --config sweep.yaml --base-config config.yaml
+   ```
+
+2. Run an agent locally (repeat to spawn more agents):
+   ```bash
+   # Using full path sweep ID
+   python run_sweep.py --agent <entity/project>/<sweep_id> --count 4
+
+   # Or use the short ID if `current_sweep.yaml` is present
+   python run_sweep.py --agent <sweep_id> --count 4
+   ```
+
+3. Monitor progress:
+   ```bash
+   python run_sweep.py --monitor <sweep_id> --project <project_name>
+   ```
+
+4. Analyze results and get recommendations:
+   ```bash
+   python run_sweep.py --analyze <sweep_id> --project <project_name>
+   ```
+
+## 4) Cluster Workflow (SLURM)
+
+1. Submit a single agent job:
+   ```bash
+   sbatch sweep.slurm <sweep_id> <count>
+   # Example
+   sbatch sweep.slurm abc123 8
+   ```
+
+2. Submit multiple agents in parallel (if `sweep_parallel.slurm` is provided):
+   ```bash
+   sbatch sweep_parallel.slurm <sweep_id> <agents> <count_per_agent>
+   # Example: 3 agents, each running 5 trials
+   sbatch sweep_parallel.slurm abc123 3 5
+   ```
+
+Notes:
+- SLURM scripts generally run the W&B agent which calls `train_sweep.py` per trial.
+- Ensure the container/environment includes CUDA, PyTorch, Lightning, and W&B.
+
+## 5) Overriding Parameters Manually
+
+You can run the training script standalone for quick tests or to debug parameter mappings:
+
 ```bash
-python run_sweep.py --init
-```
-This will output a sweep ID like `username/project/sweep_id`
-
-### 2. Run Sweep Agent (Local)
-```bash
-python run_sweep.py --agent <sweep_id> --count 10
-```
-
-### 3. Run Sweep Agent (Cluster)
-```bash
-sbatch sweep.slurm <sweep_id> 10
+python train_sweep.py \
+  --config config.yaml \
+  --learning_rate 1e-4 \
+  --batch_size 32 \
+  --unet.use_attention true \
+  --attention_heads 4 \
+  --loss.use_discrete_loss true \
+  --discrete_penalty_weight 0.2
 ```
 
-### 4. Monitor Progress
-```bash
-python run_sweep.py --monitor <sweep_id>
-```
+Unknown CLI args are parsed and mapped into the hierarchical config (see `update_config_with_sweep_params()` in `train_sweep.py`). During sweeps, values from `wandb.config` are merged with these CLI overrides.
 
-### 5. Analyze Results
-```bash
-python run_sweep.py --analyze <sweep_id>
-```
+## 6) What Gets Optimized (examples)
 
-## 🔧 Key Parameters Being Optimized
+- Optimizer: learning rate, weight decay, betas, eps, amsgrad
+- Scheduler: type (`cosine` or `reduce`), eta_min/min_lr, factor, patience
+- Data: batch size, seq length, workers, scaling
+- UNet: embedding_dim, dim_mults, channels, kernel_sizes, dilations, norm_groups
+- Attention: use_attention, attention_heads, attention_dim_head
+- Loss: use_discrete_loss, discrete_penalty_weight
+- Diffusion: timesteps, beta_start, beta_end, schedule_type
 
-### Critical Learning Parameters
-- **Learning Rate**: 1e-5 to 1e-2 (log scale)
-- **Weight Decay**: 1e-5 to 1e-2 (log scale)
-- **Scheduler Type**: cosine vs reduce
-- **Min Learning Rate**: 1e-7 to 1e-4
+Refer to `sweep.yaml` for the exact search space.
 
-### Model Architecture
-- **Embedding Dimension**: [16, 32, 64, 128]
-- **Model Depth**: [[1,2], [1,2,4], [1,2,4,8]]
-- **Time Embeddings**: true/false
-- **Position Embeddings**: true/false
-- **Edge Padding**: [1, 2, 4]
+## 7) Monitoring and Metrics
 
-### Diffusion Parameters
-- **Beta Schedule**: linear vs cosine
-- **Beta Start**: 1e-5 to 1e-3 (log scale)
-- **Beta End**: 0.01 to 0.05
-- **Timesteps**: [500, 1000, 2000]
+Key metrics surfaced in W&B:
+- `val_loss`, `val_loss_epoch`, `final/val_loss`
+- `train_loss`, `train_loss_epoch`
+- `model/total_params`, `model/trainable_params`, `model/size_mb`
 
-### Training Parameters
-- **Batch Size**: [16, 32, 64]
-- **Epochs**: [100, 200, 300]
-- **Sequence Length**: [50, 100, 200]
+`run_sweep.py --monitor` prints recent runs, states, durations, and best run summary.
 
-## 🎯 Expected Improvements
+## 8) Troubleshooting
 
-The sweep will systematically explore:
+- __WANDB_API_KEY missing__: export it or run `wandb login`.
+- __Short vs full sweep IDs__: If providing a short ID, we try to resolve entity/project via `current_sweep.yaml`. Otherwise pass `<entity>/<project>/<id>`.
+- __OOM errors__: `train_sweep.py` reduces batch size for large models/sequences.
+- __Scheduler min lr issues__: `train_sweep.py` auto-fixes inconsistent `eta_min`/`min_lr`.
+- __Cluster issues__: check SLURM logs; confirm the environment has required packages and GPU access.
 
-1. **Better Learning Rates**: Finding optimal lr that enables proper convergence
-2. **Deeper Models**: Testing if more model capacity helps capture genomic patterns
-3. **Proper Embeddings**: Time/position embeddings are crucial for diffusion models
-4. **Optimal Diffusion**: Better noise schedules for genomic data
-5. **Training Stability**: Longer training with proper early stopping
+---
 
-## 📊 Monitoring
-
-The sweep uses Bayesian optimization to efficiently explore the hyperparameter space. Key metrics tracked:
-
-- `val_loss` (primary optimization target)
-- `train_loss`
-- `final/val_loss`
-- `model/total_params`
-- `model/size_mb`
-
-## 🏆 Expected Outcomes
-
-Based on the issues you described, the sweep should find configurations that:
-
-1. **Reduce Training Loss**: From ~0.02 to <0.01
-2. **Improve MSE**: Decreasing rather than increasing MSE(x_{t-1}, x_0)
-3. **Better Convergence**: Stable training with proper learning curves
-4. **Optimal Architecture**: Right balance of model capacity and efficiency
-
-## 🔍 Analysis Features
-
-The analysis script will provide:
-- Top performing configurations
-- Parameter sensitivity analysis
-- Specific recommendations for your next training run
-- Comparison of different architectural choices
-
-## 💡 Next Steps After Sweep
-
-1. **Identify Best Config**: Use `--analyze` to find optimal hyperparameters
-2. **Update config.yaml**: Apply best parameters to your main config
-3. **Run Full Training**: Train final model with optimized settings
-4. **Validate Results**: Re-run your `run_ddpm.py` analysis to confirm improvements
-
-## 🛠️ Troubleshooting
-
-- **OOM Errors**: Sweep automatically reduces batch size for large models
-- **Failed Runs**: Early stopping prevents wasted compute on poor configs
-- **Slow Progress**: Bayesian optimization improves efficiency over time
-- **Cluster Issues**: Check SLURM logs in `logs/` directory
-
-Start with the initialization step and let the sweep run overnight for best results!
+Start by initializing the sweep, then run one or more agents (locally or on SLURM). Monitor progress and use the analysis output to update `config.yaml` for your final training runs.

@@ -3,15 +3,38 @@
 
 """Training script integrated with W&B Sweeps for hyperparameter optimization.
 
-This script is designed to work with W&B Sweeps to systematically explore
-hyperparameters and improve model training performance.
+This script trains the diffusion model and is intended to be launched by a W&B
+agent during sweeps. It can also be run directly for local testing. Unknown
+CLI arguments are parsed as sweep parameters and mapped into the hierarchical
+config (see `update_config_with_sweep_params()`), so you can override nested
+keys like `unet.use_attention` or `loss.discrete_penalty_weight` from the
+command line.
 
-Usage:
-    # Initialize sweep
-    wandb sweep sweep_config.yaml
+Usage examples:
+    # 1) Run locally with a base config only
+    python train_sweep.py --config config.yaml
 
-    # Run sweep agent
-    wandb agent <sweep_id>
+    # 2) Run locally with manual hyperparameter overrides (dot or flat keys)
+    python train_sweep.py \
+        --config config.yaml \
+        --learning_rate 1e-4 \
+        --batch_size 32 \
+        --unet.use_attention true \
+        --attention_heads 4 \
+        --loss.use_discrete_loss true \
+        --discrete_penalty_weight 0.2
+
+    # 3) Launch a W&B sweep (sweep.yaml should specify program: train_sweep.py)
+    wandb sweep sweep.yaml
+
+    # 4) Run W&B agent to execute multiple runs from the sweep
+    wandb agent <entity/project>/<sweep_id>
+
+Requirements:
+    - WANDB_API_KEY must be configured (env var or `wandb login`).
+    - The base config file (default: config.yaml) should exist and be valid.
+    - When used via sweeps, parameters from `wandb.config` are merged with any
+      CLI overrides passed through the agent.
 """
 
 import argparse
@@ -85,6 +108,10 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
         "beta_start": ("diffusion", "beta_start"),
         "beta_end": ("diffusion", "beta_end"),
         "schedule_type": ("diffusion", "schedule_type"),
+        # Attention parameters
+        "use_attention": ("unet", "use_attention"),
+        "attention_heads": ("unet", "attention_heads"),
+        "attention_dim_head": ("unet", "attention_dim_head"),
     }
 
     # Update configuration with mapped parameters
@@ -113,73 +140,29 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
 
 def validate_config(config: Dict) -> Dict:
     """
-    Validate and fix common config issues that can cause training failures.
-    This is especially important for sweep configs that might have invalid combinations.
+    Validate critical configuration parameters.
+    Raises ValueError if configuration is invalid.
     """
+    # Validate required sections exist
+    required_sections = ["data", "unet", "training", "optimizer", "scheduler"]
+    for section in required_sections:
+        if section not in config:
+            raise ValueError(f"Missing required config section: {section}")
 
-    # Convert string parameters to appropriate types (from W&B sweep)
-    def convert_numeric_strings(d: Dict) -> Dict:
-        """Recursively convert string numbers to appropriate numeric types."""
-        for key, value in d.items():
-            if isinstance(value, dict):
-                d[key] = convert_numeric_strings(value)
-            elif isinstance(value, str):
-                # Try to convert to float if it looks like a number
-                try:
-                    if "." in value or "e" in value.lower():
-                        d[key] = float(value)
-                    elif value.isdigit():
-                        d[key] = int(value)
-                except ValueError:
-                    pass  # Keep as string if conversion fails
-        return d
+    # Validate critical parameters have valid values
+    if config["data"].get("seq_length", 0) <= 0:
+        raise ValueError("seq_length must be positive")
 
-    config = convert_numeric_strings(config)
+    if config["data"].get("batch_size", 0) <= 0:
+        raise ValueError("batch_size must be positive")
 
-    # Fix learning rate issues
-    optimizer_config = config.get("optimizer", {})
-    scheduler_config = config.get("scheduler", {})
-
-    # Ensure min_lr is less than lr
-    if "lr" in optimizer_config:
-        lr = optimizer_config["lr"]
-
-        # Fix cosine scheduler eta_min
-        if scheduler_config.get("type") == "cosine":
-            eta_min = scheduler_config.get("eta_min", lr * 0.01)
-            if eta_min >= lr:
-                scheduler_config["eta_min"] = lr * 0.01
-                print(
-                    f"Warning: Fixed eta_min ({eta_min:.2e}) >= lr ({lr:.2e}), set to {scheduler_config['eta_min']:.2e}"
-                )
-
-        # Fix reduce scheduler min_lr
-        elif scheduler_config.get("type") == "reduce":
-            min_lr = scheduler_config.get("min_lr", lr * 0.001)
-            if min_lr >= lr:
-                scheduler_config["min_lr"] = lr * 0.001
-                print(
-                    f"Warning: Fixed min_lr ({min_lr:.2e}) >= lr ({lr:.2e}), set to {scheduler_config['min_lr']:.2e}"
-                )
-
-    # Ensure reasonable batch size given memory constraints
-    batch_size = config.get("data", {}).get("batch_size", 32)
-    embedding_dim = config.get("unet", {}).get("embedding_dim", 32)
-    seq_length = config.get("data", {}).get("seq_length", 100)
-
-    # Reduce batch size for larger models/sequences to prevent OOM
-    if embedding_dim >= 64 and seq_length >= 200 and batch_size > 16:
-        config["data"]["batch_size"] = 16
-        print(
-            f"Reduced batch size to 16 for large model/sequence (emb={embedding_dim}, seq={seq_length})"
-        )
-    elif embedding_dim >= 128 and batch_size > 8:
-        config["data"]["batch_size"] = 8
-        print(f"Reduced batch size to 8 for very large model (emb={embedding_dim})")
+    if config["optimizer"].get("lr", 0) <= 0:
+        raise ValueError("learning_rate must be positive")
 
     return config
 
 
+# Setup logger, specific for Sweeps
 def setup_logger(config: Dict) -> WandbLogger:
     """Setup W&B logger for sweep runs.
 
@@ -191,36 +174,28 @@ def setup_logger(config: Dict) -> WandbLogger:
     """
     # Get base directory for logs
     base_dir = pathlib.Path(config.get("output_path", "outputs"))
-    project_logs_dir = base_dir / "sweeps"
-    project_logs_dir.mkdir(parents=True, exist_ok=True)
+    base_dir = base_dir / "sweeps"
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    # Get logger parameters from config
+    logger_params = config.get("logger", {})
+    if not logger_params:
+        logger_params = {"name": None}  # Use W&B auto-naming
 
     # Get project name
-    project_name = config.get("project_name", "GenDiff")
+    project_name = logger_params.pop("project", "HPO")
 
-    # Common logger parameters
-    logger_params = {
-        "name": project_name,  # project on local machine
-        "save_dir": project_logs_dir,
-        "version": None,
-    }
     try:
-        import wandb
-
-        api_key = os.environ.get("WANDB_API_KEY")
-        if not api_key and not wandb.api.api_key:
-            raise ValueError(
-                "WANDB_API_KEY not found in environment variables and no API key configured.\n"
-                "Please either:\n"
-                "1. Set WANDB_API_KEY environment variable, or\n"
-                "2. Change logger type in config.yaml to 'tb' or 'csv'"
+        # Use existing wandb run since we're in a sweep
+        if wandb.run is None:
+            raise RuntimeError(
+                "No active wandb run found. This should not happen in a sweep."
             )
 
         wandb_logger = WandbLogger(
-            **logger_params,
-            project=project_name,  # project on W&B cloud
-            config=config,
-            log_model=False,  # Don't log model artifacts to save space
-            log_graph=False,  # Don't log model graph to save space
+            experiment=wandb.run,  # Use existing run
+            save_dir=str(base_dir),
+            log_model=True,  # Log model checkpoints to W&B
         )
         return wandb_logger
 
@@ -311,7 +286,6 @@ def main():
 
     # Parse arguments
     args = parse_args()
-    wandb.init()
     set_seed(42)
 
     if "PROJECT_ROOT" not in os.environ:
@@ -319,6 +293,9 @@ def main():
 
     # Load base configuration
     config = load_config(args.config)
+
+    # Initialize wandb for sweep
+    wandb.init(config=config)
 
     # Get sweep parameters from command line args (parsed dynamically)
     sweep_params = args.sweep_params.copy()
@@ -328,27 +305,12 @@ def main():
         if key not in sweep_params:
             sweep_params[key] = value
 
-    if sweep_params:
-        print(f"Sweep parameters received: {list(sweep_params.keys())}")
-    else:
-        print("No sweep parameters received - using base config")
-
     # Update configuration with sweep parameters
     config = update_config_with_sweep_params(config, sweep_params)
     config = validate_config(config)
 
     # Log the final configuration
     wandb.config.update(config, allow_val_change=True)
-
-    # Print key configuration for debugging
-    run_name = wandb.run.name or wandb.run.id
-    print(f"\n=== SWEEP RUN: {run_name} ===")
-    print(f"Output Path: {config['output_path']}")
-    print(f"Learning Rate: {config.get('optimizer', {}).get('lr', 'N/A')}")
-    print(f"Scheduler Type: {config.get('scheduler', {}).get('type', 'N/A')}")
-    print(f"Batch Size: {config.get('data', {}).get('batch_size', 'N/A')}")
-    print(f"Epochs: {config.get('training', {}).get('epochs', 'N/A')}")
-    print(f"Weight Decay: {config.get('optimizer', {}).get('weight_decay', 'N/A')}")
 
     try:
         # Initialize model
@@ -393,6 +355,10 @@ def main():
     # Setup callbacks
     callbacks = setup_callbacks(config)
 
+    # Enable tensor cores for better performance on CUDA devices
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision("high")
+
     # Initialize trainer (same pattern as train.py)
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
@@ -405,12 +371,10 @@ def main():
         enable_checkpointing=True,
         enable_progress_bar=False,  # Disable for cleaner sweep logs
         enable_model_summary=False,  # Disable for cleaner logs
-        precision=16,  # Use mixed precision to save memory
     )
 
     try:
         # Train model
-        print("Starting training...")
         trainer.fit(model)
 
         # Log final metrics

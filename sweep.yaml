@@ -13,16 +13,16 @@ metric:
 # Early termination to save compute
 early_terminate:
   type: hyperband
-  min_iter: 10
-  eta: 3
+  min_iter: 5  # More aggressive early stopping
+  eta: 2    # Faster elimination of poor trials
 
 parameters:
   # === OPTIMIZER ===
   learning_rate:
-    values: [1e-4, 3e-4, 5e-4, 1e-3, 3e-3, 5e-3, 1e-2]
+    values: [0.0001, 0.0003, 0.0005, 0.001, 0.003, 0.005, 0.01]
 
   weight_decay:
-    values: [1e-5, 1e-4, 1e-3]
+    values: [0.00001, 0.00003, 0.0001, 0.0003, 0.001]
 
   amsgrad:
     values: [true, false]
@@ -57,7 +57,17 @@ parameters:
     values: [1, 2, 4]
 
   norm_groups:
-    values: [2, 4, 8]
+    values: [2, 4, 8, 16]
+
+  # === ATTENTION MECHANISM ===
+  use_attention:
+    values: [true, false]
+
+  attention_heads:
+    values: [4, 8, 16]  # More heads for better pattern capture
+
+  attention_dim_head:
+    values: [16, 32, 64]
 
   # === DATA ===
   batch_size:
@@ -65,12 +75,7 @@ parameters:
 
   # === TRAINING ===
   epochs:
-    value: 20
-    # values: [50, 100, 200]
+    value: 50  # More epochs for convergence
 
   warmup_epochs:
     values: [5, 10]
-    # values: [5, 10, 20]
-
-# Number of runs to execute
-# Note: count is specified via --count flag when running the agent
