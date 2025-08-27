@@ -236,6 +236,11 @@ def main():
     # Set up callbacks
     callbacks = setup_callbacks(config)
 
+    # Enable tensor cores for better performance on CUDA devices
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision("high")
+        logger.info("Enabled tensor cores optimization")
+
     # Initialize trainer
     logger.info("Initializing trainer...")
     trainer = pl.Trainer(
