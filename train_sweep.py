@@ -112,6 +112,9 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
         "use_attention": ("unet", "use_attention"),
         "attention_heads": ("unet", "attention_heads"),
         "attention_dim_head": ("unet", "attention_dim_head"),
+        "attention_type": ("unet", "attention_type"),
+        "window_size": ("unet", "window_size"),
+        "num_global_tokens": ("unet", "num_global_tokens"),
     }
 
     # Update configuration with mapped parameters

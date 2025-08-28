@@ -37,5 +37,17 @@ parameters:
   epochs:
     value: 20
 
+  # === MODEL / ATTENTION COMPARISON ===
+  attention_type:
+    values: ["full", "linear", "sparse"]
+  # Only applies to sparse; for full/linear it is ignored by the model
+  window_size:
+    values: [16, 32, 128, 512]
+  # Keep heads/dim_head fixed for fairness (override if needed)
+
+  # === DATA SEQ LENGTHS ===
+  seq_length:
+    values: [100, 1000]
+
 # Small number of runs for testing
 # Note: count is specified via --count flag when running the agent
