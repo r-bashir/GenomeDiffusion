@@ -229,7 +229,7 @@ class UNet1D(nn.Module):
         use_attention=True,
         attention_heads=4,
         attention_dim_head=32,
-        **kwargs,  # Accept additional arguments for compatibility with unet_new_lai.py
+        **kwargs,  # Accept additional arguments for compatibility with unet_kenneweg.py
     ):
         """
         Initialize UNet1D with genomic-optimized architecture.

@@ -10,7 +10,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .all_models import UniformContinuousTimeSampler
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
     ComplexNoisePredictor,
@@ -19,9 +18,10 @@ from .mlp import (
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
+from .time_sampler import UniformContinuousTimeSampler
+from .unet import UNet1D
 
-# from .unet import UNet1D
-from .unet_new_lai import UNet1D
+# from .unet_kenneweg import UNet1D
 from .utils import bcast_right, tensor_to_device
 
 

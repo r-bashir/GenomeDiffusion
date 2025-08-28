@@ -90,7 +90,11 @@ def calculate_sample_diversity(samples):
     sample_correlations = []
     for i in range(n_samples):
         for j in range(i + 1, n_samples):
-            corr = np.corrcoef(data[i], data[j])[0, 1]
+            # Check for zero variance before correlation calculation
+            if np.std(data[i]) == 0 or np.std(data[j]) == 0:
+                corr = 1.0 if np.array_equal(data[i], data[j]) else 0.0
+            else:
+                corr = np.corrcoef(data[i], data[j])[0, 1]
             if not np.isnan(corr):
                 sample_correlations.append(corr)
 
@@ -116,7 +120,11 @@ def calculate_sample_diversity(samples):
     for i in range(n_samples):
         is_unique = True
         for j in range(i):
-            corr = np.corrcoef(data[i], data[j])[0, 1]
+            # Check for zero variance before correlation calculation
+            if np.std(data[i]) == 0 or np.std(data[j]) == 0:
+                corr = 1.0 if np.array_equal(data[i], data[j]) else 0.0
+            else:
+                corr = np.corrcoef(data[i], data[j])[0, 1]
             if not np.isnan(corr) and corr > threshold:
                 is_unique = False
                 break
@@ -385,8 +393,8 @@ def create_evaluation_visualizations(
 # =============================================================================
 
 
-def calculate_ld(samples, max_distance=100, n_pairs=1000):
-    """Calculate Linkage Disequilibrium (LD) patterns.
+def calculate_ld(samples, max_distance=50, n_pairs=2000):
+    """Calculate Linkage Disequilibrium (LD) patterns with improved sampling.
 
     Args:
         samples: Tensor or array of SNP data [batch_size, seq_len] or [batch_size, channels, seq_len]
@@ -407,91 +415,60 @@ def calculate_ld(samples, max_distance=100, n_pairs=1000):
     # Get dimensions
     n_samples, n_snps = samples.shape
 
+    # Ensure we have enough SNPs for meaningful LD analysis
+    if n_snps < 10:
+        return np.array([]), np.array([])
+
     # Initialize arrays to store results
     distances = []
     r2_values = []
 
-    # Sample random pairs of SNPs within max_distance
-    np.random.seed(42)  # For reproducibility
+    # Set random seed for reproducibility
+    np.random.seed(42)
 
-    # Try to sample n_pairs, but don't exceed available pairs
-    max_possible_pairs = n_snps * max_distance
-    n_pairs = min(n_pairs, max_possible_pairs)
+    # Adjust max_distance and n_pairs based on sequence length
+    max_distance = min(max_distance, n_snps // 2)
+    if max_distance < 1:
+        return np.array([]), np.array([])
 
-    sampled_pairs = 0
-    max_attempts = n_pairs * 10  # Limit attempts to avoid infinite loops
-    attempts = 0
+    # Pre-generate all valid SNP pairs to avoid sampling issues
+    valid_pairs = []
+    for i in range(n_snps):
+        for j in range(i + 1, min(i + max_distance + 1, n_snps)):
+            distance = j - i
+            if 1 <= distance <= max_distance:
+                valid_pairs.append((i, j, distance))
 
-    while sampled_pairs < n_pairs and attempts < max_attempts:
-        attempts += 1
+    if len(valid_pairs) == 0:
+        return np.array([]), np.array([])
 
-        # Sample first SNP
-        snp1_idx = np.random.randint(0, n_snps - 1)
+    # Sample from valid pairs
+    n_pairs = min(n_pairs, len(valid_pairs))
+    selected_pairs = np.random.choice(len(valid_pairs), size=n_pairs, replace=False)
 
-        # Sample second SNP within max_distance
-        max_idx = min(snp1_idx + max_distance, n_snps - 1)
-        min_idx = max(snp1_idx - max_distance, 0)
+    for pair_idx in selected_pairs:
+        snp1_idx, snp2_idx, distance = valid_pairs[pair_idx]
 
-        # Ensure we don't sample the same SNP
-        if max_idx == snp1_idx:
-            continue
-        if min_idx == snp1_idx:
-            continue
-
-        # Randomly choose direction (up or down)
-        if np.random.random() < 0.5 and snp1_idx > min_idx:
-            # Sample below
-            snp2_idx = np.random.randint(min_idx, snp1_idx)
-        elif snp1_idx < max_idx:
-            # Sample above
-            snp2_idx = np.random.randint(snp1_idx + 1, max_idx + 1)
-        else:
-            continue
-
-        # Calculate distance
-        distance = abs(snp2_idx - snp1_idx)
-
-        # Extract alleles
+        # Extract genotype/dosage columns across samples
         a = samples[:, snp1_idx]
         b = samples[:, snp2_idx]
 
-        # Calculate allele frequencies
-        p_a = np.mean(a)
-        p_b = np.mean(b)
-
-        # Skip if either SNP is monomorphic (no variation)
-        if p_a == 0 or p_a == 1 or p_b == 0 or p_b == 1:
+        # Compute Pearson correlation across samples and square to get r^2
+        # Guard against zero variance columns which yield NaN correlations
+        if np.std(a) == 0 or np.std(b) == 0:
             continue
 
-        # Calculate observed haplotype frequency
-        p_ab = np.mean(a * b)
+        try:
+            corr = np.corrcoef(a, b)[0, 1]
+            if np.isnan(corr):
+                continue
+            r2 = float(corr * corr)
 
-        # Calculate D
-        d = p_ab - (p_a * p_b)
-
-        # Calculate D'
-        if d > 0:
-            d_max = min(p_a * (1 - p_b), (1 - p_a) * p_b)
-        else:
-            d_max = min(p_a * p_b, (1 - p_a) * (1 - p_b))
-
-        # Avoid division by zero
-        if d_max == 0:
+            # Store results
+            distances.append(distance)
+            r2_values.append(r2)
+        except Exception:
             continue
-
-        d_prime = d / d_max
-
-        # Calculate r^2
-        denominator = p_a * (1 - p_a) * p_b * (1 - p_b)
-        if denominator == 0:
-            continue
-
-        r2 = (d * d) / denominator
-
-        # Store results
-        distances.append(distance)
-        r2_values.append(r2)
-        sampled_pairs += 1
 
     return np.array(distances), np.array(r2_values)
 
@@ -515,9 +492,24 @@ def plot_ld_decay(
     real_distances, real_r2 = calculate_ld(real_samples, max_distance, n_pairs)
     gen_distances, gen_r2 = calculate_ld(gen_samples, max_distance, n_pairs)
 
+    # Check if we have valid LD data
+    if len(real_distances) == 0 or len(gen_distances) == 0:
+        print("⚠️  WARNING: No valid LD pairs found. Skipping LD analysis.")
+        return 0.0
+
     # Create distance bins for averaging
     max_dist = min(max_distance, max(np.max(real_distances), np.max(gen_distances)))
+
+    # Ensure we have at least 2 bins for meaningful analysis
+    if max_dist < 2:
+        print("⚠️  WARNING: Maximum distance < 2. Insufficient data for LD analysis.")
+        return 0.0
+
     bins = np.arange(1, max_dist + 1, max(1, max_dist // 20))
+
+    # Ensure we have at least 2 bins
+    if len(bins) < 2:
+        bins = np.array([1, max_dist + 1])
 
     # Bin the data
     real_binned_r2 = []
@@ -594,7 +586,7 @@ def plot_ld_decay(
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.xlim(0, max_dist)
-    plt.ylim(0, 1)
+    plt.ylim(0, 0.15)
 
     plt.tight_layout()
     plt.savefig(
@@ -924,7 +916,12 @@ def plot_maf_spectrum(real_samples, generated_samples, output_dir, max_value=0.5
     axes[0, 0].grid(True, alpha=0.3)
 
     # MAF correlation
-    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+    if np.std(real_maf) == 0 or np.std(gen_maf) == 0:
+        maf_corr = 0.0
+    else:
+        maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+        if np.isnan(maf_corr):
+            maf_corr = 0.0
     axes[0, 1].scatter(real_maf, gen_maf, alpha=0.6, s=10)
     axes[0, 1].plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8)
     axes[0, 1].set_xlabel("Real MAF")
@@ -1047,7 +1044,12 @@ def plot_hardy_weinberg_deviation(real_samples, generated_samples, output_dir):
     axes[0, 0].axvline(x=0, color="black", linestyle="--", alpha=0.5, label="HWE")
 
     # HWE correlation
-    hwe_corr = np.corrcoef(real_hwe, gen_hwe)[0, 1]
+    if np.std(real_hwe) == 0 or np.std(gen_hwe) == 0:
+        hwe_corr = 0.0
+    else:
+        hwe_corr = np.corrcoef(real_hwe, gen_hwe)[0, 1]
+        if np.isnan(hwe_corr):
+            hwe_corr = 0.0
     axes[0, 1].scatter(real_hwe, gen_hwe, alpha=0.6, s=10)
     axes[0, 1].plot([-1, 1], [-1, 1], "r--", alpha=0.8)
     axes[0, 1].set_xlabel("Real F_IS")
@@ -1142,11 +1144,21 @@ def plot_genomic_position_effects(
         real_af = np.mean(real_window, axis=0)
         gen_af = np.mean(gen_window, axis=0)
 
-        af_corr = np.corrcoef(real_af, gen_af)[0, 1] if len(real_af) > 1 else 0
+        if len(real_af) > 1 and np.std(real_af) > 0 and np.std(gen_af) > 0:
+            af_corr = np.corrcoef(real_af, gen_af)[0, 1]
+            if np.isnan(af_corr):
+                af_corr = 0.0
+        else:
+            af_corr = 0.0
 
         real_maf = np.minimum(real_af, 0.5 - real_af)
         gen_maf = np.minimum(gen_af, 0.5 - gen_af)
-        maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1] if len(real_maf) > 1 else 0
+        if len(real_maf) > 1 and np.std(real_maf) > 0 and np.std(gen_maf) > 0:
+            maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+            if np.isnan(maf_corr):
+                maf_corr = 0.0
+        else:
+            maf_corr = 0.0
 
         mean_diff = np.abs(np.mean(real_window) - np.mean(gen_window))
 
@@ -1202,7 +1214,7 @@ def plot_genomic_position_effects(
     )
     axes[1, 1].set_ylabel("Average Quality Score")
     axes[1, 1].set_title("Position-wise Quality Summary")
-    axes[1, 1].set_ylim(0, 1)
+    axes[1, 1].set_ylim(0, 1.07)
     axes[1, 1].grid(True, alpha=0.3)
 
     # Add value labels on bars

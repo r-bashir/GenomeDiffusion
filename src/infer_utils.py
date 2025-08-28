@@ -19,10 +19,96 @@ import numpy as np
 import torch
 from scipy import stats
 
+from .analysis_utils import calculate_ld
 from .utils import set_seed
 
 # Default genotype values for SNP data
 DEFAULT_GENOTYPE_VALUES = [0.0, 0.25, 0.5]
+
+
+# === Helper Functions for Metrics ===
+def compute_wasserstein_distance(real_flat, gen_flat):
+    """Compute Wasserstein distance between two flattened distributions."""
+    try:
+        return float(stats.wasserstein_distance(real_flat, gen_flat))
+    except Exception:
+        return 0.0
+
+
+def compute_ld_decay_metrics(real, gen, max_distance=50, n_pairs=2000):
+    """Compute LD decay metrics and return correlation of binned curves."""
+    try:
+        # Check if real data has sufficient variance for LD analysis
+        real_variances = np.var(real, axis=0)
+        low_variance_snps = np.sum(real_variances < 1e-6)
+        total_snps = real.shape[1]
+
+        if low_variance_snps > total_snps * 0.8:  # More than 80% constant SNPs
+            print(
+                f"Warning: Real data has {low_variance_snps}/{total_snps} constant SNPs. Skipping LD analysis."
+            )
+            print(
+                "This suggests population-level data rather than individual genotypes."
+            )
+            return 0.0, [], [], [], []
+
+        real_distances, real_r2 = calculate_ld(
+            real, max_distance=max_distance, n_pairs=n_pairs
+        )
+        gen_distances, gen_r2 = calculate_ld(
+            gen, max_distance=max_distance, n_pairs=n_pairs
+        )
+
+        if len(real_distances) == 0 or len(gen_distances) == 0:
+            print(
+                f"LD computation failed - real_distances={len(real_distances)}, gen_distances={len(gen_distances)}"
+            )
+            return 0.0, [], [], [], []
+
+        # Binning
+        max_dist = int(
+            min(max_distance, max(np.max(real_distances), np.max(gen_distances)))
+        )
+        if max_dist < 2:
+            max_dist = 2
+        bins = np.arange(1, max_dist + 1)
+
+        real_binned = [
+            np.mean(real_r2[real_distances == d]) if np.any(real_distances == d) else 0
+            for d in bins
+        ]
+        gen_binned = [
+            np.mean(gen_r2[gen_distances == d]) if np.any(gen_distances == d) else 0
+            for d in bins
+        ]
+
+        # Correlation of binned curves with guards
+        rb = np.array(real_binned)
+        gb = np.array(gen_binned)
+        valid = (rb > 0) | (gb > 0)
+
+        if np.sum(valid) > 1:
+            rbv = rb[valid]
+            gbv = gb[valid]
+            if np.std(rbv) > 0 and np.std(gbv) > 0:
+                ld_corr = np.corrcoef(rbv, gbv)[0, 1]
+                if np.isnan(ld_corr):
+                    ld_corr = 0.0
+            else:
+                ld_corr = 0.0
+        else:
+            ld_corr = 0.0
+
+        return (
+            float(ld_corr),
+            real_distances.tolist(),
+            real_r2.tolist(),
+            gen_distances.tolist(),
+            gen_r2.tolist(),
+        )
+    except Exception as e:
+        print(f"Exception in LD computation: {e}")
+        return 0.0, [], [], [], []
 
 
 def _discretize_to_genotype_values(x, genotype_values=None):
@@ -51,6 +137,21 @@ def _discretize_to_genotype_values(x, genotype_values=None):
     discretized = genotype_tensor[closest_indices]
 
     return discretized
+
+
+def get_encoding_params(scaling: bool):
+    """Return genotype values and max_value based on scaling flag.
+
+    Args:
+        scaling (bool): True if data was scaled (e.g., original [0, 0.5, 1.0] divided by 2)
+
+    Returns:
+        dict: {"genotype_values": [...], "max_value": float}
+    """
+    if scaling:
+        return {"genotype_values": [0.0, 0.25, 0.5], "max_value": 0.5}
+    else:
+        return {"genotype_values": [0.0, 0.5, 1.0], "max_value": 1.0}
 
 
 # === Core Wrapper Functions ===
@@ -456,19 +557,33 @@ def sample_visualization(
     plt.close()
 
 
-# === Quick Quality Metrics ===
-def compute_quality_metrics(real_samples, generated_samples, max_value=0.5):
+# === Centralized Quality Metrics ===
+def compute_quality_metrics(
+    real_samples,
+    generated_samples,
+    max_value: float,
+    genotype_values: list[float] | None = None,
+    print_results: bool = True,
+):
     """
-    Compute essential quality metrics for immediate feedback during inference.
+    Compute all quality metrics in one place to ensure consistency.
 
     Args:
         real_samples: Real data [B, C, L] or [B, L]
         generated_samples: Generated data [B, C, L] or [B, L]
-        max_value: Maximum value for MAF calculations
+        max_value: Maximum value for MAF calculations (required)
+        genotype_values: Expected genotype values for discrete analysis
+        print_results: Whether to print results to console
 
     Returns:
-        float: Quick quality score (0-1, higher is better)
+        dict: Comprehensive metrics dictionary containing all computed values
     """
+    if max_value is None:
+        raise ValueError("max_value is required and cannot be None")
+
+    if genotype_values is None:
+        genotype_values = DEFAULT_GENOTYPE_VALUES
+
     # === CENTRALIZED DATA PREPARATION ===
     # Convert to numpy
     real = (
@@ -489,159 +604,211 @@ def compute_quality_metrics(real_samples, generated_samples, max_value=0.5):
         gen = gen.squeeze(1)
 
     # Prepare different data views for various analyses
-    real_flat = real.flatten()  # For distribution analysis
-    gen_flat = gen.flatten()  # For distribution analysis
+    real_flat = real.flatten()
+    gen_flat = gen.flatten()
 
     # Calculate allele frequencies per SNP position (axis=0 means across samples)
-    real_af = np.mean(real, axis=0)  # Shape: [sequence_length]
-    gen_af = np.mean(gen, axis=0)  # Shape: [sequence_length]
+    real_af = np.mean(real, axis=0)
+    gen_af = np.mean(gen, axis=0)
 
     # Calculate MAF (Minor Allele Frequency)
     real_maf = np.minimum(real_af, max_value - real_af)
     gen_maf = np.minimum(gen_af, max_value - gen_af)
 
     # === COMPUTE ALL METRICS ONCE ===
-    # Correlations
-    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
-    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
+    # Correlations with variance guards
+    # AF Correlation: Should be 1.0 (perfect correlation between real and generated allele frequencies)
+    if np.std(real_af) > 0 and np.std(gen_af) > 0:
+        af_corr = float(np.corrcoef(real_af, gen_af)[0, 1])
+        if np.isnan(af_corr):
+            af_corr = 0.0
+    else:
+        af_corr = 0.0
+
+    # MAF Correlation: Should be 1.0 (perfect correlation between real and generated minor allele frequencies)
+    if np.std(real_maf) > 0 and np.std(gen_maf) > 0:
+        maf_corr = float(np.corrcoef(real_maf, gen_maf)[0, 1])
+        if np.isnan(maf_corr):
+            maf_corr = 0.0
+    else:
+        maf_corr = 0.0
 
     # Statistical tests
+    # KS Test: p-value should be >0.05 (distributions are similar), statistic should be ~0.0
     ks_stat, ks_pvalue = stats.ks_2samp(real_flat, gen_flat)
 
-    # Basic statistics comparison
-    mean_diff = abs(np.mean(real_flat) - np.mean(gen_flat))
-    std_diff = abs(np.std(real_flat) - np.std(gen_flat))
+    # Basic statistics
+    real_stats = {
+        "mean": float(np.mean(real_flat)),
+        "std": float(np.std(real_flat)),
+        "min": float(np.min(real_flat)),
+        "max": float(np.max(real_flat)),
+    }
+    gen_stats = {
+        "mean": float(np.mean(gen_flat)),
+        "std": float(np.std(gen_flat)),
+        "min": float(np.min(gen_flat)),
+        "max": float(np.max(gen_flat)),
+    }
 
-    # Range coverage (using flattened arrays for consistency)
-    real_min, real_max = np.min(real_flat), np.max(real_flat)
-    gen_min, gen_max = np.min(gen_flat), np.max(gen_flat)
-    range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / (
-        real_max - real_min
-    )
+    # Mean/Std Differences: Should be ~0.0 (similar distributions)
+    mean_diff = abs(real_stats["mean"] - gen_stats["mean"])
+    std_diff = abs(real_stats["std"] - gen_stats["std"])
+
+    # Range coverage with safe division
+    # Range Coverage: Should be 1.0 (generated data covers the same range as real data)
+    real_min, real_max = real_stats["min"], real_stats["max"]
+    gen_min, gen_max = gen_stats["min"], gen_stats["max"]
+    denom = real_max - real_min
+    if denom <= 0:
+        range_coverage = 1.0 if (gen_min == real_min and gen_max == real_max) else 0.0
+    else:
+        range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / denom
     range_coverage = max(0.0, range_coverage)
 
-    # === PRINT RESULTS ===
-    print("=" * 40)
-    print(f"🧬 AF Correlation: {af_corr:.3f} (should be 1.0)")
-    print(f"🔬 MAF Correlation: {maf_corr:.3f} (should be 1.0)")
-    print(f"📈 KS Test p-value: {ks_pvalue:.6f} (should be >0.05)")
-    print(f"📉 KS Statistic: {ks_stat:.6f} (should be ~0.0)")
-    print(f"📊 Mean Difference: {mean_diff:.6f} (should be ~0.0)")
-    print(f"📊 Std Difference: {std_diff:.6f} (should be ~0.0)")
-    print(f"📏 Range Coverage: {range_coverage:.3f} (should be 1.0)")
+    # Wasserstein Distance: Should be ~0.0 (distributions are identical)
+    wasserstein_dist = compute_wasserstein_distance(real_flat, gen_flat)
 
-    # Compute overall quick score
+    # LD Decay Correlation: Should be 1.0 (perfect correlation between LD decay patterns)
+    ld_corr, real_distances, real_r2, gen_distances, gen_r2 = compute_ld_decay_metrics(
+        real, gen
+    )
+
+    # AF residuals
+    # RMSE/MAE: Should be ~0.0 (minimal prediction errors)
+    af_residuals = gen_af - real_af
+    rmse_af = float(np.sqrt(np.mean(af_residuals**2)))
+    mae_af = float(np.mean(np.abs(af_residuals)))
+
+    # Compute overall quality score
     scores = []
-
-    # AF correlation (higher is better)
     if not np.isnan(af_corr):
         scores.append(max(0, af_corr))
-
-    # MAF correlation (higher is better)
     if not np.isnan(maf_corr):
         scores.append(max(0, maf_corr))
 
-    # KS test (higher p-value is better, but cap at reasonable threshold)
-    ks_score = min(1.0, ks_pvalue * 10)  # Scale p-value
-    scores.append(ks_score)
-
-    # KS statistic (lower is better)
+    ks_score = min(1.0, ks_pvalue * 10)
     ks_stat_score = 1.0 - min(1.0, ks_stat)
-    scores.append(ks_stat_score)
+    mean_score = 1.0 - min(1.0, mean_diff * 10)
+    std_score = 1.0 - min(1.0, std_diff * 10)
 
-    # Range coverage (higher is better)
-    scores.append(range_coverage)
+    scores.extend([ks_score, ks_stat_score, range_coverage, mean_score, std_score])
+    overall_score = float(np.mean(scores)) if scores else 0.0
 
-    # Mean and std differences (lower is better, normalize)
-    mean_score = 1.0 - min(1.0, mean_diff * 10)  # Scale difference
-    std_score = 1.0 - min(1.0, std_diff * 10)  # Scale difference
-    scores.append(mean_score)
-    scores.append(std_score)
+    # === COMPREHENSIVE METRICS DICTIONARY ===
+    metrics = {
+        # Data arrays for visualization
+        "real": real,
+        "gen": gen,
+        "real_flat": real_flat,
+        "gen_flat": gen_flat,
+        "real_af": real_af,
+        "gen_af": gen_af,
+        "real_maf": real_maf,
+        "gen_maf": gen_maf,
+        "af_residuals": af_residuals,
+        # Core metrics
+        "af_corr": af_corr,
+        "maf_corr": maf_corr,
+        "ks_stat": float(ks_stat),
+        "ks_pvalue": float(ks_pvalue),
+        "mean_diff": mean_diff,
+        "std_diff": std_diff,
+        "range_coverage": range_coverage,
+        "wasserstein_dist": wasserstein_dist,
+        "ld_corr": ld_corr,
+        "rmse_af": rmse_af,
+        "mae_af": mae_af,
+        # Statistics
+        "real_stats": real_stats,
+        "gen_stats": gen_stats,
+        # LD data for plotting
+        "real_distances": real_distances,
+        "real_r2": real_r2,
+        "gen_distances": gen_distances,
+        "gen_r2": gen_r2,
+        # Scores
+        "overall_score": overall_score,
+        # Parameters
+        "max_value": max_value,
+        "genotype_values": genotype_values,
+    }
 
-    # Overall score
-    overall_score = np.mean(scores) if scores else 0.0
-    print(f"🎯 Quality Score: {overall_score:.3f}/1.000")
+    # === PRINT RESULTS ===
+    if print_results:
+        print("=" * 40)
+        print(f"🧬 AF Correlation: {af_corr:.3f} (should be 1.0)")
+        print(f"🔬 MAF Correlation: {maf_corr:.3f} (should be 1.0)")
+        print(f"📈 KS Test p-value: {ks_pvalue:.6f} (should be >0.05)")
+        print(f"📉 KS Statistic: {ks_stat:.6f} (should be ~0.0)")
+        print(f"📊 Mean Difference: {mean_diff:.6f} (should be ~0.0)")
+        print(f"📊 Std Difference: {std_diff:.6f} (should be ~0.0)")
+        print(f"📏 Range Coverage: {range_coverage:.3f} (should be 1.0)")
+        print(f"🌊 Wasserstein Distance: {wasserstein_dist:.4f} (should be ~0.0)")
+        print(f"🧬 LD Decay Correlation: {ld_corr:.3f} (should be 1.0)")
+        print(f"🎯 Quality Score: {overall_score:.3f}/1.000")
 
-    return float(overall_score)
+    return metrics
 
 
 def visualize_quality_metrics(
-    real_samples, generated_samples, output_path, max_value=0.5
+    real_samples,
+    generated_samples,
+    output_path,
+    max_value: float,
+    genotype_values: list[float] | None = None,
 ):
     """
-    Create a visual summary of key metrics for immediate feedback.
+    Create a visual summary using centralized metrics computation.
 
     Args:
         real_samples: Real data [B, C, L] or [B, L]
         generated_samples: Generated data [B, C, L] or [B, L]
         output_path: Path to save the plot
-        max_value: Maximum value for MAF calculations
+        max_value: Maximum value for MAF calculations (required)
+        genotype_values: Expected genotype values for discrete analysis
     """
-    # === CENTRALIZED DATA PREPARATION ===
-    # Convert to numpy
-    real = (
-        real_samples.cpu().numpy()
-        if torch.is_tensor(real_samples)
-        else np.array(real_samples)
-    )
-    gen = (
-        generated_samples.cpu().numpy()
-        if torch.is_tensor(generated_samples)
-        else np.array(generated_samples)
+    # Use centralized computation - no duplication!
+    metrics = compute_quality_metrics(
+        real_samples, generated_samples, max_value, genotype_values, print_results=False
     )
 
-    # Ensure consistent shape: [batch_size, sequence_length]
-    if real.ndim == 3:
-        real = real.squeeze(1)
-    if gen.ndim == 3:
-        gen = gen.squeeze(1)
+    # Extract all needed values from centralized metrics
+    real_flat = metrics["real_flat"]
+    gen_flat = metrics["gen_flat"]
+    real_af = metrics["real_af"]
+    gen_af = metrics["gen_af"]
+    real_maf = metrics["real_maf"]
+    gen_maf = metrics["gen_maf"]
+    af_residuals = metrics["af_residuals"]
 
-    # Prepare different data views for various analyses
-    real_flat = real.flatten()  # For distribution analysis
-    gen_flat = gen.flatten()  # For distribution analysis
+    af_corr = metrics["af_corr"]
+    maf_corr = metrics["maf_corr"]
+    ks_stat = metrics["ks_stat"]
+    ks_pvalue = metrics["ks_pvalue"]
+    mean_diff = metrics["mean_diff"]
+    std_diff = metrics["std_diff"]
+    range_coverage = metrics["range_coverage"]
+    wasserstein_dist = metrics["wasserstein_dist"]
+    ld_corr = metrics["ld_corr"]
+    rmse_af = metrics["rmse_af"]
+    mae_af = metrics["mae_af"]
 
-    # Calculate allele frequencies per SNP position (axis=0 means across samples)
-    real_af = np.mean(real, axis=0)  # Shape: [sequence_length]
-    gen_af = np.mean(gen, axis=0)  # Shape: [sequence_length]
-
-    # Calculate MAF (Minor Allele Frequency)
-    real_maf = np.minimum(real_af, max_value - real_af)
-    gen_maf = np.minimum(gen_af, max_value - gen_af)
-
-    # === COMPUTE ALL METRICS ONCE ===
-    # Correlations
-    af_corr = np.corrcoef(real_af, gen_af)[0, 1]
-    maf_corr = np.corrcoef(real_maf, gen_maf)[0, 1]
-
-    # Statistical tests
-    ks_stat, ks_pvalue = stats.ks_2samp(real_flat, gen_flat)
-    mean_diff = abs(np.mean(real_flat) - np.mean(gen_flat))
-    std_diff = abs(np.std(real_flat) - np.std(gen_flat))
-
-    # Range coverage
-    real_min, real_max = np.min(real_flat), np.max(real_flat)
-    gen_min, gen_max = np.min(gen_flat), np.max(gen_flat)
-    range_coverage = (min(gen_max, real_max) - max(gen_min, real_min)) / (
-        real_max - real_min
-    )
-    range_coverage = max(0.0, range_coverage)
-
-    # Basic statistics for comparison
     real_stats = [
-        np.mean(real_flat),
-        np.std(real_flat),
-        np.min(real_flat),
-        np.max(real_flat),
+        metrics["real_stats"]["mean"],
+        metrics["real_stats"]["std"],
+        metrics["real_stats"]["min"],
+        metrics["real_stats"]["max"],
     ]
     gen_stats = [
-        np.mean(gen_flat),
-        np.std(gen_flat),
-        np.min(gen_flat),
-        np.max(gen_flat),
+        metrics["gen_stats"]["mean"],
+        metrics["gen_stats"]["std"],
+        metrics["gen_stats"]["min"],
+        metrics["gen_stats"]["max"],
     ]
 
-    # Create figure with subplots
-    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    # Create figure with subplots (expanded to 2x4 to add Wasserstein and LD plots)
+    fig, axes = plt.subplots(2, 4, figsize=(18, 10))
     fig.suptitle(
         "Quick Quality Assessment - Key Metrics", fontsize=16, fontweight="bold"
     )
@@ -649,9 +816,7 @@ def visualize_quality_metrics(
     # === SUBPLOT 1: Genotype Value Distribution ===
     ax = axes[0, 0]
 
-    # Get unique values to determine if data is discrete
-    real_flat = real.flatten()
-    gen_flat = gen.flatten()
+    # Get unique values to determine if data is discrete (use centralized arrays)
     all_unique = np.unique(np.concatenate([real_flat, gen_flat]))
 
     # Use bar chart if we have few unique values (discrete data)
@@ -696,12 +861,10 @@ def visualize_quality_metrics(
         ax.grid(True, alpha=0.3)
 
     else:
-        # Use regular binning for continuous data
+        # Use regular binning for continuous data (use centralized arrays)
+        ax.hist(real_flat, bins=50, alpha=0.7, label="Real", density=True, color="blue")
         ax.hist(
-            real.flatten(), bins=50, alpha=0.7, label="Real", density=True, color="blue"
-        )
-        ax.hist(
-            gen.flatten(),
+            gen_flat,
             bins=50,
             alpha=0.7,
             label="Generated",
@@ -735,29 +898,29 @@ def visualize_quality_metrics(
     # === SUBPLOT 3: Quality Metrics Summary ===
     ax = axes[0, 2]
 
-    # Normalize metrics for visualization (0-1 scale)
-    metrics = {
-        "AF Corr": max(0, af_corr),
-        "MAF Corr": max(0, maf_corr),
-        "KS p-val": min(1.0, ks_pvalue * 10),  # Scale p-value
-        "KS stat": 1.0 - min(1.0, ks_stat),  # Invert (lower is better)
-        "Mean Sim": 1.0 - min(1.0, mean_diff * 10),  # Invert and scale
-        "Std Sim": 1.0 - min(1.0, std_diff * 10),  # Invert and scale
-        "Range Cov": range_coverage,  # Range coverage (higher is better)
+    # Normalize metrics for visualization (0-1 scale, higher is better)
+    viz_metrics = {
+        "AF Corr": max(0, af_corr),  # Should be 1.0
+        "MAF Corr": max(0, maf_corr),  # Should be 1.0
+        "KS p-val": min(1.0, ks_pvalue * 10),  # Should be >0.05, scaled for viz
+        "KS stat": 1.0 - min(1.0, ks_stat),  # Should be ~0.0, inverted for viz
+        "Mean Sim": 1.0 - min(1.0, mean_diff * 10),  # Should be ~0.0, inverted for viz
+        "Std Sim": 1.0 - min(1.0, std_diff * 10),  # Should be ~0.0, inverted for viz
+        "Range Cov": range_coverage,  # Should be 1.0
     }
 
     bars = ax.bar(
-        metrics.keys(),
-        metrics.values(),
+        viz_metrics.keys(),
+        viz_metrics.values(),
         color=["blue", "green", "orange", "red", "purple", "brown", "gray"],
     )
-    ax.set_ylabel("Quality Score")
+    ax.set_ylabel("Quality Score (0-1, higher better)")
     ax.set_title("Quality Metrics Summary")
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     ax.grid(True, alpha=0.3)
 
     # Add value labels on bars
-    for bar, value in zip(bars, metrics.values()):
+    for bar, value in zip(bars, viz_metrics.values()):
         height = bar.get_height()
         ax.text(
             bar.get_x() + bar.get_width() / 2.0,
@@ -775,7 +938,7 @@ def visualize_quality_metrics(
     ax.plot([0, max_value], [0, max_value], "r--", alpha=0.8, linewidth=2)
     ax.set_xlabel("Real Allele Frequency")
     ax.set_ylabel("Generated Allele Frequency")
-    ax.set_title(f"Allele Frequency Correlation\n(r = {af_corr:.3f})")
+    ax.set_title(f"AF Correlation (should be 1.0)\n(r = {af_corr:.3f})")
     ax.grid(True, alpha=0.3)
 
     # === SUBPLOT 5: MAF Correlation ===
@@ -785,7 +948,7 @@ def visualize_quality_metrics(
     ax.plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8, linewidth=2)
     ax.set_xlabel("Real MAF")
     ax.set_ylabel("Generated MAF")
-    ax.set_title(f"MAF Correlation\n(r = {maf_corr:.3f})")
+    ax.set_title(f"MAF Correlation (should be 1.0)\n(r = {maf_corr:.3f})")
     ax.grid(True, alpha=0.3)
 
     # === SUBPLOT 6: Allele Frequency Residuals Plot ===
@@ -815,25 +978,122 @@ def visualize_quality_metrics(
     # Formatting
     ax.set_xlabel("SNP Position")
     ax.set_ylabel("AF Residual (Generated - Real)")
-    ax.set_title(
-        f"Allele Frequency Residuals\n(RMSE: {np.sqrt(np.mean(af_residuals**2)):.4f})"
-    )
+    ax.set_title(f"AF Residuals (RMSE should be ~0.0)\n(RMSE: {rmse_af:.4f})")
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
 
-    # Add statistics text
-    rmse = np.sqrt(np.mean(af_residuals**2))
-    mae = np.mean(np.abs(af_residuals))
+    # Add statistics text using centralized values
     ax.text(
         0.02,
         0.98,
-        f"RMSE: {rmse:.4f}\nMAE: {mae:.4f}",
+        f"RMSE: {rmse_af:.4f}\nMAE: {mae_af:.4f}",
         transform=ax.transAxes,
         fontsize=8,
         alpha=0.8,
         verticalalignment="top",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
     )
+    ax.legend(fontsize=8)
+
+    # === SUBPLOT 7: Wasserstein Distance (ECDF comparison) ===
+    ax = axes[0, 3]
+
+    # Use centralized Wasserstein distance
+    # Empirical CDFs
+    r_sorted = np.sort(real_flat)
+    g_sorted = np.sort(gen_flat)
+    r_ecdf = np.arange(1, r_sorted.size + 1) / r_sorted.size
+    g_ecdf = np.arange(1, g_sorted.size + 1) / g_sorted.size
+
+    ax.step(r_sorted, r_ecdf, where="post", label="Real ECDF", color="blue", alpha=0.8)
+    ax.step(g_sorted, g_ecdf, where="post", label="Gen ECDF", color="red", alpha=0.8)
+    ax.set_xlabel("Genotype Value")
+    ax.set_ylabel("ECDF")
+    ax.set_title(f"Wasserstein Distance (should be ~0.0)\n{wasserstein_dist:.4f}")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 8: LD Decay (mini) ===
+    ax = axes[1, 3]
+
+    # Use centralized LD computation
+    real_distances = metrics["real_distances"]
+    real_r2 = metrics["real_r2"]
+    gen_distances = metrics["gen_distances"]
+    gen_r2 = metrics["gen_r2"]
+
+    # Ensure arrays for boolean masking and indexing
+    real_distances = np.asarray(real_distances)
+    real_r2 = np.asarray(real_r2)
+    gen_distances = np.asarray(gen_distances)
+    gen_r2 = np.asarray(gen_r2)
+
+    if len(real_distances) > 0 and len(gen_distances) > 0:
+        # Binning (recreate for plotting)
+        max_dist = int(min(50, max(np.max(real_distances), np.max(gen_distances))))
+        if max_dist < 2:
+            max_dist = 2
+        bins = np.arange(1, max_dist + 1)
+        bin_centers = bins
+        real_binned = [
+            np.mean(real_r2[real_distances == d]) if np.any(real_distances == d) else 0
+            for d in bins
+        ]
+        gen_binned = [
+            np.mean(gen_r2[gen_distances == d]) if np.any(gen_distances == d) else 0
+            for d in bins
+        ]
+
+        # Plot light scatter of raw points (subsample for speed)
+        if len(real_distances) > 0:
+            idx = np.random.choice(
+                len(real_distances), size=min(1000, len(real_distances)), replace=False
+            )
+            ax.scatter(
+                np.array(real_distances)[idx],
+                np.array(real_r2)[idx],
+                s=6,
+                alpha=0.15,
+                color="blue",
+            )
+        if len(gen_distances) > 0:
+            idx = np.random.choice(
+                len(gen_distances), size=min(1000, len(gen_distances)), replace=False
+            )
+            ax.scatter(
+                np.array(gen_distances)[idx],
+                np.array(gen_r2)[idx],
+                s=6,
+                alpha=0.15,
+                color="red",
+            )
+
+        # Plot binned means
+        ax.plot(
+            bin_centers,
+            real_binned,
+            "b-o",
+            linewidth=2,
+            markersize=4,
+            label="Real (binned)",
+        )
+        ax.plot(
+            bin_centers,
+            gen_binned,
+            "r-s",
+            linewidth=2,
+            markersize=4,
+            label="Gen (binned)",
+        )
+
+        ax.set_title(f"LD Decay Correlation (should be 1.0)\nr² Corr: {ld_corr:.3f}")
+        ax.set_xlabel("Distance (SNPs)")
+        ax.set_ylabel("r²")
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+    else:
+        ax.text(0.5, 0.5, "Insufficient data for LD", ha="center", va="center")
+        ax.axis("off")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")

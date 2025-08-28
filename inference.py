@@ -28,6 +28,7 @@ import torch
 from src.infer_utils import (
     compute_quality_metrics,
     generate_samples,
+    get_encoding_params,
     sample_distribution,
     sample_statistics,
     sample_visualization,
@@ -144,6 +145,17 @@ def main():
         f"✅ Sample shapes match: {real_samples.shape} (Real) == {generated_samples.shape} (Generated)"
     )
 
+    # Determine encoding from data (scaled vs unscaled)
+    # If max value <= 0.5, we assume scaled encoding [0.0, 0.25, 0.5]
+    try:
+        max_val = float(torch.max(real_samples).item())
+    except Exception:
+        max_val = 0.5
+    scaled = max_val <= 0.5 + 1e-6
+    enc = get_encoding_params(scaled)
+    genotype_values = enc["genotype_values"]
+    max_value = enc["max_value"]
+
     # === Basic Sample Analysis ===
     print(f"\n📊 BASIC SAMPLE ANALYSIS")
     print("=" * 40)
@@ -166,15 +178,17 @@ def main():
         real_samples,
         generated_samples,
         output_dir / "sample_distribution.png",
-        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
+        genotype_values=genotype_values,
     )
-    logger.info("✅ Sample distributions (sample_distribution.png) are saved")
+    logger.info(
+        f"✅ Sample distributions (sample_distribution.png) saved with genotype_values={genotype_values}"
+    )
 
     sample_visualization(
         real_samples,
         generated_samples,
         output_dir / "sample_visualization.png",
-        genotype_values=[0.0, 0.25, 0.5],  # OR, [0.0, 0.5, 1.0]
+        genotype_values=genotype_values,
         max_seq_len=1000,
     )
     logger.info("✅ Sample visualizations (sample_visualization.png) are saved")
@@ -188,17 +202,35 @@ def main():
     # === Basic Quality Assessment ===
     print(f"\n📊 QUICK QUALITY METRICS")
     logger.info("Computing quality metrics...")
-    quality_score = compute_quality_metrics(real_samples, generated_samples)
+    metrics = compute_quality_metrics(
+        real_samples,
+        generated_samples,
+        max_value=max_value,
+        genotype_values=genotype_values,
+    )
+    quality_score = metrics["overall_score"]
 
     # Create visual metrics plot
     logger.info("Visualizing quality metrics...")
     visualize_quality_metrics(
-        real_samples, generated_samples, output_dir / "quick_metrics.png"
+        real_samples,
+        generated_samples,
+        output_dir / "quick_metrics.png",
+        max_value=max_value,
+        genotype_values=genotype_values,
     )
 
     print(f"\n🎯 QUICK QUALITY ASSESSMENT SUMMARY")
     print("=" * 40)
     print(f"Overall Quality Score: {quality_score:.3f}/1.000")
+
+    logger.info(
+        f"Detected encoding: {'scaled' if scaled else 'unscaled'} (max_value={max_value})"
+    )
+    logger.info(f"Genotype values: {genotype_values}")
+    logger.info(
+        f"Key metrics - AF corr: {metrics['af_corr']:.3f}, MAF corr: {metrics['maf_corr']:.3f}, Wasserstein: {metrics['wasserstein_dist']:.4f}"
+    )
 
     if quality_score >= 0.8:
         status = "🟢 EXCELLENT/GOOD"
