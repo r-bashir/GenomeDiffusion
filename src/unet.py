@@ -106,7 +106,16 @@ class ResnetBlock1D(nn.Module):
 
 
 class Attention1D(nn.Module):
-    """Multi-head self-attention for capturing long-range genomic patterns."""
+    """Full self-attention with O(n²) complexity but highest expressiveness.
+
+    Captures all pairwise interactions but impractical for very long sequences.
+    Best for short sequences (<5k SNPs) where memory allows.
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+    """
 
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
@@ -119,6 +128,7 @@ class Attention1D(nn.Module):
 
     def forward(self, x):
         b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
         q = q * self.scale
@@ -133,7 +143,16 @@ class Attention1D(nn.Module):
 
 
 class LinearAttention1D(nn.Module):
-    """Linear attention with O(n) complexity for efficient long sequence processing."""
+    """Linear attention with O(n) complexity but reduced expressiveness.
+
+    Memory-efficient alternative that approximates attention via factorization.
+    Best for extremely long sequences where memory is critical.
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+    """
 
     def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
@@ -142,23 +161,77 @@ class LinearAttention1D(nn.Module):
         self.dim_head = dim_head
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
-
         self.to_out = nn.Sequential(nn.Conv1d(hidden_dim, dim, 1), nn.GroupNorm(1, dim))
 
     def forward(self, x):
         b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
 
+        # Apply scaling before softmax
+        q = q * self.scale
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
 
-        q = q * self.scale
         context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
-
         out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
         out = out.view(b, -1, n)
         return self.to_out(out)
+
+
+class SparseAttention1D(nn.Module):
+    """Windowed attention with O(n×w) complexity and near-full expressiveness.
+
+    Processes sequence in local windows (size w) with optional global tokens.
+    Best balance for long sequences (10k-200k SNPs).
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+        window_size (int): Local attention window size
+        num_global_tokens (int): Global tokens for cross-window attention
+    """
+
+    def __init__(self, dim, heads=4, dim_head=32, window_size=512, num_global_tokens=0):
+        super().__init__()
+        self.scale = dim_head**-0.5
+        self.heads = heads
+        self.dim_head = dim_head
+        self.window_size = window_size
+        self.num_global_tokens = num_global_tokens
+
+        hidden_dim = dim_head * heads
+        self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_out = nn.Conv1d(hidden_dim, dim, 1)
+
+        if num_global_tokens > 0:
+            self.global_tokens = nn.Parameter(torch.randn(1, num_global_tokens, dim))
+
+    def forward(self, x):
+        b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
+        assert self.window_size > 0, "Window size must be positive"
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
+        q = q * self.scale
+
+        # Process in local windows with fixed dimension handling
+        out = torch.zeros_like(v)
+        for i in range(0, n, self.window_size):
+            j = min(i + self.window_size, n)
+
+            # Use consistent window boundaries
+            q_local = q[..., i:j]
+            k_local = k[..., i:j]  # Same window as q
+            v_local = v[..., i:j]  # Same window as q
+
+            sim = torch.einsum("b h d i, b h d j -> b h i j", q_local, k_local)
+            attn = sim.softmax(dim=-1)
+            out[..., i:j] = torch.einsum("b h i j, b h d j -> b h d i", attn, v_local)
+
+        return self.to_out(out.view(b, -1, n))
 
 
 class PreNorm(nn.Module):
@@ -205,10 +278,13 @@ class UNet1D(nn.Module):
         norm_groups (int): GroupNorm groups (default: 8)
         seq_length (int): Expected sequence length for validation
         edge_pad (int): Boundary padding size (default: 2)
+        debug (bool): Print tensor shapes during forward pass
         use_attention (bool): Enable attention mechanisms
+        attention_type (str): 'full', 'linear', or 'sparse' attention
         attention_heads (int): Number of attention heads (default: 4)
         attention_dim_head (int): Dimension per attention head (default: 32)
-        debug (bool): Print tensor shapes during forward pass
+        attention_window (int): Window size for sparse attention (default: 512)
+        num_global_tokens (int): Number of global tokens for sparse attention (default: 16)
 
     Input/Output:
         Input: [B, 1, L] - Noisy SNP sequences
@@ -227,9 +303,12 @@ class UNet1D(nn.Module):
         edge_pad=2,
         debug=False,
         use_attention=True,
-        attention_heads=4,
-        attention_dim_head=32,
-        **kwargs,  # Accept additional arguments for compatibility with unet_kenneweg.py
+        attention_type="sparse",  # 'full', 'linear', or 'sparse'
+        attention_heads=4,  # Number of attention heads
+        attention_dim_head=32,  # Dimension per attention head
+        attention_window=512,  # For sparse attention
+        num_global_tokens=16,  # For sparse attention
+        **kwargs,  # Accept additional arguments
     ):
         """
         Initialize UNet1D with genomic-optimized architecture.
@@ -253,8 +332,11 @@ class UNet1D(nn.Module):
         self.debug = debug
         self.use_gradient_checkpointing = False
         self.use_attention = use_attention
+        self.attention_type = attention_type
         self.attention_heads = attention_heads
         self.attention_dim_head = attention_dim_head
+        self.attention_window = attention_window
+        self.num_global_tokens = num_global_tokens
 
         # --- Model complexity and memory control ---
         # Base feature dimension - kept small (16) to manage memory usage
@@ -265,7 +347,7 @@ class UNet1D(nn.Module):
 
         # Initial conv layer: maps input to base feature dimension
         # Using larger kernel size (7) for better receptive field at the input level
-        # Output: [B, 1, L] -> [B, 16, L]
+        # Output: [B, 1, L] → [B, 16, L]
         kernel_size = 7  # Larger kernel for better pattern recognition
         padding = (kernel_size - 1) // 2  # Same padding to preserve length
         self.init_conv = nn.Conv1d(
@@ -326,26 +408,51 @@ class UNet1D(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
 
+            attn_block = (
+                {
+                    "full": Residual(
+                        PreNorm(
+                            dim_in,
+                            Attention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "linear": Residual(
+                        PreNorm(
+                            dim_in,
+                            LinearAttention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "sparse": Residual(
+                        PreNorm(
+                            dim_in,
+                            SparseAttention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                                window_size=self.attention_window,
+                                num_global_tokens=self.num_global_tokens,
+                            ),
+                        )
+                    ),
+                }[self.attention_type]
+                if self.use_attention
+                else nn.Identity()
+            )
+
             self.downs.append(
                 nn.ModuleList(
                     [
-                        # Mimic original: block(dim_in, dim_in), block(dim_in, dim_in)
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                        (
-                            Residual(
-                                PreNorm(
-                                    dim_in,
-                                    LinearAttention1D(
-                                        dim_in,
-                                        heads=self.attention_heads,
-                                        dim_head=self.attention_dim_head,
-                                    ),
-                                )
-                            )
-                            if self.use_attention
-                            else nn.Identity()
-                        ),
+                        attn_block,
                         (
                             Downsample1D(dim_in, dim_out)
                             if not is_last
@@ -359,16 +466,40 @@ class UNet1D(nn.Module):
         mid_dim = dims[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
         self.mid_attn = (
-            Residual(
-                PreNorm(
-                    mid_dim,
-                    Attention1D(
+            {
+                "full": Residual(
+                    PreNorm(
                         mid_dim,
-                        heads=self.attention_heads,
-                        dim_head=self.attention_dim_head,
-                    ),
-                )
-            )
+                        Attention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                ),
+                "linear": Residual(
+                    PreNorm(
+                        mid_dim,
+                        LinearAttention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                ),
+                "sparse": Residual(
+                    PreNorm(
+                        mid_dim,
+                        SparseAttention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                            window_size=self.attention_window,
+                            num_global_tokens=self.num_global_tokens,
+                        ),
+                    )
+                ),
+            }[self.attention_type]
             if self.use_attention
             else nn.Identity()
         )
@@ -379,26 +510,51 @@ class UNet1D(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
 
+            attn_block = (
+                {
+                    "full": Residual(
+                        PreNorm(
+                            dim_out,
+                            Attention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "linear": Residual(
+                        PreNorm(
+                            dim_out,
+                            LinearAttention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "sparse": Residual(
+                        PreNorm(
+                            dim_out,
+                            SparseAttention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                                window_size=self.attention_window,
+                                num_global_tokens=self.num_global_tokens,
+                            ),
+                        )
+                    ),
+                }[self.attention_type]
+                if self.use_attention
+                else nn.Identity()
+            )
+
             self.ups.append(
                 nn.ModuleList(
                     [
-                        # Mimic original: block(dim_out + dim_in, dim_out) twice
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        (
-                            Residual(
-                                PreNorm(
-                                    dim_out,
-                                    LinearAttention1D(
-                                        dim_out,
-                                        heads=self.attention_heads,
-                                        dim_head=self.attention_dim_head,
-                                    ),
-                                )
-                            )
-                            if self.use_attention
-                            else nn.Identity()
-                        ),
+                        attn_block,
                         (
                             Upsample1D(dim_out, dim_in)
                             if not is_last

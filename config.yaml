@@ -24,7 +24,7 @@ data:
     - [3, 7, 0.5]
     - [7, 10, 1.0]
   mixing_interval: 10
-  scaling: false               # Scale data further using a scale_factor
+  scaling: true                # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
 
 # DDPM
@@ -46,11 +46,14 @@ unet:
   with_pos_emb: true           # On/off sinusoidal position embeddings
   norm_groups: 8               # Number of groups in GroupNorm layers
   edge_pad: 2                  # Edge padding for boundary preservation
-  use_attention: true          # Enable self-attention blocks
-  attention_heads: 4           # Increased heads for better pattern capture
+  use_attention: true          # Enable multi-head self-attention blocks
+  attention_type: "linear"     # Attention type: 'full', 'linear', or 'sparse'
+  attention_heads: 4           # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
-  dropout: 0.2                 # Dropout rate for ResNet blocks
-  use_scale_shift_norm: true   # Use scale-shift normalization for ResNet blocks
+  window_size: 512             # Window size for sparse attention
+  num_global_tokens: 16        # Number of global tokens for sparse attention
+  dropout: 0.2                 # Dropout rate for ResNet blocks (for Kenneweg)
+  use_scale_shift_norm: true   # Use scale-shift norm for ResNet blocks (for Kenneweg)
   attention_checkpoint: true   # Use gradient checkpointing for attention blocks
 
 # Trainer
@@ -76,7 +79,7 @@ optimizer:
 scheduler:
   type: "reduce"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
   eta_min: 1.0e-05             # Minimum learning rate for CosineAnnealingLR
-  mode: "min"                  # or "max"
+  mode: "min"                  # "min" or "max"
   factor: 0.7                  # Gentler LR reduction for fine-tuning
   patience: 10                 # Shorter patience for fast convergence
   threshold: 1.0e-05           # Smaller threshold for detecting subtle improvements
