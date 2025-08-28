@@ -79,5 +79,5 @@ scheduler:
   mode: "min"                  # or "max"
   factor: 0.7                  # Gentler LR reduction for fine-tuning
   patience: 10                 # Shorter patience for fast convergence
-  threshold: 1e-5              # Smaller threshold for detecting subtle improvements
-  min_lr: 1e-7                 # Lower minimum LR for extended fine-tuning
+  threshold: 1.0e-05           # Smaller threshold for detecting subtle improvements
+  min_lr: 1.0e-07              # Lower minimum LR for extended fine-tuning
