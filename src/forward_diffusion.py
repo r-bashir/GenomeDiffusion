@@ -44,7 +44,7 @@ class ForwardDiffusion:
         _time_steps (int): Total number of diffusion steps T
         _beta_start (float): Starting value for β schedule (β_1)
         _beta_end (float): Ending value for β schedule (β_T)
-        _schedule_type (str): Type of β schedule ('cosine' or 'linear')
+        _beta_schedule (str): Type of β schedule ('cosine' or 'linear')
         _betas_t (torch.Tensor): β values for each timestep, shape (T,)
         _alphas_t (torch.Tensor): α_t = 1-β_t values, shape (T,)
         _alphas_bar_t (torch.Tensor): Cumulative product ᾱ_t = Π_{s=1}^t α_s, shape (T+1,)
@@ -56,7 +56,7 @@ class ForwardDiffusion:
         time_steps: int = 1000,
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
-        schedule_type: str = "cosine",
+        beta_schedule: str = "cosine",
     ) -> None:
         """
         Initialize the diffusion process with specified noise schedule parameters.
@@ -65,29 +65,29 @@ class ForwardDiffusion:
             time_steps (int, optional): Total number of diffusion timesteps T. Defaults to 1000.
             beta_start (float, optional): Starting value for β schedule. Defaults to 0.0001.
             beta_end (float, optional): Final value for β schedule. Defaults to 0.02.
-            schedule_type (str, optional): Type of β schedule to use ('cosine' or 'linear'). Defaults to 'cosine'.
+            beta_schedule (str, optional): Type of β schedule to use ('cosine' or 'linear'). Defaults to 'cosine'.
             max_beta (float, optional): Maximum value for beta in any schedule. Defaults to 0.999.
 
         Raises:
-            ValueError: If schedule_type is not 'cosine' or 'linear'.
+            ValueError: If beta_schedule is not 'cosine' or 'linear'.
         """
 
         # Initialize parameters
         self._time_steps = time_steps
         self._beta_start = beta_start
         self._beta_end = beta_end
-        self._schedule_type = schedule_type
+        self._beta_schedule = beta_schedule
 
         # Select beta schedule
-        if schedule_type == "linear":
+        if beta_schedule == "linear":
             betas_np = self._linear_beta_schedule(
                 self._time_steps, self._beta_start, self._beta_end
             )
-        elif schedule_type == "cosine":
+        elif beta_schedule == "cosine":
             betas_np = self._cosine_beta_schedule(self._time_steps)
         else:
             raise ValueError(
-                f"Unknown schedule_type '{schedule_type}'. Use 'cosine' or 'linear'."
+                f"Unknown beta_schedule '{beta_schedule}'. Use 'cosine' or 'linear'."
             )
 
         # alpha = α_t = 1 - β_t

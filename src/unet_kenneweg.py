@@ -3,7 +3,9 @@
 
 """Based on `https://huggingface.co/blog/annotated-diffusion` that explains
 using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
-adapted the code for 1-dimensional SNP genomic dataset."""
+adapted the code for 1-dimensional SNP genomic dataset. In additon, some
+improvements are applied from the work of Kenneweg et al whose work is similar
+to mine (SNP data, UNet1D), see https://github.com/TheMody/GeneDiffusion."""
 
 import math
 from functools import partial
@@ -60,46 +62,92 @@ class Upsample1D(nn.Module):
         return self.conv(x)
 
 
+# Kenneweg: Added zero initialization utility function
+def zero_module(module):
+    """Zero out the parameters of a module and return it."""
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
+
+
 class Block1D(nn.Module):
     """Basic 1D convolutional block: Conv1D + GroupNorm + SiLU."""
 
-    def __init__(self, dim, dim_out, groups=8):
+    def __init__(
+        self, dim, dim_out, groups=8, dropout=0.0
+    ):  # Kenneweg: Added dropout parameter
         super().__init__()
         self.proj = nn.Conv1d(dim, dim_out, 3, padding=1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
+        self.dropout = (
+            nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+        )  # Kenneweg: Added dropout
 
     def forward(self, x):
         x = self.proj(x)
         x = self.norm(x)
         x = self.act(x)
+        x = self.dropout(
+            x
+        )  # Kenneweg: Apply dropouthttps://github.com/TheMody/GeneDiffusion
         return x
 
 
 class ResnetBlock1D(nn.Module):
     """1D ResNet block with time embedding integration for diffusion models."""
 
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
+    def __init__(
+        self,
+        dim,
+        dim_out,
+        *,
+        time_emb_dim=None,
+        groups=8,
+        dropout=0.0,
+        use_scale_shift_norm=True,
+    ):  # Kenneweg: Added dropout and scale_shift_norm
         super().__init__()
-        # Time embedding MLP projects to dim_out for direct addition
-        self.time_mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
-            if time_emb_dim is not None
-            else None
-        )
+        self.use_scale_shift_norm = use_scale_shift_norm  # Kenneweg: Store flag
 
-        self.block1 = Block1D(dim, dim_out, groups=groups)
-        self.block2 = Block1D(dim_out, dim_out, groups=groups)
+        # Kenneweg: Time embedding MLP projects to 2*dim_out for scale+shift normalization
+        if use_scale_shift_norm:
+            self.time_mlp = (
+                nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2))
+                if time_emb_dim is not None
+                else None
+            )
+        else:
+            # Original behavior: project to dim_out for direct addition
+            self.time_mlp = (
+                nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
+                if time_emb_dim is not None
+                else None
+            )
+
+        self.block1 = Block1D(
+            dim, dim_out, groups=groups, dropout=dropout
+        )  # Kenneweg: Pass dropout
+        self.block2 = Block1D(
+            dim_out, dim_out, groups=groups, dropout=dropout
+        )  # Kenneweg: Pass dropout
         self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
         h = self.block1(x)
 
-        # Add time embedding if provided
+        # Kenneweg: Apply scale-shift normalization or simple addition based on flag
         if self.time_mlp is not None and time_emb is not None:
             time_emb = self.time_mlp(time_emb)
             time_emb = time_emb.unsqueeze(-1)  # [B, C] -> [B, C, 1]
-            h = h + time_emb
+
+            if self.use_scale_shift_norm:
+                # Kenneweg: Scale-shift normalization (FiLM-like conditioning)
+                scale, shift = time_emb.chunk(2, dim=1)
+                h = h * (1 + scale) + shift
+            else:
+                # Original behavior: simple addition
+                h = h + time_emb
 
         h = self.block2(h)
         return h + self.res_conv(x)
@@ -108,16 +156,29 @@ class ResnetBlock1D(nn.Module):
 class Attention1D(nn.Module):
     """Multi-head self-attention for capturing long-range genomic patterns."""
 
-    def __init__(self, dim, heads=4, dim_head=32):
+    def __init__(self, dim, heads=4, dim_head=32, use_checkpoint=False):
         super().__init__()
-        self.scale = dim_head**-0.5
+        # Kenneweg: Double square root scaling for better stability (from Lai et al.)
+        self.scale = 1 / math.sqrt(math.sqrt(dim_head))  # Kenneweg: More stable scaling
+        # self.scale = dim_head**-0.5  # Original standard scaling - uncomment to revert
         self.heads = heads
         self.dim_head = dim_head
+        self.use_checkpoint = use_checkpoint  # Kenneweg: Gradient checkpointing flag
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
-        self.to_out = nn.Conv1d(hidden_dim, dim, 1)
+        # Kenneweg: Zero-initialize output projection for better training stability
+        self.to_out = zero_module(nn.Conv1d(hidden_dim, dim, 1))
 
     def forward(self, x):
+        # Kenneweg: Use gradient checkpointing if enabled
+        if self.use_checkpoint and self.training:
+            return torch.utils.checkpoint.checkpoint(
+                self._forward, x, use_reentrant=False
+            )
+        else:
+            return self._forward(x)
+
+    def _forward(self, x):
         b, c, n = x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
@@ -135,17 +196,32 @@ class Attention1D(nn.Module):
 class LinearAttention1D(nn.Module):
     """Linear attention with O(n) complexity for efficient long sequence processing."""
 
-    def __init__(self, dim, heads=4, dim_head=32):
+    def __init__(self, dim, heads=4, dim_head=32, use_checkpoint=False):
         super().__init__()
-        self.scale = dim_head**-0.5
+        # Kenneweg: Double square root scaling for better stability (from Lai et al.)
+        self.scale = 1 / math.sqrt(math.sqrt(dim_head))  # Kenneweg: More stable scaling
+        # self.scale = dim_head**-0.5  # Original standard scaling - uncomment to revert
         self.heads = heads
         self.dim_head = dim_head
+        self.use_checkpoint = use_checkpoint  # Kenneweg: Gradient checkpointing flag
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
 
-        self.to_out = nn.Sequential(nn.Conv1d(hidden_dim, dim, 1), nn.GroupNorm(1, dim))
+        # Kenneweg: Zero-initialize output projection for better training stability
+        self.to_out = nn.Sequential(
+            zero_module(nn.Conv1d(hidden_dim, dim, 1)), nn.GroupNorm(1, dim)
+        )
 
     def forward(self, x):
+        # Kenneweg: Use gradient checkpointing if enabled
+        if self.use_checkpoint and self.training:
+            return torch.utils.checkpoint.checkpoint(
+                self._forward, x, use_reentrant=False
+            )
+        else:
+            return self._forward(x)
+
+    def _forward(self, x):
         b, c, n = x.shape
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
@@ -179,6 +255,14 @@ class UNet1D(nn.Module):
     """
     1D U-Net for genomic SNP sequence modeling in diffusion models.
 
+    Kenneweg IMPROVEMENTS IMPLEMENTED:
+    - Scale-shift normalization (FiLM-like conditioning) for better time embedding integration
+    - Zero-initialized output layers for training stability
+    - Dropout in ResNet blocks (0.1) for regularization
+    - Larger time embedding dimension (embedding_dim * 4) for better expressivity
+    - Additive residual connections instead of concatenation
+    - Zero-initialized attention output projections
+
     A time-conditional U-Net architecture designed for denoising genomic sequences
     in diffusion-based generative models. Processes SNP data as 1D sequences with
     shape [batch_size, 1, sequence_length].
@@ -209,6 +293,8 @@ class UNet1D(nn.Module):
         attention_heads (int): Number of attention heads (default: 4)
         attention_dim_head (int): Dimension per attention head (default: 32)
         debug (bool): Print tensor shapes during forward pass
+        dropout (float): Dropout rate for ResNet blocks (default: 0.1) # Kenneweg
+        use_scale_shift_norm (bool): Use scale-shift normalization (default: True) # Kenneweg
 
     Input/Output:
         Input: [B, 1, L] - Noisy SNP sequences
@@ -229,10 +315,12 @@ class UNet1D(nn.Module):
         use_attention=True,
         attention_heads=4,
         attention_dim_head=32,
-        **kwargs,  # Accept additional arguments for compatibility with unet_new_lai.py
+        dropout=0.1,  # Kenneweg: Added dropout parameter
+        use_scale_shift_norm=True,  # Kenneweg: Added scale-shift normalization flag
+        attention_checkpoint=False,  # Kenneweg: Added attention checkpointing flag
     ):
         """
-        Initialize UNet1D with genomic-optimized architecture.
+        Initialize UNet1D with genomic-optimized architecture and Lai et al. improvements.
 
         Memory usage scales with embedding_dim × dim_mults. For efficiency:
         - embedding_dim=64-128 balances capacity and memory
@@ -255,6 +343,13 @@ class UNet1D(nn.Module):
         self.use_attention = use_attention
         self.attention_heads = attention_heads
         self.attention_dim_head = attention_dim_head
+        self.dropout = dropout  # Kenneweg: Store dropout rate
+        self.use_scale_shift_norm = (
+            use_scale_shift_norm  # Kenneweg: Store normalization flag
+        )
+        self.attention_checkpoint = (
+            attention_checkpoint  # Kenneweg: Store attention checkpointing flag
+        )
 
         # --- Model complexity and memory control ---
         # Base feature dimension - kept small (16) to manage memory usage
@@ -291,12 +386,14 @@ class UNet1D(nn.Module):
         self._in_out = in_out  # Input/output dim pairs
 
         # --- Embeddings ---
+        # Kenneweg: Larger time embedding dimension for better expressivity (4x instead of 1x)
         # Time embeddings: crucial for diffusion models
         # Maps scalar timestep to high-dim vector via sinusoidal encoding
         # Then projects through MLP for better expressivity
-        # Output dimension matches embedding_dim for consistent scale
         if self.with_time_emb:
-            time_dim = self.embedding_dim  # Consistent dimension for stability
+            time_dim = (
+                self.embedding_dim * 4
+            )  # Kenneweg: Increased from embedding_dim to embedding_dim * 4
             self.time_mlp = nn.Sequential(
                 # Initial sinusoidal encoding
                 SinusoidalTimeEmbeddings(self.embedding_dim),
@@ -319,7 +416,13 @@ class UNet1D(nn.Module):
 
         # ========== UNet1D Architecture ==========
         num_resolutions = len(in_out)
-        block_klass = partial(ResnetBlock1D, groups=self.norm_groups)
+        # Kenneweg: Pass dropout and scale_shift_norm parameters to ResNet blocks
+        block_klass = partial(
+            ResnetBlock1D,
+            groups=self.norm_groups,
+            dropout=self.dropout,
+            use_scale_shift_norm=self.use_scale_shift_norm,
+        )
 
         # ENCODER / DOWNSAMPLING
         self.downs = nn.ModuleList([])
@@ -340,6 +443,7 @@ class UNet1D(nn.Module):
                                         dim_in,
                                         heads=self.attention_heads,
                                         dim_head=self.attention_dim_head,
+                                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
                                     ),
                                 )
                             )
@@ -362,10 +466,11 @@ class UNet1D(nn.Module):
             Residual(
                 PreNorm(
                     mid_dim,
-                    Attention1D(
+                    LinearAttention1D(
                         mid_dim,
                         heads=self.attention_heads,
                         dim_head=self.attention_dim_head,
+                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
                     ),
                 )
             )
@@ -393,6 +498,7 @@ class UNet1D(nn.Module):
                                         dim_out,
                                         heads=self.attention_heads,
                                         dim_head=self.attention_dim_head,
+                                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
                                     ),
                                 )
                             )
@@ -411,7 +517,8 @@ class UNet1D(nn.Module):
         # OUTPUT
         self.out_dim = out_dim if out_dim is not None else self.channels
         self.final_res_block = block_klass(dims[0] * 2, dims[0], time_emb_dim=time_dim)
-        self.final_conv = nn.Conv1d(dims[0], self.out_dim, 1)
+        # Kenneweg: Zero-initialize final convolution for training stability
+        self.final_conv = zero_module(nn.Conv1d(dims[0], self.out_dim, 1))
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing to reduce memory usage during training."""
@@ -476,9 +583,8 @@ class UNet1D(nn.Module):
             print(f"[DEBUG] After initial conv: {x.shape}")
         t = self.time_mlp(time) if self.time_mlp else None
 
-        # === Residual Connection ===
-        # Save residual connection from after initial conv (for final output)
-        r = x
+        # Kenneweg: Save input for additive residual connection (instead of concatenation)
+        x_skip = x.clone()
 
         # ENCODER / DOWNSAMPLING
         h = []
@@ -509,6 +615,10 @@ class UNet1D(nn.Module):
             x = upsample(x)
 
         # OUTPUT
-        x = torch.cat((x, r), dim=1)
+        x = torch.cat((x, x_skip), dim=1)  # Kenneweg: Use saved input skip connection
         x = self.final_res_block(x, t)
-        return self.final_conv(x)
+        output = self.final_conv(x)
+
+        # Kenneweg: Return additive residual instead of just output
+        # This follows the pattern from Lai et al. where x_skip + h is returned
+        return x_skip[:, : self.out_dim, :] + output

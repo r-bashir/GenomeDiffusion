@@ -19,7 +19,9 @@ from .mlp import (
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
-from .unet import UNet1D
+
+# from .unet import UNet1D
+from .unet_new_lai import UNet1D
 from .utils import bcast_right, tensor_to_device
 
 
@@ -50,7 +52,7 @@ class DiffusionModel(NetworkBase):
             time_steps=hparams["diffusion"]["timesteps"],
             beta_start=hparams["diffusion"]["beta_start"],
             beta_end=hparams["diffusion"]["beta_end"],
-            schedule_type=hparams["diffusion"]["schedule_type"],
+            beta_schedule=hparams["diffusion"]["beta_schedule"],
         )
 
         # Noise Predictor
@@ -66,6 +68,9 @@ class DiffusionModel(NetworkBase):
             use_attention=hparams["unet"].get("use_attention", True),
             attention_heads=hparams["unet"].get("attention_heads", 4),
             attention_dim_head=hparams["unet"].get("attention_dim_head", 32),
+            dropout=hparams["unet"].get("dropout", 0.0),
+            use_scale_shift_norm=hparams["unet"].get("use_scale_shift_norm", True),
+            attention_checkpoint=hparams["unet"].get("attention_checkpoint", False),
         )
 
         # ReverseDiffusion: Reverse diffusion process
