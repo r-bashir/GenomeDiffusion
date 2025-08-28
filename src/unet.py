@@ -573,6 +573,29 @@ class UNet1D(nn.Module):
         """Enable gradient checkpointing to reduce memory usage during training."""
         self.use_gradient_checkpointing = True
 
+    def _resize_to_length(self, x: torch.Tensor, target_len: int) -> torch.Tensor:
+        """Pad or crop a 1D feature map along the sequence dimension to match target_len.
+
+        Uses reflective padding when increasing length to preserve boundary information.
+        This helps resolve off-by-one mismatches introduced by odd-length down/upsampling.
+
+        Args:
+            x: Tensor of shape [B, C, L]
+            target_len: desired length L_out
+
+        Returns:
+            Tensor with shape [B, C, target_len]
+        """
+        cur_len = x.size(-1)
+        if cur_len == target_len:
+            return x
+        if cur_len < target_len:
+            pad_right = target_len - cur_len
+            # (left, right) padding
+            return F.pad(x, (0, pad_right), mode="reflect")
+        # cur_len > target_len: crop on the right
+        return x[..., :target_len]
+
     def forward(self, x, time):
         """
         Forward pass for noise prediction in diffusion models.
@@ -655,16 +678,24 @@ class UNet1D(nn.Module):
 
         # DECODER / UPSAMPLING
         for block1, block2, attn, upsample in self.ups:
-            x = torch.cat((x, h.pop()), dim=1)  # Use skip 1
+            skip2 = h.pop()
+            # Align lengths before concatenation
+            x = self._resize_to_length(x, skip2.size(-1))
+            x = torch.cat((x, skip2), dim=1)  # Use skip 1
             x = block1(x, t)
 
-            x = torch.cat((x, h.pop()), dim=1)  # Use skip 2
+            skip1 = h.pop()
+            # Align lengths before concatenation
+            x = self._resize_to_length(x, skip1.size(-1))
+            x = torch.cat((x, skip1), dim=1)  # Use skip 2
             x = block2(x, t)
             x = attn(x)
 
             x = upsample(x)
 
         # OUTPUT
+        # Align with initial residual
+        x = self._resize_to_length(x, r.size(-1))
         x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
         return self.final_conv(x)
