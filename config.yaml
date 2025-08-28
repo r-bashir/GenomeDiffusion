@@ -1,5 +1,5 @@
 # Project name
-project_name: "MixDiff"
+project_name: "TestDiff"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -26,11 +26,6 @@ data:
   mixing_interval: 10
   scaling: false               # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
-
-# Time Sampler
-time_sampler:
-  tmin: 1                      # Min value for time sampler
-  tmax: 1000                   # Max value for time sampler, should match `timesteps`
 
 # DDPM
 diffusion:
@@ -72,10 +67,10 @@ training:
 optimizer:
   lr: 0.0001                   # Learning rate for AdamW optimizer
   min_lr: 1.0e-05              # Minimum learning rate after warmup
-  weight_decay: 0.0001          # Weight decay (L2 regularization)
+  weight_decay: 0.0001         # Weight decay (L2 regularization)
   betas: [0.9, 0.999]          # Beta coefficients for running averages of gradient and its square
   eps: 1.0e-08                 # Term for numerical stability
-  amsgrad: false                # Use AMSGrad variant of AdamW
+  amsgrad: false               # Use AMSGrad variant of AdamW
 
 # LR Scheduler
 scheduler:

@@ -44,7 +44,7 @@ class DiffusionModel(NetworkBase):
 
         # Continuous time sampler
         self.time_sampler = UniformContinuousTimeSampler(
-            tmin=hparams["time_sampler"]["tmin"], tmax=hparams["time_sampler"]["tmax"]
+            tmin=1, tmax=hparams["diffusion"]["timesteps"]
         )
 
         # ForwardDiffusion: Forward diffusion process
