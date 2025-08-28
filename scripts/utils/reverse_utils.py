@@ -346,7 +346,18 @@ def visualize_diffusion_process_lineplot(
         mu = torch_to_numpy(r["mu"].squeeze())
         x_t_minus_1 = torch_to_numpy(r["x_t_minus_1"].squeeze())
         seq_len = x0_true.shape[-1]
-        x_axis = np.arange(seq_len)
+        # Limit visualization to first 100 SNPs for performance
+        max_snps_to_plot = min(100, seq_len)
+        x_axis = np.arange(max_snps_to_plot)
+
+        # Truncate all arrays to first 100 SNPs
+        epsilon = epsilon[:max_snps_to_plot]
+        epsilon_theta = epsilon_theta[:max_snps_to_plot]
+        x0_true = x0_true[:max_snps_to_plot]
+        x0_pred = x0_pred[:max_snps_to_plot]
+        xt = xt[:max_snps_to_plot]
+        mu = mu[:max_snps_to_plot]
+        x_t_minus_1 = x_t_minus_1[:max_snps_to_plot]
 
         # Set titles
         if i == 0:
@@ -362,7 +373,7 @@ def visualize_diffusion_process_lineplot(
             axes[i, 4].set_title(r"Denoising", fontsize=6)
         if i == n_rows - 1:
             for j in range(axes.shape[1]):
-                axes[i, j].set_xlabel("Markers", fontsize=6)
+                axes[i, j].set_xlabel("SNP Position (first 100)", fontsize=6)
 
         axes[i, 0].set_ylabel(f"t={t}")
 
@@ -477,7 +488,14 @@ def visualize_diffusion_process_superimposed(
         xt = torch_to_numpy(result["xt"]).flatten()
         mu = torch_to_numpy(result["mu"]).flatten()
         x_t_minus_1 = torch_to_numpy(result["x_t_minus_1"]).flatten()
-        x_axis = np.arange(len(x0_pred))
+
+        # Limit visualization to first 100 SNPs for performance
+        max_snps_to_plot = min(100, len(x0_pred))
+        x0_pred = x0_pred[:max_snps_to_plot]
+        xt = xt[:max_snps_to_plot]
+        mu = mu[:max_snps_to_plot]
+        x_t_minus_1 = x_t_minus_1[:max_snps_to_plot]
+        x_axis = np.arange(max_snps_to_plot)
 
         # Plot data
         axes[i].plot(
@@ -516,7 +534,7 @@ def visualize_diffusion_process_superimposed(
             label=r"Denoised sample: $x_{t-1}$",
             alpha=1.0,
         )
-        axes[i].set_title(f"t={t}")
+        axes[i].set_title(f"t={t} (first 100 SNPs)")
         axes[i].legend(loc="lower right", fontsize=8)
         axes[i].grid(True, alpha=0.3)
 
@@ -564,7 +582,17 @@ def plot_reverse_mean_components(results, timesteps, output_dir=None):
         sigma_t = torch_to_numpy(r["sigma_t"].squeeze())
         x_t_minus_1 = torch_to_numpy(r["x_t_minus_1"].squeeze())
         seq_len = xt.shape[-1]
-        x_axis = np.arange(seq_len)
+        # Limit visualization to first 100 SNPs for performance
+        max_snps_to_plot = min(100, seq_len)
+        x_axis = np.arange(max_snps_to_plot)
+
+        # Truncate all arrays to first 100 SNPs
+        epsilon_theta = epsilon_theta[:max_snps_to_plot]
+        x0_true = x0_true[:max_snps_to_plot]
+        x0_pred = x0_pred[:max_snps_to_plot]
+        xt = xt[:max_snps_to_plot]
+        mu = mu[:max_snps_to_plot]
+        x_t_minus_1 = x_t_minus_1[:max_snps_to_plot]
 
         # Set titles
         if i == 0:
@@ -581,7 +609,7 @@ def plot_reverse_mean_components(results, timesteps, output_dir=None):
             )
         if i == n_rows - 1:
             for j in range(axes.shape[1]):
-                axes[i, j].set_xlabel("SNP Markers")
+                axes[i, j].set_xlabel("SNP Position (first 100)")
 
         # x_t: Noisy sample
         axes[i, 0].plot(x_axis, xt, "b-", linewidth=1)

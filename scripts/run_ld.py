@@ -8,12 +8,21 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.stats import pearsonr
+
+# Add project root
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# All imports after path modification
+# We need to disable the import-not-at-top lint rule
+# ruff: noqa: E402
 
 from src.infer_utils import generate_samples
 from src.utils import load_model_from_checkpoint, set_seed, setup_logging

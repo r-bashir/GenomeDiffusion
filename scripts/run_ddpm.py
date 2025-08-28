@@ -105,7 +105,7 @@ def main():
 
     # Run Reverse Diffusion Process (Markov Chain)
     samples_dict = run_denoising_process(
-        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=False
+        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=True
     )
 
     # Plot and compare

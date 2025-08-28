@@ -132,17 +132,6 @@ def main():
     logger.info("Metrics Report:")
     print(f"\n{report}\n")
 
-    # Plot true noise vs predicted noise at SNP 60
-    plt.figure(figsize=(7, 5))
-    plt.plot(true_noise_values, eps_thetas[:, snp_index], marker="o")
-    plt.xlabel(f"True Noise at SNP {snp_index+1}")
-    plt.ylabel(f"Predicted Noise at SNP {snp_index+1}")
-    plt.title(f"Locality Curve: SNP {snp_index+1}")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(output_dir / f"snp{snp_index+1}_locality_curve.png", dpi=150)
-    plt.close()
-
     # Predicted noise histogram at SNP 60
     plt.figure(figsize=(7, 5))
     plt.hist(eps_thetas.flatten(), bins=100, density=True)

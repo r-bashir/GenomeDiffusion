@@ -157,6 +157,12 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
     x_t_np = torch_to_numpy(x_t).flatten()
     x_t_minus_1_np = torch_to_numpy(x_t_minus_1).flatten()
 
+    # Limit visualization to first 100 SNPs for performance
+    max_snps_to_plot = min(100, len(x0_np))
+    x0_np = x0_np[:max_snps_to_plot]
+    x_t_np = x_t_np[:max_snps_to_plot]
+    x_t_minus_1_np = x_t_minus_1_np[:max_snps_to_plot]
+
     mse_x0 = np.mean((x0_np - x_t_minus_1_np) ** 2)
     corr_x0 = np.corrcoef(x0_np, x_t_minus_1_np)[0, 1]
     mse_xt = np.mean((x_t_np - x_t_minus_1_np) ** 2)
@@ -181,7 +187,7 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
     # axs[1].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
     axs[1].plot(x_t_minus_1_np, label=r"Denoised $x_{t-1}$", color="green", alpha=0.7)
     axs[1].set_title(f"Denoising Comparison (T={T})")
-    axs[1].set_xlabel("Position")
+    axs[1].set_xlabel("SNP Position (first 100)")
     axs[1].legend()
 
     # Annotate MSE and correlation
@@ -224,10 +230,19 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
     x0_np = torch_to_numpy(x0).flatten()
     x_t_np = torch_to_numpy(x_t).flatten()
 
+    # Limit visualization to first 100 SNPs for performance
+    max_snps_to_plot = min(100, len(x0_np))
+    x0_np = x0_np[:max_snps_to_plot]
+    x_t_np = x_t_np[:max_snps_to_plot]
+
     # Prepare x0_recon_arr and timesteps from samples_dict (preserve insertion order)
     timesteps = list(samples_dict.keys())
     x0_recon_arr = np.stack(
-        [torch_to_numpy(samples_dict[t]).flatten() for t in timesteps], axis=0
+        [
+            torch_to_numpy(samples_dict[t]).flatten()[:max_snps_to_plot]
+            for t in timesteps
+        ],
+        axis=0,
     )
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
@@ -236,7 +251,8 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
     axs[0].plot(x0_np, label=r"Original $x_0$", color="blue")
     axs[0].plot(x_t_np, label=r"Noisy $x_t$", color="red", alpha=0.6)
     axs[0].set_title(f"Original vs Noisy (T={T})")
-    axs[0].set_xlabel("Position")
+    axs[0].set_xlabel("SNP Position (first 100)")
+    axs[0].legend()
     axs[0].set_ylabel("Value")
     axs[0].set_ylim(axs[0].get_ylim())  # Match y-axis
 
@@ -248,7 +264,7 @@ def plot_denoising_trajectory(x0, x_t, samples_dict, T, output_path):
             axs[1].plot(x0_recon_flat, label=f"Step {timesteps[i]}", alpha=0.7)
 
     axs[1].set_title(f"Denoising Trajectory (T={T})")
-    axs[1].set_xlabel("Position")
+    axs[1].set_xlabel("SNP Position (first 100)")
     axs[1].legend(fontsize=8)
 
     fig.tight_layout()
