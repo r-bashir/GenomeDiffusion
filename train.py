@@ -255,7 +255,7 @@ def main():
         enable_progress_bar=True,
         enable_model_summary=True,
     )
-    logger.info("Trainer initialized successfully...\n")
+    logger.info("Trainer initialized successfully...")
 
     # Train model
     try:
