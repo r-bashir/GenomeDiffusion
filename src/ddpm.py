@@ -61,16 +61,20 @@ class DiffusionModel(NetworkBase):
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
             with_time_emb=hparams["unet"]["with_time_emb"],
-            with_pos_emb=hparams["unet"].get("with_pos_emb", True),
+            with_pos_emb=hparams["unet"]["with_pos_emb"],
             norm_groups=hparams["unet"]["norm_groups"],
             seq_length=hparams["data"]["seq_length"],
             edge_pad=hparams["unet"]["edge_pad"],
-            use_attention=hparams["unet"].get("use_attention", True),
-            attention_heads=hparams["unet"].get("attention_heads", 4),
-            attention_dim_head=hparams["unet"].get("attention_dim_head", 32),
-            dropout=hparams["unet"].get("dropout", 0.0),
-            use_scale_shift_norm=hparams["unet"].get("use_scale_shift_norm", True),
-            attention_checkpoint=hparams["unet"].get("attention_checkpoint", False),
+            enable_checkpointing=hparams["unet"]["enable_checkpointing"],
+            use_attention=hparams["unet"]["use_attention"],
+            attention_type=hparams["unet"]["attention_type"],
+            attention_heads=hparams["unet"]["attention_heads"],
+            attention_dim_head=hparams["unet"]["attention_dim_head"],
+            attention_window=hparams["unet"]["attention_window"],
+            num_global_tokens=hparams["unet"]["num_global_tokens"],
+            # Dropout & Scale Shift Norm
+            dropout=hparams["unet"]["dropout"],
+            use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
         )
 
         # ReverseDiffusion: Reverse diffusion process
@@ -78,15 +82,9 @@ class DiffusionModel(NetworkBase):
             self.forward_diffusion,
             self.noise_predictor,
             self._data_shape,
-            denoise_step=hparams["diffusion"].get("denoise_step", 1),
-            discretize=hparams["diffusion"].get("discretize", False),
+            denoise_step=hparams["diffusion"]["denoise_step"],
+            discretize=hparams["diffusion"]["discretize"],
         )
-
-        # Enable gradient checkpointing for memory efficiency
-        if hasattr(self.noise_predictor, "gradient_checkpointing_enable"):
-            self.noise_predictor.gradient_checkpointing_enable()
-        else:
-            print("Warning: `gradient_checkpointing_enable()` not found. Skipping...")
 
     # ==================== Training Methods ====================
     def forward(self, batch: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

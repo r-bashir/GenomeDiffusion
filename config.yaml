@@ -46,15 +46,15 @@ unet:
   with_pos_emb: true           # On/off sinusoidal position embeddings
   norm_groups: 8               # Number of groups in GroupNorm layers
   edge_pad: 2                  # Edge padding for boundary preservation
+  enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
   use_attention: true          # Enable multi-head self-attention blocks
   attention_type: "linear"     # Attention type: 'full', 'linear', or 'sparse'
   attention_heads: 4           # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
-  window_size: 512             # Window size for sparse attention
+  attention_window: 512        # Window size for sparse attention
   num_global_tokens: 16        # Number of global tokens for sparse attention
   dropout: 0.2                 # Dropout rate for ResNet blocks (for Kenneweg)
   use_scale_shift_norm: true   # Use scale-shift norm for ResNet blocks (for Kenneweg)
-  attention_checkpoint: true   # Use gradient checkpointing for attention blocks
 
 # Trainer
 training:
@@ -65,6 +65,8 @@ training:
   save_top_k: 1                # Number of top models to save
   logger: "wandb"              # Logger to use
   log_every_n_steps: 5         # More frequent logging for short training
+  precision: "16-mixed"        # Mixed precision training (saves ~2× memory)
+  accumulate_grad_batches: 8   # Increase gradient accumulation for memory efficiency
 
 # Optimizer
 optimizer:

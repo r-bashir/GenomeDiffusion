@@ -226,7 +226,7 @@ def main():
     try:
         logger.info("Initializing model...")
         model = DiffusionModel(config)
-        logger.info("Model initialized successfully")
+        logger.info("Model initialized successfully...")
     except Exception as e:
         raise RuntimeError(f"Failed to initialize model: {e}")
 
@@ -250,7 +250,9 @@ def main():
         callbacks=callbacks,
         logger=train_logger,
         default_root_dir=config["output_path"],
-        log_every_n_steps=config["training"].get("log_every_n_steps", 50),
+        log_every_n_steps=config["training"]["log_every_n_steps"],
+        precision=config["training"]["precision"],
+        accumulate_grad_batches=config["training"]["accumulate_grad_batches"],
         enable_checkpointing=True,  # overridden by checkpoint callback
         enable_progress_bar=True,
         enable_model_summary=True,
@@ -270,10 +272,10 @@ def main():
         best_checkpoint_path = trainer.checkpoint_callback.best_model_path
 
         print("To run inference locally, execute:")
-        print(f"$ python inference.py --checkpoint {best_checkpoint_path}")
+        print(f"python inference.py --checkpoint {best_checkpoint_path}")
 
         print("\nTo run inference on cluster, execute:")
-        print(f"$ ./inference.sh {best_checkpoint_path}")
+        print(f"./inference.sh {best_checkpoint_path}")
 
     except Exception as e:
         raise RuntimeError(f"Training failed: {e}")

@@ -11,6 +11,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from src.sinusoidal_embedding import (
     SinusoidalPositionEmbeddings,
@@ -278,7 +279,6 @@ class UNet1D(nn.Module):
         norm_groups (int): GroupNorm groups (default: 8)
         seq_length (int): Expected sequence length for validation
         edge_pad (int): Boundary padding size (default: 2)
-        debug (bool): Print tensor shapes during forward pass
         use_attention (bool): Enable attention mechanisms
         attention_type (str): 'full', 'linear', or 'sparse' attention
         attention_heads (int): Number of attention heads (default: 4)
@@ -301,7 +301,7 @@ class UNet1D(nn.Module):
         norm_groups=8,
         seq_length=160858,
         edge_pad=2,
-        debug=False,
+        enable_checkpointing=True,
         use_attention=True,
         attention_type="sparse",  # 'full', 'linear', or 'sparse'
         attention_heads=4,  # Number of attention heads
@@ -320,7 +320,7 @@ class UNet1D(nn.Module):
         """
         super().__init__()
 
-        # Save config for reference and checkpointing
+        # Base Parameters
         self.embedding_dim = embedding_dim
         self.dim_mults = dim_mults
         self.channels = channels
@@ -329,8 +329,11 @@ class UNet1D(nn.Module):
         self.norm_groups = norm_groups
         self.seq_length = seq_length
         self.edge_pad = edge_pad
-        self.debug = debug
-        self.use_gradient_checkpointing = False
+
+        # Gradient Checkpointing
+        self.use_gradient_checkpointing = enable_checkpointing
+
+        # Attention
         self.use_attention = use_attention
         self.attention_type = attention_type
         self.attention_heads = attention_heads
@@ -613,15 +616,9 @@ class UNet1D(nn.Module):
         Raises:
             ValueError: If sequence too short for downsampling levels
         """
-        # ========== INPUT & EMBEDDINGS ==========
-        if self.debug:
-            print(
-                f"[DEBUG] Input shape: {x.shape} (expected: [B, {self.channels}, {self.seq_length}])"
-            )
-
+        # ========== INPUT & EMBEDDINGS ==========S
         batch, c, seq_len = x.shape
         assert c == self.channels, f"Expected {self.channels} channels, got {c}"
-        original_len = x.size(-1)
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
@@ -651,8 +648,6 @@ class UNet1D(nn.Module):
         # === INPUT ===
         # [B, 1, L] → [B, init_dim, L]
         x = self.init_conv(x)
-        if self.debug:
-            print(f"[DEBUG] After initial conv: {x.shape}")
         t = self.time_mlp(time) if self.time_mlp else None
 
         # === Residual Connection ===
@@ -662,19 +657,31 @@ class UNet1D(nn.Module):
         # ENCODER / DOWNSAMPLING
         h = []
         for block1, block2, attn, downsample in self.downs:
-            x = block1(x, t)
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block1, x, t, use_reentrant=False)
+            else:
+                x = block1(x, t)
             h.append(x)  # Save after block1
 
-            x = block2(x, t)
-            x = attn(x)
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(attn, x, use_reentrant=False)
+            else:
+                x = block2(x, t)
+                x = attn(x)
             h.append(x)  # Save after block2 + attn
 
             x = downsample(x)
 
         # BOTTLENECK
-        x = self.mid_block1(x, t)
-        x = self.mid_attn(x)
-        x = self.mid_block2(x, t)
+        if self.use_gradient_checkpointing:
+            x = checkpoint(self.mid_block1, x, t, use_reentrant=False)
+            x = checkpoint(self.mid_attn, x, use_reentrant=False)
+            x = checkpoint(self.mid_block2, x, t, use_reentrant=False)
+        else:
+            x = self.mid_block1(x, t)
+            x = self.mid_attn(x)
+            x = self.mid_block2(x, t)
 
         # DECODER / UPSAMPLING
         for block1, block2, attn, upsample in self.ups:
@@ -682,14 +689,23 @@ class UNet1D(nn.Module):
             # Align lengths before concatenation
             x = self._resize_to_length(x, skip2.size(-1))
             x = torch.cat((x, skip2), dim=1)  # Use skip 1
-            x = block1(x, t)
+
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block1, x, t, use_reentrant=False)
+            else:
+                x = block1(x, t)
 
             skip1 = h.pop()
             # Align lengths before concatenation
             x = self._resize_to_length(x, skip1.size(-1))
             x = torch.cat((x, skip1), dim=1)  # Use skip 2
-            x = block2(x, t)
-            x = attn(x)
+
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(attn, x, use_reentrant=False)
+            else:
+                x = block2(x, t)
+                x = attn(x)
 
             x = upsample(x)
 
