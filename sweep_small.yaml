@@ -40,9 +40,14 @@ parameters:
   # === MODEL / ATTENTION COMPARISON ===
   attention_type:
     values: ["full", "linear", "sparse"]
+
   # Only applies to sparse; for full/linear it is ignored by the model
-  window_size:
+  attention_window:
     values: [16, 32, 128, 512]
+
+  num_global_tokens:
+    values: [16, 32, 64]
+
   # Keep heads/dim_head fixed for fairness (override if needed)
 
   # === DATA SEQ LENGTHS ===

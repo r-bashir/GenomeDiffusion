@@ -10,7 +10,7 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils import set_seed, setup_logging
+from src.utils import load_model_from_checkpoint, set_seed, setup_logging
 from utils.ddpm_utils import (
     compute_locality_metrics,
     format_metrics_report,
@@ -19,32 +19,6 @@ from utils.ddpm_utils import (
 
 # Set global device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-# Load Model
-def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
-    """
-    Loads a DiffusionModel from a checkpoint and moves it to the specified device.
-
-    Args:
-        checkpoint_path (str): Path to the checkpoint file.
-        device (torch.device): Device to load the model onto.
-
-    Returns:
-        model: The loaded DiffusionModel (on the correct device, in eval mode)
-        config: The config/hparams dictionary from the checkpoint
-    """
-    from src import DiffusionModel
-
-    model = DiffusionModel.load_from_checkpoint(
-        checkpoint_path,
-        map_location=device,
-        strict=True,
-    )
-    config = model.hparams
-    model = model.to(device)
-    model.eval()
-    return model, config
 
 
 # Parse Arguments

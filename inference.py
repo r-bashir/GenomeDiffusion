@@ -189,7 +189,7 @@ def main():
         generated_samples,
         output_dir / "sample_visualization.png",
         genotype_values=genotype_values,
-        max_seq_len=1000,
+        max_seq_len=100,
     )
     logger.info("✅ Sample visualizations (sample_visualization.png) are saved")
 

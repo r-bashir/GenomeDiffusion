@@ -403,7 +403,7 @@ def sample_distribution(
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    # Bar plot (consistent styling with visualize_quality_metrics)
+    # Second subplot: Bar plot (consistent styling with visualize_quality_metrics)
     labels = [f"{value:.2f}" for value in genotype_values]
 
     x = np.arange(len(labels))
@@ -458,7 +458,7 @@ def sample_visualization(
     generated_samples,
     save_path,
     genotype_values=None,
-    max_seq_len=10000,
+    max_seq_len=100,
 ):
     """Plot comparison between real and generated samples.
 
@@ -471,7 +471,7 @@ def sample_visualization(
         real_samples (Tensor): Real SNP data [batch_size, channels, seq_len]
         generated_samples (Tensor): Generated SNP data [batch_size, channels, seq_len]
         save_path (str): Path to save the plot
-        max_seq_len (int, optional): Max sequence length to plot in upper plots. Default is 10000.
+        max_seq_len (int, optional): Max sequence length to plot in all plots. Default is 100.
         genotype_values (list): Expected genotype values, defaults to DEFAULT_GENOTYPE_VALUES
 
     Returns:
@@ -480,31 +480,30 @@ def sample_visualization(
     if genotype_values is None:
         genotype_values = DEFAULT_GENOTYPE_VALUES
 
-    # Flatten samples
-    real, gen = validate_samples(real_samples, generated_samples)
+    # Validate and Flatten samples
+    real_flat, gen_flat = validate_samples(
+        real_samples, generated_samples, flatten=True
+    )
 
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     fig.suptitle("Real and Generated Samples Comparison")
 
     # Limit sequence length for upper plots
-    real_seq = real[0].flatten()[:max_seq_len]
-    gen_seq = gen[0].flatten()[:max_seq_len]
+    real_selected = real_flat[:max_seq_len]
+    gen_selected = gen_flat[:max_seq_len]
 
     # Plot real sample sequence (limited length)
-    axes[0, 0].plot(real_seq, color="tab:blue")
-    axes[0, 0].set_title(f"Real Sample Sequence (first {len(real_seq)})")
+    axes[0, 0].plot(real_selected, color="tab:blue")
+    axes[0, 0].set_title(f"Real Sample Sequence (first {max_seq_len})")
     axes[0, 0].set_xlabel("Position")
     axes[0, 0].set_ylabel("Value")
 
     # Plot generated sample sequence (limited length)
-    axes[0, 1].plot(gen_seq, color="tab:orange")
-    axes[0, 1].set_title(f"Generated Sample Sequence (first {len(gen_seq)})")
+    axes[0, 1].plot(gen_selected, color="tab:orange")
+    axes[0, 1].set_title(f"Generated Sample Sequence (first {max_seq_len})")
     axes[0, 1].set_xlabel("Position")
     axes[0, 1].set_ylabel("Value")
-
-    # Plot heatmaps
-    first_100 = min(100, real_samples.shape[-1])
 
     # Custom colormap: 0 → blue, 0.5 → green, 1 → red
     # cmap = ListedColormap(["#1f77b4", "#2ca02c", "#d62728"])
@@ -516,13 +515,13 @@ def sample_visualization(
 
     # Bottom left: Real data heatmap (first channel, first 100 positions)
     im_real = axes[1, 0].imshow(
-        real[0].reshape(1, -1)[:, :first_100],
+        real_selected.reshape(1, -1)[:, :max_seq_len],
         aspect="auto",
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
     )
-    axes[1, 0].set_title("Real Data Pattern (first 100 positions)")
+    axes[1, 0].set_title(f"Real Data Pattern (first {max_seq_len}) positions")
     axes[1, 0].set_yticks([])
     plt.colorbar(
         im_real,
@@ -535,13 +534,13 @@ def sample_visualization(
 
     # Bottom right: Generated data heatmap (first channel, first 100 positions)
     im_gen = axes[1, 1].imshow(
-        gen[0].reshape(1, -1)[:, :first_100],
+        gen_selected.reshape(1, -1)[:, :max_seq_len],
         aspect="auto",
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
     )
-    axes[1, 1].set_title("Generated Data Pattern (first 100 positions)")
+    axes[1, 1].set_title(f"Generated Data Pattern (first {max_seq_len}) positions")
     axes[1, 1].set_yticks([])
     plt.colorbar(
         im_gen,

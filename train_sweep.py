@@ -55,7 +55,16 @@ from src.utils import load_config, set_seed
 
 
 def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
-    """Update configuration with W&B sweep parameters.
+    """
+    Update configuration with W&B sweep parameters.
+
+    Why mapping is needed:
+        W&B sweep parameters are flat (e.g., 'learning_rate', 'attention_type'),
+        but config.yaml uses a nested structure (e.g., optimizer.lr, unet.attention_type).
+        This mapping ensures that sweep parameters are correctly routed into the config dict.
+
+    Only parameters that are actually being tuned in sweep.yaml should be mapped here.
+    Any extra mappings are unnecessary and can be removed for clarity and maintainability.
 
     Args:
         config: Base configuration dictionary
@@ -66,55 +75,41 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
     """
     updated_config = config.copy()
 
-    # Comprehensive parameter mapping from sweep params to config structure
+    # Only map sweep.yaml parameters to their config locations
     param_mapping = {
+        # Data parameters
+        "batch_size": ("data", "batch_size"),
+        # UNet architecture parameters
+        "embedding_dim": ("unet", "embedding_dim"),
+        "dim_mults": ("unet", "dim_mults"),
+        "with_time_emb": ("unet", "with_time_emb"),
+        "with_pos_emb": ("unet", "with_pos_emb"),
+        "edge_pad": ("unet", "edge_pad"),
+        "norm_groups": ("unet", "norm_groups"),
+        # Attention parameters
+        "use_attention": ("unet", "use_attention"),
+        "attention_type": ("unet", "attention_type"),
+        "attention_heads": ("unet", "attention_heads"),
+        "attention_dim_head": ("unet", "attention_dim_head"),
+        "attention_window": ("unet", "attention_window"),
+        "num_global_tokens": ("unet", "num_global_tokens"),
+        # Training parameters
+        "epochs": ("training", "epochs"),
+        "warmup_epochs": ("training", "warmup_epochs"),
+        "accumulate_grad_batches": ("training", "accumulate_grad_batches"),
         # Optimizer parameters
         "learning_rate": ("optimizer", "lr"),
+        "min_lr": ("optimizer", "min_lr"),
         "weight_decay": ("optimizer", "weight_decay"),
-        "betas": ("optimizer", "betas"),
-        "eps": ("optimizer", "eps"),
         "amsgrad": ("optimizer", "amsgrad"),
         # Scheduler parameters
         "scheduler_type": ("scheduler", "type"),
         "eta_min": ("scheduler", "eta_min"),
         "scheduler_factor": ("scheduler", "factor"),
         "scheduler_patience": ("scheduler", "patience"),
-        "min_lr": ("scheduler", "min_lr"),
-        "threshold": ("scheduler", "threshold"),
-        # Model architecture parameters
-        "embedding_dim": ("unet", "embedding_dim"),
-        "dim_mults": ("unet", "dim_mults"),
-        "channels": ("unet", "channels"),
-        "with_time_emb": ("unet", "with_time_emb"),
-        "with_pos_emb": ("unet", "with_pos_emb"),
-        "norm_groups": ("unet", "norm_groups"),
-        "edge_pad": ("unet", "edge_pad"),
-        # Data parameters
-        "batch_size": ("data", "batch_size"),
-        "seq_length": ("data", "seq_length"),
-        "scale_factor": ("data", "scale_factor"),
-        "num_workers": ("data", "num_workers"),
-        "normalize": ("data", "normalize"),
-        "scaling": ("data", "scaling"),
-        # Training parameters
-        "epochs": ("training", "epochs"),
-        "warmup_epochs": ("training", "warmup_epochs"),
-        "early_stopping": ("training", "early_stopping"),
-        "patience": ("training", "patience"),
-        "save_top_k": ("training", "save_top_k"),
-        "log_every_n_steps": ("training", "log_every_n_steps"),
-        # Diffusion parameters
-        "timesteps": ("diffusion", "timesteps"),
-        "beta_start": ("diffusion", "beta_start"),
-        "beta_end": ("diffusion", "beta_end"),
-        "schedule_type": ("diffusion", "schedule_type"),
-        # Attention parameters
-        "use_attention": ("unet", "use_attention"),
-        "attention_heads": ("unet", "attention_heads"),
-        "attention_dim_head": ("unet", "attention_dim_head"),
-        "attention_type": ("unet", "attention_type"),
-        "window_size": ("unet", "window_size"),
-        "num_global_tokens": ("unet", "num_global_tokens"),
+        "scheduler_mode": ("scheduler", "mode"),
+        "scheduler_threshold": ("scheduler", "threshold"),
+        "scheduler_min_lr": ("scheduler", "min_lr"),
     }
 
     # Update configuration with mapped parameters
@@ -340,20 +335,22 @@ def main():
         return
 
     # Setup logger
-    logger = setup_logger(config)
+    train_logger = setup_logger(config)
 
     # Configure W&B for better plotting
-    if logger.experiment:
+    if train_logger.experiment:
         # Define custom metrics for step-wise plotting
-        logger.experiment.define_metric(
+        train_logger.experiment.define_metric(
             "train_loss_step", step_metric="trainer/global_step"
         )
-        logger.experiment.define_metric(
+        train_logger.experiment.define_metric(
             "val_loss_step", step_metric="trainer/global_step"
         )
-        logger.experiment.define_metric("train_loss_epoch", step_metric="epoch")
-        logger.experiment.define_metric("val_loss_epoch", step_metric="epoch")
-        logger.experiment.define_metric("lr-AdamW", step_metric="trainer/global_step")
+        train_logger.experiment.define_metric("train_loss_epoch", step_metric="epoch")
+        train_logger.experiment.define_metric("val_loss_epoch", step_metric="epoch")
+        train_logger.experiment.define_metric(
+            "lr-AdamW", step_metric="trainer/global_step"
+        )
 
     # Setup callbacks
     callbacks = setup_callbacks(config)
@@ -362,18 +359,20 @@ def main():
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision("high")
 
-    # Initialize trainer (same pattern as train.py)
+    # Initialize trainer
     trainer = pl.Trainer(
         max_epochs=config["training"]["epochs"],
         accelerator="auto",
         devices="auto",
         callbacks=callbacks,
-        logger=logger,
-        default_root_dir=config["output_path"],  # Same as train.py
-        log_every_n_steps=config["training"].get("log_every_n_steps", 10),
-        enable_checkpointing=True,
-        enable_progress_bar=False,  # Disable for cleaner sweep logs
-        enable_model_summary=False,  # Disable for cleaner logs
+        logger=train_logger,
+        default_root_dir=config["output_path"],
+        log_every_n_steps=config["training"].get("log_every_n_steps", 50),
+        precision=config["training"].get("precision", "16-mixed"),
+        accumulate_grad_batches=config["training"].get("accumulate_grad_batches", 4),
+        enable_checkpointing=True,  # overridden by checkpoint callback
+        enable_progress_bar=True,
+        enable_model_summary=True,
     )
 
     try:
@@ -397,7 +396,7 @@ def main():
 
     except Exception as e:
         print(f"Training failed: {e}")
-        wandb.log({"training_failed": True, "error": str(e)})
+        # wandb.log({"training_failed": True, "error": str(e)})
         wandb.finish(exit_code=1)
         return
 

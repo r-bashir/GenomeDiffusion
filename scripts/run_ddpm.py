@@ -97,7 +97,7 @@ def main():
 
     # === BEGIN: Reverse Diffusion ===
     logger.info(f"Running Markov reverse process from x_t at t=T...")
-    diffusion_steps = 1000
+    diffusion_steps = 4
 
     # Generate noisy sample x_t at t=T
     x_t = get_noisy_sample(model, x0, diffusion_steps)

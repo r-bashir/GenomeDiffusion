@@ -404,21 +404,18 @@ def plot_locality_analysis(values, outputs, snp_index, output_dir):
     """
     # Line plot
     fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot truncated outputs (first 100 SNPs
+    truncated_outputs = outputs[:, :100]
     for i, val in enumerate(values):
         label = f"SNP 60 = {val:.2f}" if i % 2 == 0 else None
-        ax.plot(outputs[i], alpha=0.7, label=label)
+        ax.plot(truncated_outputs[i], alpha=0.7, label=label)
 
     ax.axvline(snp_index, color="red", linestyle="--", label="SNP 60")
     ax.set_xlabel("SNP Position")
     ax.set_ylabel("Output Value")
     ax.set_title("Output at all SNPs for each SNP 60 value")
     ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left", fontsize="small", ncol=1)
-
-    # Add region backgrounds
-    ax.axvspan(0, 25, alpha=0.1, color="blue", label="Region 0")
-    ax.axvspan(25, 75, alpha=0.1, color="green", label="Region 0.25")
-    ax.axvspan(75, 100, alpha=0.1, color="red", label="Region 0.5")
-
     plt.tight_layout()
     plt.savefig(output_dir / "snp60_locality_lines.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
