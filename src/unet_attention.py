@@ -3,9 +3,7 @@
 
 """Based on `https://huggingface.co/blog/annotated-diffusion` that explains
 using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
-adapted the code for 1-dimensional SNP genomic dataset. In additon, some
-improvements are applied from the work of Kenneweg et al whose work is similar
-to mine (SNP data, UNet1D), see https://github.com/TheMody/GeneDiffusion."""
+adapted the code for 1-dimensional SNP genomic dataset."""
 
 import math
 from functools import partial
@@ -13,6 +11,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from src.sinusoidal_embedding import (
     SinusoidalPositionEmbeddings,
@@ -62,124 +61,75 @@ class Upsample1D(nn.Module):
         return self.conv(x)
 
 
-# Kenneweg: Added zero initialization utility function
-def zero_module(module):
-    """Zero out the parameters of a module and return it."""
-    for p in module.parameters():
-        p.detach().zero_()
-    return module
-
-
 class Block1D(nn.Module):
     """Basic 1D convolutional block: Conv1D + GroupNorm + SiLU."""
 
-    def __init__(
-        self, dim, dim_out, groups=8, dropout=0.0
-    ):  # Kenneweg: Added dropout parameter
+    def __init__(self, dim, dim_out, groups=8):
         super().__init__()
         self.proj = nn.Conv1d(dim, dim_out, 3, padding=1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
-        self.dropout = (
-            nn.Dropout(dropout) if dropout > 0 else nn.Identity()
-        )  # Kenneweg: Added dropout
 
     def forward(self, x):
         x = self.proj(x)
         x = self.norm(x)
         x = self.act(x)
-        x = self.dropout(
-            x
-        )  # Kenneweg: Apply dropouthttps://github.com/TheMody/GeneDiffusion
         return x
 
 
 class ResnetBlock1D(nn.Module):
     """1D ResNet block with time embedding integration for diffusion models."""
 
-    def __init__(
-        self,
-        dim,
-        dim_out,
-        *,
-        time_emb_dim=None,
-        groups=8,
-        dropout=0.0,
-        use_scale_shift_norm=True,
-    ):  # Kenneweg: Added dropout and scale_shift_norm
+    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
         super().__init__()
-        self.use_scale_shift_norm = use_scale_shift_norm  # Kenneweg: Store flag
+        # Time embedding MLP projects to dim_out for direct addition
+        self.time_mlp = (
+            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
+            if time_emb_dim is not None
+            else None
+        )
 
-        # Kenneweg: Time embedding MLP projects to 2*dim_out for scale+shift normalization
-        if use_scale_shift_norm:
-            self.time_mlp = (
-                nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out * 2))
-                if time_emb_dim is not None
-                else None
-            )
-        else:
-            # Original behavior: project to dim_out for direct addition
-            self.time_mlp = (
-                nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
-                if time_emb_dim is not None
-                else None
-            )
-
-        self.block1 = Block1D(
-            dim, dim_out, groups=groups, dropout=dropout
-        )  # Kenneweg: Pass dropout
-        self.block2 = Block1D(
-            dim_out, dim_out, groups=groups, dropout=dropout
-        )  # Kenneweg: Pass dropout
+        self.block1 = Block1D(dim, dim_out, groups=groups)
+        self.block2 = Block1D(dim_out, dim_out, groups=groups)
         self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
         h = self.block1(x)
 
-        # Kenneweg: Apply scale-shift normalization or simple addition based on flag
+        # Add time embedding if provided
         if self.time_mlp is not None and time_emb is not None:
             time_emb = self.time_mlp(time_emb)
             time_emb = time_emb.unsqueeze(-1)  # [B, C] -> [B, C, 1]
-
-            if self.use_scale_shift_norm:
-                # Kenneweg: Scale-shift normalization (FiLM-like conditioning)
-                scale, shift = time_emb.chunk(2, dim=1)
-                h = h * (1 + scale) + shift
-            else:
-                # Original behavior: simple addition
-                h = h + time_emb
+            h = h + time_emb
 
         h = self.block2(h)
         return h + self.res_conv(x)
 
 
 class Attention1D(nn.Module):
-    """Multi-head self-attention for capturing long-range genomic patterns."""
+    """Full self-attention with O(n²) complexity but highest expressiveness.
 
-    def __init__(self, dim, heads=4, dim_head=32, use_checkpoint=False):
+    Captures all pairwise interactions but impractical for very long sequences.
+    Best for short sequences (<5k SNPs) where memory allows.
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+    """
+
+    def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
-        # Kenneweg: Double square root scaling for better stability (from Lai et al.)
-        self.scale = 1 / math.sqrt(math.sqrt(dim_head))  # Kenneweg: More stable scaling
-        # self.scale = dim_head**-0.5  # Original standard scaling - uncomment to revert
+        self.scale = dim_head**-0.5
         self.heads = heads
         self.dim_head = dim_head
-        self.use_checkpoint = use_checkpoint  # Kenneweg: Gradient checkpointing flag
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
-        # Kenneweg: Zero-initialize output projection for better training stability
-        self.to_out = zero_module(nn.Conv1d(hidden_dim, dim, 1))
+        self.to_out = nn.Conv1d(hidden_dim, dim, 1)
 
     def forward(self, x):
-        # Kenneweg: Use gradient checkpointing if enabled
-        if self.use_checkpoint and self.training:
-            return torch.utils.checkpoint.checkpoint(
-                self._forward, x, use_reentrant=False
-            )
-        else:
-            return self._forward(x)
-
-    def _forward(self, x):
         b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
         q = q * self.scale
@@ -194,47 +144,95 @@ class Attention1D(nn.Module):
 
 
 class LinearAttention1D(nn.Module):
-    """Linear attention with O(n) complexity for efficient long sequence processing."""
+    """Linear attention with O(n) complexity but reduced expressiveness.
 
-    def __init__(self, dim, heads=4, dim_head=32, use_checkpoint=False):
+    Memory-efficient alternative that approximates attention via factorization.
+    Best for extremely long sequences where memory is critical.
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+    """
+
+    def __init__(self, dim, heads=4, dim_head=32):
         super().__init__()
-        # Kenneweg: Double square root scaling for better stability (from Lai et al.)
-        self.scale = 1 / math.sqrt(math.sqrt(dim_head))  # Kenneweg: More stable scaling
-        # self.scale = dim_head**-0.5  # Original standard scaling - uncomment to revert
+        self.scale = dim_head**-0.5
         self.heads = heads
         self.dim_head = dim_head
-        self.use_checkpoint = use_checkpoint  # Kenneweg: Gradient checkpointing flag
         hidden_dim = dim_head * heads
         self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
-
-        # Kenneweg: Zero-initialize output projection for better training stability
-        self.to_out = nn.Sequential(
-            zero_module(nn.Conv1d(hidden_dim, dim, 1)), nn.GroupNorm(1, dim)
-        )
+        self.to_out = nn.Sequential(nn.Conv1d(hidden_dim, dim, 1), nn.GroupNorm(1, dim))
 
     def forward(self, x):
-        # Kenneweg: Use gradient checkpointing if enabled
-        if self.use_checkpoint and self.training:
-            return torch.utils.checkpoint.checkpoint(
-                self._forward, x, use_reentrant=False
-            )
-        else:
-            return self._forward(x)
-
-    def _forward(self, x):
         b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
         qkv = self.to_qkv(x).chunk(3, dim=1)
         q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
 
+        # Apply scaling before softmax
+        q = q * self.scale
         q = q.softmax(dim=-2)
         k = k.softmax(dim=-1)
 
-        q = q * self.scale
         context = torch.einsum("b h d n, b h e n -> b h d e", k, v)
-
         out = torch.einsum("b h d e, b h d n -> b h e n", context, q)
         out = out.view(b, -1, n)
         return self.to_out(out)
+
+
+class SparseAttention1D(nn.Module):
+    """Windowed attention with O(n×w) complexity and near-full expressiveness.
+
+    Processes sequence in local windows (size w) with optional global tokens.
+    Best balance for long sequences (10k-200k SNPs).
+
+    Args:
+        dim (int): Input dimension
+        heads (int): Number of attention heads
+        dim_head (int): Dimension per head
+        window_size (int): Local attention window size
+        num_global_tokens (int): Global tokens for cross-window attention
+    """
+
+    def __init__(self, dim, heads=4, dim_head=32, window_size=512, num_global_tokens=0):
+        super().__init__()
+        self.scale = dim_head**-0.5
+        self.heads = heads
+        self.dim_head = dim_head
+        self.window_size = window_size
+        self.num_global_tokens = num_global_tokens
+
+        hidden_dim = dim_head * heads
+        self.to_qkv = nn.Conv1d(dim, hidden_dim * 3, 1, bias=False)
+        self.to_out = nn.Conv1d(hidden_dim, dim, 1)
+
+        if num_global_tokens > 0:
+            self.global_tokens = nn.Parameter(torch.randn(1, num_global_tokens, dim))
+
+    def forward(self, x):
+        b, c, n = x.shape
+        assert n > 0, "Sequence length must be positive"
+        assert self.window_size > 0, "Window size must be positive"
+        qkv = self.to_qkv(x).chunk(3, dim=1)
+        q, k, v = map(lambda t: t.view(b, self.heads, self.dim_head, n), qkv)
+        q = q * self.scale
+
+        # Process in local windows with fixed dimension handling
+        out = torch.zeros_like(v)
+        for i in range(0, n, self.window_size):
+            j = min(i + self.window_size, n)
+
+            # Use consistent window boundaries
+            q_local = q[..., i:j]
+            k_local = k[..., i:j]  # Same window as q
+            v_local = v[..., i:j]  # Same window as q
+
+            sim = torch.einsum("b h d i, b h d j -> b h i j", q_local, k_local)
+            attn = sim.softmax(dim=-1)
+            out[..., i:j] = torch.einsum("b h i j, b h d j -> b h d i", attn, v_local)
+
+        return self.to_out(out.view(b, -1, n))
 
 
 class PreNorm(nn.Module):
@@ -254,14 +252,6 @@ class PreNorm(nn.Module):
 class UNet1D(nn.Module):
     """
     1D U-Net for genomic SNP sequence modeling in diffusion models.
-
-    Kenneweg IMPROVEMENTS IMPLEMENTED:
-    - Scale-shift normalization (FiLM-like conditioning) for better time embedding integration
-    - Zero-initialized output layers for training stability
-    - Dropout in ResNet blocks (0.1) for regularization
-    - Larger time embedding dimension (embedding_dim * 4) for better expressivity
-    - Additive residual connections instead of concatenation
-    - Zero-initialized attention output projections
 
     A time-conditional U-Net architecture designed for denoising genomic sequences
     in diffusion-based generative models. Processes SNP data as 1D sequences with
@@ -290,11 +280,11 @@ class UNet1D(nn.Module):
         seq_length (int): Expected sequence length for validation
         edge_pad (int): Boundary padding size (default: 2)
         use_attention (bool): Enable attention mechanisms
+        attention_type (str): 'full', 'linear', or 'sparse' attention
         attention_heads (int): Number of attention heads (default: 4)
         attention_dim_head (int): Dimension per attention head (default: 32)
-        debug (bool): Print tensor shapes during forward pass
-        dropout (float): Dropout rate for ResNet blocks (default: 0.1) # Kenneweg
-        use_scale_shift_norm (bool): Use scale-shift normalization (default: True) # Kenneweg
+        attention_window (int): Window size for sparse attention (default: 512)
+        num_global_tokens (int): Number of global tokens for sparse attention (default: 16)
 
     Input/Output:
         Input: [B, 1, L] - Noisy SNP sequences
@@ -311,16 +301,17 @@ class UNet1D(nn.Module):
         norm_groups=8,
         seq_length=160858,
         edge_pad=2,
-        debug=False,
-        use_attention=True,
-        attention_heads=4,
-        attention_dim_head=32,
-        dropout=0.1,  # Kenneweg: Added dropout parameter
-        use_scale_shift_norm=True,  # Kenneweg: Added scale-shift normalization flag
-        attention_checkpoint=False,  # Kenneweg: Added attention checkpointing flag
+        enable_checkpointing=True,
+        use_attention=True,  # Enable attention mechanisms
+        attention_type="sparse",  # 'full', 'linear', or 'sparse'
+        attention_heads=4,  # Number of attention heads
+        attention_dim_head=32,  # Dimension per attention head
+        attention_window=512,  # For sparse attention
+        num_global_tokens=16,  # For sparse attention
+        **kwargs,  # Accept additional arguments
     ):
         """
-        Initialize UNet1D with genomic-optimized architecture and Lai et al. improvements.
+        Initialize UNet1D with genomic-optimized architecture.
 
         Memory usage scales with embedding_dim × dim_mults. For efficiency:
         - embedding_dim=64-128 balances capacity and memory
@@ -329,7 +320,7 @@ class UNet1D(nn.Module):
         """
         super().__init__()
 
-        # Save config for reference and checkpointing
+        # Base Parameters
         self.embedding_dim = embedding_dim
         self.dim_mults = dim_mults
         self.channels = channels
@@ -338,18 +329,17 @@ class UNet1D(nn.Module):
         self.norm_groups = norm_groups
         self.seq_length = seq_length
         self.edge_pad = edge_pad
-        self.debug = debug
-        self.use_gradient_checkpointing = False
+
+        # Gradient Checkpointing
+        self.use_gradient_checkpointing = enable_checkpointing
+
+        # Attention
         self.use_attention = use_attention
+        self.attention_type = attention_type
         self.attention_heads = attention_heads
         self.attention_dim_head = attention_dim_head
-        self.dropout = dropout  # Kenneweg: Store dropout rate
-        self.use_scale_shift_norm = (
-            use_scale_shift_norm  # Kenneweg: Store normalization flag
-        )
-        self.attention_checkpoint = (
-            attention_checkpoint  # Kenneweg: Store attention checkpointing flag
-        )
+        self.attention_window = attention_window
+        self.num_global_tokens = num_global_tokens
 
         # --- Model complexity and memory control ---
         # Base feature dimension - kept small (16) to manage memory usage
@@ -360,7 +350,7 @@ class UNet1D(nn.Module):
 
         # Initial conv layer: maps input to base feature dimension
         # Using larger kernel size (7) for better receptive field at the input level
-        # Output: [B, 1, L] -> [B, 16, L]
+        # Output: [B, 1, L] → [B, 16, L]
         kernel_size = 7  # Larger kernel for better pattern recognition
         padding = (kernel_size - 1) // 2  # Same padding to preserve length
         self.init_conv = nn.Conv1d(
@@ -386,14 +376,12 @@ class UNet1D(nn.Module):
         self._in_out = in_out  # Input/output dim pairs
 
         # --- Embeddings ---
-        # Kenneweg: Larger time embedding dimension for better expressivity (4x instead of 1x)
         # Time embeddings: crucial for diffusion models
         # Maps scalar timestep to high-dim vector via sinusoidal encoding
         # Then projects through MLP for better expressivity
+        # Output dimension matches embedding_dim for consistent scale
         if self.with_time_emb:
-            time_dim = (
-                self.embedding_dim * 4
-            )  # Kenneweg: Increased from embedding_dim to embedding_dim * 4
+            time_dim = self.embedding_dim  # Consistent dimension for stability
             self.time_mlp = nn.Sequential(
                 # Initial sinusoidal encoding
                 SinusoidalTimeEmbeddings(self.embedding_dim),
@@ -416,40 +404,60 @@ class UNet1D(nn.Module):
 
         # ========== UNet1D Architecture ==========
         num_resolutions = len(in_out)
-        # Kenneweg: Pass dropout and scale_shift_norm parameters to ResNet blocks
-        block_klass = partial(
-            ResnetBlock1D,
-            groups=self.norm_groups,
-            dropout=self.dropout,
-            use_scale_shift_norm=self.use_scale_shift_norm,
-        )
+        block_klass = partial(ResnetBlock1D, groups=self.norm_groups)
 
         # ENCODER / DOWNSAMPLING
         self.downs = nn.ModuleList([])
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
 
+            # Attention Block
+            attn_block = (
+                {
+                    "full": Residual(
+                        PreNorm(
+                            dim_in,
+                            Attention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "linear": Residual(
+                        PreNorm(
+                            dim_in,
+                            LinearAttention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "sparse": Residual(
+                        PreNorm(
+                            dim_in,
+                            SparseAttention1D(
+                                dim_in,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                                window_size=self.attention_window,
+                                num_global_tokens=self.num_global_tokens,
+                            ),
+                        )
+                    ),
+                }[self.attention_type]
+                if self.use_attention
+                else nn.Identity()
+            )
+
+            # Downsampling Path
             self.downs.append(
                 nn.ModuleList(
                     [
-                        # Mimic original: block(dim_in, dim_in), block(dim_in, dim_in)
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
                         block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                        (
-                            Residual(
-                                PreNorm(
-                                    dim_in,
-                                    LinearAttention1D(
-                                        dim_in,
-                                        heads=self.attention_heads,
-                                        dim_head=self.attention_dim_head,
-                                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
-                                    ),
-                                )
-                            )
-                            if self.use_attention
-                            else nn.Identity()
-                        ),
+                        attn_block,
                         (
                             Downsample1D(dim_in, dim_out)
                             if not is_last
@@ -462,18 +470,43 @@ class UNet1D(nn.Module):
         # BOTTLENECK
         mid_dim = dims[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+
+        # Attention Block
         self.mid_attn = (
-            Residual(
-                PreNorm(
-                    mid_dim,
-                    LinearAttention1D(
+            {
+                "full": Residual(
+                    PreNorm(
                         mid_dim,
-                        heads=self.attention_heads,
-                        dim_head=self.attention_dim_head,
-                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
-                    ),
-                )
-            )
+                        Attention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                ),
+                "linear": Residual(
+                    PreNorm(
+                        mid_dim,
+                        LinearAttention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                ),
+                "sparse": Residual(
+                    PreNorm(
+                        mid_dim,
+                        SparseAttention1D(
+                            mid_dim,
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                            window_size=self.attention_window,
+                            num_global_tokens=self.num_global_tokens,
+                        ),
+                    )
+                ),
+            }[self.attention_type]
             if self.use_attention
             else nn.Identity()
         )
@@ -484,27 +517,53 @@ class UNet1D(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
 
+            # Attention Block
+            attn_block = (
+                {
+                    "full": Residual(
+                        PreNorm(
+                            dim_out,
+                            Attention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "linear": Residual(
+                        PreNorm(
+                            dim_out,
+                            LinearAttention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                            ),
+                        )
+                    ),
+                    "sparse": Residual(
+                        PreNorm(
+                            dim_out,
+                            SparseAttention1D(
+                                dim_out,
+                                heads=self.attention_heads,
+                                dim_head=self.attention_dim_head,
+                                window_size=self.attention_window,
+                                num_global_tokens=self.num_global_tokens,
+                            ),
+                        )
+                    ),
+                }[self.attention_type]
+                if self.use_attention
+                else nn.Identity()
+            )
+
+            # Upsampling Path
             self.ups.append(
                 nn.ModuleList(
                     [
-                        # Mimic original: block(dim_out + dim_in, dim_out) twice
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        (
-                            Residual(
-                                PreNorm(
-                                    dim_out,
-                                    LinearAttention1D(
-                                        dim_out,
-                                        heads=self.attention_heads,
-                                        dim_head=self.attention_dim_head,
-                                        use_checkpoint=self.attention_checkpoint,  # Kenneweg: Attention checkpointing
-                                    ),
-                                )
-                            )
-                            if self.use_attention
-                            else nn.Identity()
-                        ),
+                        attn_block,
                         (
                             Upsample1D(dim_out, dim_in)
                             if not is_last
@@ -517,12 +576,34 @@ class UNet1D(nn.Module):
         # OUTPUT
         self.out_dim = out_dim if out_dim is not None else self.channels
         self.final_res_block = block_klass(dims[0] * 2, dims[0], time_emb_dim=time_dim)
-        # Kenneweg: Zero-initialize final convolution for training stability
-        self.final_conv = zero_module(nn.Conv1d(dims[0], self.out_dim, 1))
+        self.final_conv = nn.Conv1d(dims[0], self.out_dim, 1)
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing to reduce memory usage during training."""
         self.use_gradient_checkpointing = True
+
+    def _resize_to_length(self, x: torch.Tensor, target_len: int) -> torch.Tensor:
+        """Pad or crop a 1D feature map along the sequence dimension to match target_len.
+
+        Uses reflective padding when increasing length to preserve boundary information.
+        This helps resolve off-by-one mismatches introduced by odd-length down/upsampling.
+
+        Args:
+            x: Tensor of shape [B, C, L]
+            target_len: desired length L_out
+
+        Returns:
+            Tensor with shape [B, C, target_len]
+        """
+        cur_len = x.size(-1)
+        if cur_len == target_len:
+            return x
+        if cur_len < target_len:
+            pad_right = target_len - cur_len
+            # (left, right) padding
+            return F.pad(x, (0, pad_right), mode="reflect")
+        # cur_len > target_len: crop on the right
+        return x[..., :target_len]
 
     def forward(self, x, time):
         """
@@ -542,14 +623,8 @@ class UNet1D(nn.Module):
             ValueError: If sequence too short for downsampling levels
         """
         # ========== INPUT & EMBEDDINGS ==========
-        if self.debug:
-            print(
-                f"[DEBUG] Input shape: {x.shape} (expected: [B, {self.channels}, {self.seq_length}])"
-            )
-
         batch, c, seq_len = x.shape
         assert c == self.channels, f"Expected {self.channels} channels, got {c}"
-        original_len = x.size(-1)
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
@@ -565,6 +640,7 @@ class UNet1D(nn.Module):
 
         # Edge padding for boundary preservation (configurable)
         edge_pad = self.edge_pad
+
         # Improved input validation: check after each downsampling that length is always > edge_pad
         min_len = seq_len
         for i in range(len(self.dim_mults)):
@@ -576,49 +652,76 @@ class UNet1D(nn.Module):
                     f"Increase seq_length or reduce dim_mults/edge_pad."
                 )
 
-        # === INPUT ===
+        # INPUT
         # [B, 1, L] → [B, init_dim, L]
         x = self.init_conv(x)
-        if self.debug:
-            print(f"[DEBUG] After initial conv: {x.shape}")
         t = self.time_mlp(time) if self.time_mlp else None
 
-        # Kenneweg: Save input for additive residual connection (instead of concatenation)
-        x_skip = x.clone()
+        # Save residual connection from after initial conv (for final output)
+        r = x
 
         # ENCODER / DOWNSAMPLING
         h = []
         for block1, block2, attn, downsample in self.downs:
-            x = block1(x, t)
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block1, x, t, use_reentrant=False)
+            else:
+                x = block1(x, t)
+
             h.append(x)  # Save after block1
 
-            x = block2(x, t)
-            x = attn(x)
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(attn, x, use_reentrant=False)
+            else:
+                x = block2(x, t)
+                x = attn(x)
+
             h.append(x)  # Save after block2 + attn
 
             x = downsample(x)
 
         # BOTTLENECK
-        x = self.mid_block1(x, t)
-        x = self.mid_attn(x)
-        x = self.mid_block2(x, t)
+        if self.use_gradient_checkpointing:
+            x = checkpoint(self.mid_block1, x, t, use_reentrant=False)
+            x = checkpoint(self.mid_attn, x, use_reentrant=False)
+            x = checkpoint(self.mid_block2, x, t, use_reentrant=False)
+        else:
+            x = self.mid_block1(x, t)
+            x = self.mid_attn(x)
+            x = self.mid_block2(x, t)
 
         # DECODER / UPSAMPLING
         for block1, block2, attn, upsample in self.ups:
-            x = torch.cat((x, h.pop()), dim=1)  # Use skip 1
-            x = block1(x, t)
+            skip2 = h.pop()
 
-            x = torch.cat((x, h.pop()), dim=1)  # Use skip 2
-            x = block2(x, t)
-            x = attn(x)
+            # Align lengths before concatenation
+            x = self._resize_to_length(x, skip2.size(-1))
+            x = torch.cat((x, skip2), dim=1)  # Use skip 1
+
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block1, x, t, use_reentrant=False)
+            else:
+                x = block1(x, t)
+
+            skip1 = h.pop()
+
+            # Align lengths before concatenation
+            x = self._resize_to_length(x, skip1.size(-1))
+            x = torch.cat((x, skip1), dim=1)  # Use skip 2
+
+            if self.use_gradient_checkpointing:
+                x = checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(attn, x, use_reentrant=False)
+            else:
+                x = block2(x, t)
+                x = attn(x)
 
             x = upsample(x)
 
         # OUTPUT
-        x = torch.cat((x, x_skip), dim=1)  # Kenneweg: Use saved input skip connection
+        # Align with initial residual
+        x = self._resize_to_length(x, r.size(-1))
+        x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
-        output = self.final_conv(x)
-
-        # Kenneweg: Return additive residual instead of just output
-        # This follows the pattern from Lai et al. where x_skip + h is returned
-        return x_skip[:, : self.out_dim, :] + output
+        return self.final_conv(x)

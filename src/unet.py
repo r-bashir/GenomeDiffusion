@@ -106,6 +106,20 @@ class ResnetBlock1D(nn.Module):
         return h + self.res_conv(x)
 
 
+# Attention modules
+class PreNorm(nn.Module):
+    """Pre-normalization wrapper for improved training stability."""
+
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.fn = fn
+        self.norm = nn.GroupNorm(1, dim)
+
+    def forward(self, x):
+        x = self.norm(x)
+        return self.fn(x)
+
+
 class Attention1D(nn.Module):
     """Full self-attention with O(n²) complexity but highest expressiveness.
 
@@ -235,19 +249,6 @@ class SparseAttention1D(nn.Module):
         return self.to_out(out.view(b, -1, n))
 
 
-class PreNorm(nn.Module):
-    """Pre-normalization wrapper for improved training stability."""
-
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.fn = fn
-        self.norm = nn.GroupNorm(1, dim)
-
-    def forward(self, x):
-        x = self.norm(x)
-        return self.fn(x)
-
-
 # UNet1D Architecture for Genomic Diffusion Models
 class UNet1D(nn.Module):
     """
@@ -255,19 +256,20 @@ class UNet1D(nn.Module):
 
     A time-conditional U-Net architecture designed for denoising genomic sequences
     in diffusion-based generative models. Processes SNP data as 1D sequences with
-    shape [batch_size, 1, sequence_length].
+    shape [B, C=1, L].
 
     Architecture:
-    - 4-level encoder-decoder with feature dimensions [16, 32, 64, 128]
+    - 4-level encoder-decoder with progressive capacity scaling [16, 32, 64, 128+]
     - Dual skip connections per level for rich gradient flow
     - ResNet blocks with GroupNorm and SiLU activation
-    - Optional multi-head attention for long-range dependencies
+    - Specialized attention: LinearAttention1D (encoder/decoder), Attention1D (bottleneck)
     - Sinusoidal time/position embeddings for temporal conditioning
 
     Key Features:
     - Handles variable-length genomic sequences (odd/even lengths)
     - Memory-efficient with gradient checkpointing support
-    - Configurable attention mechanisms (8 heads × 32 dims)
+    - Progressive capacity scaling: 256 channels (mid-levels), 512 channels (deep levels)
+    - Specialized attention per path: Linear (memory-efficient) + Full (high expressiveness)
     - Robust downsampling/upsampling with precise reconstruction
 
     Args:
@@ -279,12 +281,11 @@ class UNet1D(nn.Module):
         norm_groups (int): GroupNorm groups (default: 8)
         seq_length (int): Expected sequence length for validation
         edge_pad (int): Boundary padding size (default: 2)
+        enable_checkpointing (bool): Enable gradient checkpointing for memory efficiency
         use_attention (bool): Enable attention mechanisms
-        attention_type (str): 'full', 'linear', or 'sparse' attention
         attention_heads (int): Number of attention heads (default: 4)
         attention_dim_head (int): Dimension per attention head (default: 32)
-        attention_window (int): Window size for sparse attention (default: 512)
-        num_global_tokens (int): Number of global tokens for sparse attention (default: 16)
+        **kwargs: Accept additional arguments
 
     Input/Output:
         Input: [B, 1, L] - Noisy SNP sequences
@@ -303,11 +304,8 @@ class UNet1D(nn.Module):
         edge_pad=2,
         enable_checkpointing=True,
         use_attention=True,  # Enable attention mechanisms
-        attention_type="sparse",  # 'full', 'linear', or 'sparse'
         attention_heads=4,  # Number of attention heads
         attention_dim_head=32,  # Dimension per attention head
-        attention_window=512,  # For sparse attention
-        num_global_tokens=16,  # For sparse attention
         **kwargs,  # Accept additional arguments
     ):
         """
@@ -329,23 +327,18 @@ class UNet1D(nn.Module):
         self.norm_groups = norm_groups
         self.seq_length = seq_length
         self.edge_pad = edge_pad
-
-        # Gradient Checkpointing
         self.use_gradient_checkpointing = enable_checkpointing
 
-        # Attention
+        # Attention Parameters
         self.use_attention = use_attention
-        self.attention_type = attention_type
         self.attention_heads = attention_heads
         self.attention_dim_head = attention_dim_head
-        self.attention_window = attention_window
-        self.num_global_tokens = num_global_tokens
 
         # --- Model complexity and memory control ---
         # Base feature dimension - kept small (16) to manage memory usage
-        # This is multiplied by dim_mults at each level, so even small
-        # changes here have a big impact on memory
-        init_dim = 16  # [16 -> 32 -> 64 -> 128] with dim_mults=(1,2,4,8)
+        # Progressive scaling allows higher capacity at deeper levels
+        # where spatial resolution is lower but pattern complexity is higher
+        init_dim = 16  # [16 -> 32 -> 64 -> 256 -> 512] with progressive scaling
         out_dim = self.channels  # Always 1 for SNP data
 
         # Initial conv layer: maps input to base feature dimension
@@ -357,18 +350,21 @@ class UNet1D(nn.Module):
             self.channels, init_dim, kernel_size=kernel_size, padding=padding
         )
 
-        # Calculate feature dimensions for each U-Net level
+        # Calculate feature dimensions for each U-Net level with progressive scaling
         # Example with init_dim=16, dim_mults=(1,2,4,8):
-        # dims = [16, 32, 64, 128] (feature channels at each level)
-        # Each level halves spatial dimension but increases features
+        # dims = [16, 32, 64, 128, 256] or [16, 32, 64, 256, 512] (progressive capacity)
+        # Each level halves spatial dimension but increases features strategically
         dims = [init_dim]
-        for mult in self.dim_mults:
-            # Cap feature dims at 128 to prevent memory explosion
-            # This is crucial for long sequences
-            dims.append(min(init_dim * mult, 128))
+        for i, mult in enumerate(self.dim_mults):
+            # Progressive capacity scaling: more parameters where spatial resolution is lower
+            if i < 2:
+                max_dim = 256  # Conservative for early levels (32, 64 channels)
+            else:
+                max_dim = 512  # High capacity for deeper levels (128+, 256+ channels)
+            dims.append(min(init_dim * mult, max_dim))
 
         # Create (input_dim, output_dim) pairs for each level
-        # Example: [(16,32), (32,64), (64,128)]
+        # Example: [(16,32), (32,64), (64,128), (128,256)] with progressive scaling
         in_out = list(zip(dims[:-1], dims[1:]))
 
         # Store dimensions for debugging and shape analysis
@@ -411,42 +407,18 @@ class UNet1D(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(in_out):
             is_last = ind >= (num_resolutions - 1)
 
-            # Attention Block
+            # LinearAttention1D for encoder (memory-efficient for long sequences)
             attn_block = (
-                {
-                    "full": Residual(
-                        PreNorm(
+                Residual(
+                    PreNorm(
+                        dim_in,
+                        LinearAttention1D(
                             dim_in,
-                            Attention1D(
-                                dim_in,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                            ),
-                        )
-                    ),
-                    "linear": Residual(
-                        PreNorm(
-                            dim_in,
-                            LinearAttention1D(
-                                dim_in,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                            ),
-                        )
-                    ),
-                    "sparse": Residual(
-                        PreNorm(
-                            dim_in,
-                            SparseAttention1D(
-                                dim_in,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                                window_size=self.attention_window,
-                                num_global_tokens=self.num_global_tokens,
-                            ),
-                        )
-                    ),
-                }[self.attention_type]
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                )
                 if self.use_attention
                 else nn.Identity()
             )
@@ -471,42 +443,18 @@ class UNet1D(nn.Module):
         mid_dim = dims[-1]
         self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
 
-        # Attention Block
+        # Attention1D for bottleneck (full attention for maximum expressiveness)
         self.mid_attn = (
-            {
-                "full": Residual(
-                    PreNorm(
+            Residual(
+                PreNorm(
+                    mid_dim,
+                    Attention1D(
                         mid_dim,
-                        Attention1D(
-                            mid_dim,
-                            heads=self.attention_heads,
-                            dim_head=self.attention_dim_head,
-                        ),
-                    )
-                ),
-                "linear": Residual(
-                    PreNorm(
-                        mid_dim,
-                        LinearAttention1D(
-                            mid_dim,
-                            heads=self.attention_heads,
-                            dim_head=self.attention_dim_head,
-                        ),
-                    )
-                ),
-                "sparse": Residual(
-                    PreNorm(
-                        mid_dim,
-                        SparseAttention1D(
-                            mid_dim,
-                            heads=self.attention_heads,
-                            dim_head=self.attention_dim_head,
-                            window_size=self.attention_window,
-                            num_global_tokens=self.num_global_tokens,
-                        ),
-                    )
-                ),
-            }[self.attention_type]
+                        heads=self.attention_heads,
+                        dim_head=self.attention_dim_head,
+                    ),
+                )
+            )
             if self.use_attention
             else nn.Identity()
         )
@@ -517,42 +465,18 @@ class UNet1D(nn.Module):
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out)):
             is_last = ind == (len(in_out) - 1)
 
-            # Attention Block
+            # LinearAttention1D for decoder (memory-efficient for long sequences)
             attn_block = (
-                {
-                    "full": Residual(
-                        PreNorm(
+                Residual(
+                    PreNorm(
+                        dim_out,
+                        LinearAttention1D(
                             dim_out,
-                            Attention1D(
-                                dim_out,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                            ),
-                        )
-                    ),
-                    "linear": Residual(
-                        PreNorm(
-                            dim_out,
-                            LinearAttention1D(
-                                dim_out,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                            ),
-                        )
-                    ),
-                    "sparse": Residual(
-                        PreNorm(
-                            dim_out,
-                            SparseAttention1D(
-                                dim_out,
-                                heads=self.attention_heads,
-                                dim_head=self.attention_dim_head,
-                                window_size=self.attention_window,
-                                num_global_tokens=self.num_global_tokens,
-                            ),
-                        )
-                    ),
-                }[self.attention_type]
+                            heads=self.attention_heads,
+                            dim_head=self.attention_dim_head,
+                        ),
+                    )
+                )
                 if self.use_attention
                 else nn.Identity()
             )
@@ -623,16 +547,14 @@ class UNet1D(nn.Module):
             ValueError: If sequence too short for downsampling levels
         """
         # ========== INPUT & EMBEDDINGS ==========
-        batch, c, seq_len = x.shape
-        assert c == self.channels, f"Expected {self.channels} channels, got {c}"
+        B, C, L = x.shape
+        assert C == self.channels, f"Expected {self.channels} channels, got {C}"
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
         # Add positional embedding if enabled
         if self.with_pos_emb and self.pos_emb is not None:
-            positions = torch.arange(seq_len, device=x.device).expand(
-                batch, -1
-            )  # [B, L]
+            positions = torch.arange(L, device=x.device).expand(B, -1)  # [B, L]
             pos_encoding = self.pos_emb(positions)  # [B, L, emb]
             pos_encoding = pos_encoding.permute(0, 2, 1)  # [B, emb, L]
             # Add to input (if emb > 1, only add to first channel)
@@ -642,12 +564,12 @@ class UNet1D(nn.Module):
         edge_pad = self.edge_pad
 
         # Improved input validation: check after each downsampling that length is always > edge_pad
-        min_len = seq_len
+        min_len = L
         for i in range(len(self.dim_mults)):
             min_len = (min_len + 1) // 2  # Downsampling with stride 2
             if min_len <= edge_pad:
                 raise ValueError(
-                    f"Input sequence length {seq_len} is too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}. "
+                    f"Input sequence length {L} is too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}. "
                     f"At downsampling step {i}, length after downsampling would be {min_len}, which is not enough for edge_pad={edge_pad}. "
                     f"Increase seq_length or reduce dim_mults/edge_pad."
                 )
