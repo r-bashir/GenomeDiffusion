@@ -1,5 +1,5 @@
 # Project name
-project_name: "TestDiff"
+project_name: "100Test"
 
 # Project output
 output_path: "${PROJECT_ROOT}/outputs"
@@ -29,50 +29,50 @@ data:
 
 # DDPM
 diffusion:
-  timesteps: 1000              # Diffusion steps, should match tmax?
+  timesteps: 1000              # Diffusion steps
   beta_start: 0.00085          # Start value for linear beta scheduler
   beta_end: 0.02               # End value for linear beta scheduler
-  max_beta: 0.999              # Maximum value for cosine beta scheduler
-  beta_schedule: "cosine"      # Noise schedule type (linear/cosine)
+  max_beta: 0.999              # Max value for cosine beta scheduler (not needed yet)
+  beta_schedule: "cosine"      # Choose between 'linear' or 'cosine'
   denoise_step: 1
-  discretize: False
+  discretize: false
 
 # UNet1D
 unet:
-  embedding_dim: 16            # Sinusoidal (time, position) embedding dimension
-  dim_mults: [1, 2, 4]         # Control model complexity as [1, 2, 4, 8]
+  embedding_dim: 64            # Sinusoidal (time, position) embedding dimension
+  dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
   with_time_emb: true          # On/off sinusoidal time embeddings
   with_pos_emb: true           # On/off sinusoidal position embeddings
   norm_groups: 8               # Number of groups in GroupNorm layers
-  edge_pad: 2                  # Edge padding for boundary preservation
+  edge_pad: 4                  # Edge padding for boundary preservation
   enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
-  use_attention: true          # Enable multi-head self-attention blocks
-  attention_type: "linear"     # Attention type: 'full', 'linear', or 'sparse'
-  attention_heads: 4           # Number of attention heads
+  use_attention: false         # Enable multi-head self-attention blocks
+  attention_type: "sparse"     # Attention types 'full', 'linear', or 'sparse'
+  attention_heads: 32          # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
   attention_window: 512        # Window size for sparse attention
-  num_global_tokens: 16        # Number of global tokens for sparse attention
+  num_global_tokens: 64        # Number of global tokens for sparse attention
   dropout: 0.2                 # Dropout rate for ResNet blocks (for Kenneweg)
   use_scale_shift_norm: true   # Use scale-shift norm for ResNet blocks (for Kenneweg)
 
 # Trainer
 training:
   epochs: 100                  # Number of epochs to train
-  warmup_epochs: 50            # Number of warmup epochs
+  warmup_epochs: 5             # Number of warmup epochs
   early_stopping: false        # Whether to use early stopping
   patience: 10                 # Patience for early stopping
   save_top_k: 1                # Number of top models to save
   logger: "wandb"              # Logger to use
   log_every_n_steps: 5         # More frequent logging for short training
   precision: "16-mixed"        # Mixed precision training (saves ~2× memory)
-  accumulate_grad_batches: 8   # Increase gradient accumulation for memory efficiency
+  accumulate_grad_batches: 4   # Increase gradient accumulation for memory efficiency
 
 # Optimizer
 optimizer:
-  lr: 0.0001                   # Learning rate for AdamW optimizer
-  min_lr: 1.0e-05              # Minimum learning rate after warmup
-  weight_decay: 0.0001         # Weight decay (L2 regularization)
+  lr: 0.001                    # Learning rate for AdamW optimizer
+  min_lr: 5.0e-06              # Minimum learning rate after warmup
+  weight_decay: 3.0e-05        # Weight decay (L2 regularization)
   betas: [0.9, 0.999]          # Beta coefficients for running averages of gradient and its square
   eps: 1.0e-08                 # Term for numerical stability
   amsgrad: false               # Use AMSGrad variant of AdamW
@@ -81,8 +81,8 @@ optimizer:
 scheduler:
   type: "reduce"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
   eta_min: 1.0e-05             # Minimum learning rate for CosineAnnealingLR
-  mode: "min"                  # "min" or "max"
+  mode: "max"                  # "min" or "max"
   factor: 0.7                  # Gentler LR reduction for fine-tuning
-  patience: 10                 # Shorter patience for fast convergence
-  threshold: 1.0e-05           # Smaller threshold for detecting subtle improvements
-  min_lr: 1.0e-07              # Lower minimum LR for extended fine-tuning
+  patience: 15                 # Shorter patience for fast convergence
+  threshold: 1.0e-04           # Smaller threshold for detecting subtle improvements
+  min_lr: 1.0e-05              # Lower minimum LR for extended fine-tuning

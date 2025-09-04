@@ -97,7 +97,7 @@ def main():
 
     # === BEGIN: Reverse Diffusion ===
     logger.info(f"Running Markov reverse process from x_t at t=T...")
-    diffusion_steps = 4
+    diffusion_steps = 500
 
     # Generate noisy sample x_t at t=T
     x_t = get_noisy_sample(model, x0, diffusion_steps)
@@ -120,7 +120,7 @@ def main():
 
     # Debug log
     logger.debug(
-        f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
+        f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, r(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {corr_xt:.6f}"
     )
 
     # Plot denoising trajectory

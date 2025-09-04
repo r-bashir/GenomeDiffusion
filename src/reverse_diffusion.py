@@ -57,9 +57,9 @@ class ReverseDiffusion:
         self.denoise_step = denoise_step
         self.discretize = discretize
 
-    def reverse_diffusion_step_Ho(self, x_t, t, return_all=False):
+    def reverse_diffusion_step_Ho(self, xt, t, return_all=False):
         """
-        Single reverse diffusion step to estimate x_{t-1} given x_t and t.
+        Single reverse diffusion step to estimate x_{t-1} given xt and t.
         Implements Algorithm 2 from the DDPM paper (Ho et al., 2020):
 
         For t > 1:
@@ -69,17 +69,17 @@ class ReverseDiffusion:
             z ~ N(0, I)
 
         For t = 1:
-            p_θ(x_0|x_1) = μ_θ(x_1, 1)  # No noise added (z = 0)
-            μ_θ(x_1, 1) = (1/√α_1) * (x_1 - (β_1/√(1-ᾱ_1)) * ε_θ(x_1, 1))
+            p_θ(x0|x1) = μ_θ(x1, 1)  # No noise added (z = 0)
+            μ_θ(x1, 1) = (1/√α_1) * (x1 - (β_1/√(1-ᾱ_1)) * ε_θ(x1, 1))
 
         Args:
-            x_t: Noisy sample at timestep t, shape [B, C, seq_len] (must be on correct device)
+            xt: Noisy sample at timestep t, shape [B, C, L] (must be on correct device)
             t: Current timestep (tensor of shape [B] or scalar int, 1-based)
         Returns:
-            x_{t-1}: Sample at timestep t-1, same shape as x_t
+            x_{t-1}: Sample at timestep t-1, same shape as xt
         """
         # Ensure tensors are on the correct device
-        device = x_t.device
+        device = xt.device
 
         # Convert integer timestep to tensor if needed
         if isinstance(t, int):
@@ -87,9 +87,9 @@ class ReverseDiffusion:
         else:
             t = tensor_to_device(t, device)
 
-        # Ensure x_t has the correct shape [B, C, L]
-        # x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, ε ~ N(0, I) comes from ForwardDiffusion
-        x_t = prepare_batch_shape(x_t)
+        # Ensure xt has the correct shape [B, C, L]
+        # xt = √(ᾱ_t) * x0 + √(1-ᾱ_t) * ε, ε ~ N(0, I) comes from ForwardDiffusion
+        xt = prepare_batch_shape(xt)
 
         # Get diffusion parameters for timestep t, either use properties with manual indexing
         # beta_t = tensor_to_device(self.forward_diffusion.betas[t - 1], device)  # β_t
@@ -103,8 +103,8 @@ class ReverseDiffusion:
             self.forward_diffusion.alpha_bar(t), device
         )  # ᾱ_t
 
-        # Broadcast parameters to match x_t's dimensions
-        ndim = x_t.ndim
+        # Broadcast parameters to match xt's dimensions
+        ndim = xt.ndim
         beta_t = bcast_right(beta_t, ndim)
         alpha_t = bcast_right(alpha_t, ndim)
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
@@ -113,12 +113,12 @@ class ReverseDiffusion:
         eps = 1e-8
 
         # Predict noise using the noise prediction model
-        # ε_θ(x_t, t): Model's prediction of the noise added at timestep t
-        epsilon_theta = self.noise_predictor(x_t, t)
+        # ε_θ(xt, t): Model's prediction of the noise added at timestep t
+        epsilon_theta = self.noise_predictor(xt, t)
 
         # === DDPM Reverse Step Equations ===
-        # Compute mean for p(x_{t-1}|x_t) as in Algorithm 2
-        # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
+        # Compute mean for p(x_{t-1}|xt) as in Algorithm 2
+        # μ_θ(xt, t) = (1/√α_t) * (xt - (β_t/√(1-ᾱ_t)) * ε_θ(xt, t))
 
         # inv_sqrt_alpha_t = 1/√α_t
         inv_sqrt_alpha_t = torch.rsqrt(alpha_t + eps)
@@ -126,25 +126,25 @@ class ReverseDiffusion:
         # coef = β_t/√(1-ᾱ_t)
         coef = beta_t / torch.sqrt(1.0 - alpha_bar_t + eps)
 
-        # scaled_pred_noise = β_t/√(1-ᾱ_t) * ε_θ(x_t, t)
-        scaled_epsilon_theta = coef * epsilon_theta  # coef * ε_θ(x_t, t)
+        # scaled_epsilon_theta = β_t/√(1-ᾱ_t) * ε_θ(xt, t)
+        scaled_epsilon_theta = coef * epsilon_theta  # coef * ε_θ(xt, t)
 
         # === Debugging: Print Important Variables per Timestep ===
         # print(
         #     f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}"
         # )
 
-        # Compute mean for p(x_{t-1}|x_t) as in DDPM Algorithm 2:
-        # μ_θ(x_t, t) = (1/√α_t) * (x_t - (β_t/√(1-ᾱ_t)) * ε_θ(x_t, t))
-        # mean = inv_sqrt_alpha_t * (x_t - scaled_epsilon_theta)
+        # Compute mean for p(x_{t-1}|xt) as in DDPM Algorithm 2:
+        # μ_θ(xt, t) = (1/√α_t) * (xt - (β_t/√(1-ᾱ_t)) * ε_θ(xt, t))
+        # mean = inv_sqrt_alpha_t * (xt - scaled_epsilon_theta)
 
-        # TODO: Compute mean for p(x_{t-1}|x_t) slightly different from Algorithm 2
-        # μ_θ(x_t, t) = x_t - ε_θ(x_t, t)
+        # TODO: Compute mean for p(x_{t-1}|xt) slightly different from Algorithm 2
+        # μ_θ(xt, t) = xt - ε_θ(xt, t)
 
-        # FIXME: Test ε_θ(x_t, t) = 0, i.e. μ_θ(x_t, t) = x_t
-        # epsilon_theta = torch.zeros_like(x_t)
+        # FIXME: Test ε_θ(xt, t) = 0, i.e. μ_θ(xt, t) = xt
+        # epsilon_theta = torch.zeros_like(xt)
 
-        mean = x_t - epsilon_theta
+        mean = xt - epsilon_theta
         mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
         # abs_diff = torch.abs(epsilon_theta)
@@ -154,15 +154,15 @@ class ReverseDiffusion:
         # print(f"t: {t.item()}, Mean |ε_theta|: {mean_abs_diff:.6f}, Max |ε_theta|: {max_abs_diff:.6f}, Min |ε_theta|: {min_abs_diff:.6f}")
 
         # For t=1, z=0 (no noise); for t>1, z ~ N(0,I) as per Algorithm 2
-        z = torch.zeros_like(x_t, device=device)
+        z = torch.zeros_like(xt, device=device)
         if (t > 1).all():  # Only add noise if all timesteps are > 1
-            z = torch.randn_like(x_t, device=device)  # z ~ N(0, I)
+            z = torch.randn_like(xt, device=device)  # z ~ N(0, I)
 
         # FIXME: No noise added, along with epsilon_theta = 0 (DDIM)
-        # z = torch.zeros_like(x_t, device=device)
+        # z = torch.zeros_like(xt, device=device)
 
         # Sample from N(mean, σ_t^2 * I)
-        # x_{t-1} = μ_θ(x_t, t) + σ_t * z, where σ_t = √β_t
+        # x_{t-1} = μ_θ(xt, t) + σ_t * z, where σ_t = √β_t
         sigma_t = torch.sqrt(beta_t)  # σ_t
         x_t_minus_1 = mean + sigma_t * z
 
@@ -173,11 +173,11 @@ class ReverseDiffusion:
                 f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, 1/√α_t: {inv_sqrt_alpha_t.flatten()[0].item():.10f}, β_t/√(1-ᾱ_t): {coef.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
             )
             return {
-                "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
+                "epsilon_theta": epsilon_theta,  # ε_θ(xt, t): Model's predicted noise
                 "coef": coef,  # β_t/√(1-ᾱ_t): Scaling coefficient for predicted noise
-                "scaled_epsilon_theta": scaled_epsilon_theta,  # coeff * ε_θ(x_t, t): Scaled predicted noise
+                "scaled_epsilon_theta": scaled_epsilon_theta,  # coeff * ε_θ(xt, t): Scaled predicted noise
                 "inv_sqrt_alpha_t": inv_sqrt_alpha_t,  # 1/√α_t: factor for diagnostics
-                "mean": mean,  # μ_θ(x_t, t): Denoised mean before adding noise
+                "mean": mean,  # μ_θ(xt, t): Denoised mean before adding noise
                 "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "alpha_t": alpha_t,  # α_t: Alpha for this step
                 "alpha_bar_t": alpha_bar_t,  # ᾱ_t: Cumulative product of alphas up to t
@@ -186,55 +186,57 @@ class ReverseDiffusion:
             }
         return x_t_minus_1
 
-    def reverse_diffusion_step(self, x_t, t, return_all=False):
+    def reverse_diffusion_step(self, xt, t, true_x0=None, mask=None, return_all=False):
         """
-        Single reverse diffusion step to estimate x_{t-1} given x_t and t.
+        Single reverse diffusion step to estimate x_{t-1} given xt and t.
         Implements improved DDPM from Nichol & Dhariwal (2021).
 
         Key improvements over Ho et al. (2020):
         1. Uses the true posterior variance β̃_t instead of fixed β_t:
            - Ho et al. used σ_t^2 = β_t for simplicity
            - Nichol & Dhariwal derive the correct variance β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
-           - This better matches the true posterior q(x_{t-1}|x_t,x_0)
+           - This better matches the true posterior q(x_{t-1}|xt,x0)
 
-        2. Explicit x_0 prediction:
+        2. Explicit x0 prediction:
            - Ho et al. used noise prediction ε_θ to compute mean
-           - Nichol & Dhariwal show this is equivalent to predicting x_0
-           - Use x_0 prediction in mean calculation for better interpretability
+           - Nichol & Dhariwal show this is equivalent to predicting x0
+           - Use x0 prediction in mean calculation for better interpretability
 
         For t > 1:
             # Eq. 10: True posterior variance
             β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
 
             # New to Nicole & Dhariwal 2021
-            x_0 = x_t - ε_θ(x_t, t)
-            # Eq. 11: Mean using x_0 prediction
-            μ̃_t(x_t, x_0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x_0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * x_t
+            x0 = xt - ε_θ(xt, t)
+            # Eq. 11: Mean using x0 prediction
+            μ̃_t(xt, x0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * xt
 
             # Eq. 12: True posterior distribution
-            q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)
+            q(x_{t-1}|xt,x0) = N(x_{t-1}; μ̃_t(xt,x0), β̃_t I)
 
             # Sample using reparameterization:
             z ~ N(0, I), σ_t = √β̃_t
-            x_{t-1} = μ̃_t(x_t,x_0) + σ_t * z
+            x_{t-1} = μ̃_t(xt,x0) + σ_t * z
 
         For t = 1:
             β̃_1 = 0, z = 0
-            x_0 = x_1 - ε_θ(x_1, 1)
-            x_{t-1} = μ̃_1(x_1, x_0)
+            x0 = x1 - ε_θ(x1, 1)
+            x_{t-1} = μ̃_1(x1, x0)
 
         The key improvement over reverse_diffusion_step() is using the improved
         variance β̃_t (Eq. 10) and mean μ̃_t (Eq. 11) which better match the
-        true posterior q(x_{t-1}|x_t,x_0).
+        true posterior q(x_{t-1}|xt,x0).
 
         Args:
-            x_t: Noisy sample at timestep t, shape [B, C, seq_len] (must be on correct device)
+            xt: Noisy sample at timestep t, shape [B, C=1, L] (must be on correct device)
             t: Current timestep (tensor of shape [B] or scalar int, 1-based)
+            true_x0: Ground-truth clean sample [B, C=1, L] (optional, used for imputation)
+            mask: Tensor [B, C=1, L] with 1 = known SNP, 0 = unknown SNP (optional)
         Returns:
-            x_{t-1}: Sample at timestep t-1, same shape as x_t
+            x_{t-1}: Sample at timestep t-1, same shape as xt
         """
         # Ensure tensors are on the correct device
-        device = x_t.device
+        device = xt.device
 
         # Convert integer timestep to tensor if needed
         if isinstance(t, int):
@@ -242,9 +244,9 @@ class ReverseDiffusion:
         else:
             t = tensor_to_device(t, device)
 
-        # Ensure x_t has the correct shape [B, C, L]
-        # x_t = √(ᾱ_t) * x_0 + √(1-ᾱ_t) * ε, comes from ForwardDiffusion
-        x_t = prepare_batch_shape(x_t)
+        # Ensure xt has the correct shape [B, C, L]
+        # xt = √(ᾱ_t) * x0 + √(1-ᾱ_t) * ε, comes from ForwardDiffusion
+        xt = prepare_batch_shape(xt)
 
         # Get diffusion parameters for timestep t
         # β_t, α_t, ᾱ_t (beta, alpha, and cumulative alpha)
@@ -254,15 +256,22 @@ class ReverseDiffusion:
             self.forward_diffusion.alpha_bar(t), device
         )  # ᾱ_t
 
-        # Broadcast parameters to match x_t's dimensions
-        ndim = x_t.ndim
+        # Broadcast parameters to match xt's dimensions
+        ndim = xt.ndim
         beta_t = bcast_right(beta_t, ndim)
         alpha_t = bcast_right(alpha_t, ndim)
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
-        # === Step 1: Predict x_0 using noise predictor ===
-        epsilon_theta = self.noise_predictor(x_t, t)
-        x_0 = x_t - epsilon_theta
+        # === Step 1: Predict x0 using noise predictor ===
+        epsilon_theta = self.noise_predictor(xt, t)
+        pred_x0 = xt - epsilon_theta
+
+        # === Step 1b: Imputation overwrite ===
+        if true_x0 is not None and mask is not None:
+            # Blend predicted and true values
+            x0 = mask * true_x0 + (1 - mask) * pred_x0
+        else:
+            x0 = pred_x0
 
         # === Step 2: Get ᾱ_{t-1} for both mean and variance ===
         t_minus_1 = t - 1 if not (t == 1).all() else torch.zeros_like(t)
@@ -277,18 +286,18 @@ class ReverseDiffusion:
             beta_tilde = torch.zeros_like(beta_t)
 
         # === Step 4: Compute μ̃_t using Eq. 11 ===
-        # μ̃_t(x_t, x_0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x_0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * x_t
+        # μ̃_t(xt, x0) = (√ᾱ_{t-1}*β_t)/(1-ᾱ_t) * x0 + (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t) * xt
         coef_x0 = (torch.sqrt(alpha_bar_prev) * beta_t) / (1.0 - alpha_bar_t)
         coef_xt = (torch.sqrt(alpha_t) * (1.0 - alpha_bar_prev)) / (1.0 - alpha_bar_t)
-        mean = coef_x0 * x_0 + coef_xt * x_t
+        mean = coef_x0 * x0 + coef_xt * xt
         # mean = torch.nan_to_num(mean, nan=0.0, posinf=1.0, neginf=-1.0)
 
         # === Step 5: Sample from posterior using Eq. 12 ===
-        # q(x_{t-1}|x_t,x_0) = N(x_{t-1}; μ̃_t(x_t,x_0), β̃_t I)
+        # q(x_{t-1}|xt,x0) = N(x_{t-1}; μ̃_t(xt,x0), β̃_t I)
         # z ~ N(0, I), β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
-        z = torch.randn_like(x_t) if not (t == 1).all() else torch.zeros_like(x_t)
+        z = torch.randn_like(xt) if not (t == 1).all() else torch.zeros_like(xt)
 
-        # x_{t-1} = μ̃_t(x_t,x_0) + σ_t * z, where σ_t = √β̃_t
+        # x_{t-1} = μ̃_t(xt,x0) + σ_t * z, where σ_t = √β̃_t
         sigma_t = torch.sqrt(beta_tilde)  # σ_t
         x_t_minus_1 = mean + sigma_t * z
 
@@ -298,12 +307,12 @@ class ReverseDiffusion:
                 f"t: {t.item()}, β_t: {beta_t.flatten()[0].item():.10f}, α_t: {alpha_t.flatten()[0].item():.10f}, ᾱ_t: {alpha_bar_t.flatten()[0].item():.10f}, β~_t: {beta_tilde.flatten()[0].item():.10f}, σ_t: {sigma_t.flatten()[0].item():.10f}"
             )
             return {
-                "epsilon_theta": epsilon_theta,  # ε_θ(x_t, t): Model's predicted noise
-                "x0": x_0,  # x_0: predicted signal
-                "xt": x_t,  # x_t: noisy signal
-                "coef_x0": coef_x0,  # (√ᾱ_{t-1}*β_t)/(1-ᾱ_t): Coefficient for x_0
-                "coef_xt": coef_xt,  # (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t): Coefficient for x_t
-                "mean": mean,  # μ̃_t(x_t, x_0): Denoised mean before adding noise
+                "epsilon_theta": epsilon_theta,  # ε_θ(xt, t): Model's predicted noise
+                "x0": x0,  # x0: predicted signal
+                "xt": xt,  # xt: noisy signal
+                "coef_x0": coef_x0,  # (√ᾱ_{t-1}*β_t)/(1-ᾱ_t): Coefficient for x0
+                "coef_xt": coef_xt,  # (√α_t*(1-ᾱ_{t-1}))/(1-ᾱ_t): Coefficient for xt
+                "mean": mean,  # μ̃_t(xt, x0): Denoised mean before adding noise
                 "beta_tilde": beta_tilde,  # β̃_t: Posterior variance
                 "x_t_minus_1": x_t_minus_1,  # x_{t-1}: Denoised sample after adding noise
                 "alpha_t": alpha_t,  # α_t: Alpha for this step
@@ -332,7 +341,9 @@ class ReverseDiffusion:
         # Iterate over timesteps in reverse (Algorithm 2 from Ho et al., 2020)
         # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
-            x = self.reverse_diffusion_step(x, t)
+            x = self.reverse_diffusion_step(
+                x, t, true_x0=None, mask=None, return_all=False
+            )
 
         # Post-processing for SNP data
         if discretize:

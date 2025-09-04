@@ -201,7 +201,7 @@ def test_local_correlation_modeling(model, real_samples):
     return all_input_corrs, all_output_corrs
 
 
-def visualize_model_behavior(model, real_samples, output_dir):
+def visualize_model_behavior(model, real_samples, timestep, output_dir):
     """Visualize model behavior by comparing real samples with generated samples.
 
     Note: This function now properly uses reverse diffusion to generate samples
@@ -231,7 +231,7 @@ def visualize_model_behavior(model, real_samples, output_dir):
         generated_samples = generate_samples(
             model,
             num_samples=num_samples_to_viz,
-            start_timestep=1000,
+            start_timestep=timestep,
             discretize=False,
         )
 
@@ -367,6 +367,7 @@ def main():
 
     # Get sequence length from config
     seq_length = config.get("data", {}).get("seq_length", None)
+    timestep = config["diffusion"]["timesteps"]
 
     print(f"🏗️  Model Configuration:")
     print(f"   Sequence length: {seq_length}")
@@ -374,6 +375,7 @@ def main():
     print(f"   Dim mults: {config['unet'].get('dim_mults', 'N/A')}")
     print(f"   Position embeddings: {config['unet'].get('with_pos_emb', 'N/A')}")
     print(f"   Time embeddings: {config['unet'].get('with_time_emb', 'N/A')}")
+    print(f"   Diffusion Timesteps: {timestep}")
     print(f"   Edge padding: {config['unet'].get('edge_pad', 'N/A')}")
     print("\n" + "=" * 60)
 
@@ -388,7 +390,7 @@ def main():
     test_local_correlation_modeling(model, real_samples)
 
     print("\n4️⃣ REAL DATA VISUALIZATION")
-    visualize_model_behavior(model, real_samples, output_dir)
+    visualize_model_behavior(model, real_samples, timestep, output_dir)
 
     print("\n" + "=" * 60)
     print("🎯 RECOMMENDATIONS:")

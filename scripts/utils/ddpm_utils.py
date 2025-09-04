@@ -17,11 +17,11 @@ All functions use the correct Markov chain: at each step, the output of the prev
 - By t=0, we should be very different from x_t_start
 - Therefore, MSE(x_t_minus_1, x_t_start) should steadily increase
 
-3. Corr(x_t_minus_1, x_t) should DECREASE as t → 0 because:
+3. r(x_t_minus_1, x_t) should DECREASE as t → 0 because:
 - We start at t=T where x_t_minus_1 is very close to x_t_start
 - As we denoise, we move away from the noisy x_t_start
 - By t=0, we should be very different from x_t_start
-- Therefore, Corr(x_t_minus_1, x_t_start) should steadily decrease
+- Therefore, r(x_t_minus_1, x_t_start) should steadily decrease
 """
 
 from typing import Dict, Optional
@@ -67,7 +67,7 @@ def run_denoising_process(
     model: "DiffusionModel",
     x0: Tensor,  # Original clean sample
     x_t: Tensor,  # Noisy sample at T
-    T: int,
+    T: int,  # Start timestep for denoising process
     device: torch.device,
     return_all_steps: bool = True,
     print_mse: bool = False,
@@ -94,42 +94,46 @@ def run_denoising_process(
 
         # Print initial MSEs
         # MSE(x_t_minus_1, x0) should decrease as we denoise (t → 0)
-        # Corr(x_t_minus_1, x0) should increase as we denoise (t → 0)
+        # r(x_t_minus_1, x0) should increase as we denoise (t → 0)
         # MSE(x_t_minus_1, x_t) should increase as we denoise (t → 0)
-        # Corr(x_t_minus_1, x_t) should decrease as we denoise (t → 0)
+        # r(x_t_minus_1, x_t) should decrease as we denoise (t → 0)
         if print_mse:
             mse_x0 = torch.mean((x_t_minus_1 - x0) ** 2).item()
-            corr_x0 = torch.corrcoef(  # Pearson correlation coefficient
+            r_x0 = torch.corrcoef(  # Pearson correlation coefficient, r
                 torch.stack([x_t_minus_1.flatten(), x0.flatten()])
             )[0, 1]
             mse_xt = torch.mean((x_t_minus_1 - x_t) ** 2).item()
-            corr_xt = torch.corrcoef(  # Pearson correlation coefficient
+            r_xt = torch.corrcoef(  # Pearson correlation coefficient, r
                 torch.stack([x_t_minus_1.flatten(), x_t.flatten()])
             )[0, 1]
+
+            # Print initial MSEs
             print(
-                f"t={T} | MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
+                f"t={T} | MSE(x_t_minus_1, x0): {mse_x0:.6f}, r(x_t_minus_1, x0): {r_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {r_xt:.6f}"
             )
 
         # Reverse diffusion: from t_start down to 1 (after loop x_curr will be x0)
         for t in range(T, 0, -1):
             t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
             x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step(
-                x_t_minus_1, t_tensor
+                x_t_minus_1, t_tensor, true_x0=None, mask=None, return_all=False
             )
             samples[t - 1] = x_t_minus_1.clone()
 
-            # Print MSEs if requested
+            # Print final MSEs
             if print_mse:
                 mse_x0 = torch.mean((x_t_minus_1 - x0) ** 2).item()
-                mse_xt = torch.mean((x_t_minus_1 - x_t) ** 2).item()
-                corr_x0 = torch.corrcoef(  # Pearson correlation coefficient
+                r_x0 = torch.corrcoef(  # Pearson correlation coefficient, r
                     torch.stack([x_t_minus_1.flatten(), x0.flatten()])
                 )[0, 1]
-                corr_xt = torch.corrcoef(  # Pearson correlation coefficient
+                mse_xt = torch.mean((x_t_minus_1 - x_t) ** 2).item()
+                r_xt = torch.corrcoef(  # Pearson correlation coefficient, r
                     torch.stack([x_t_minus_1.flatten(), x_t.flatten()])
                 )[0, 1]
+
+                # Print final MSEs
                 print(
-                    f"t={t-1} | MSE(x_t_minus_1, x0): {mse_x0:.6f}, Corr(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, Corr(x_t_minus_1, x_t): {corr_xt:.6f}"
+                    f"t={t-1} | MSE(x_t_minus_1, x0): {mse_x0:.6f}, r(x_t_minus_1, x0): {r_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {r_xt:.6f}"
                 )
 
     if return_all_steps:
@@ -150,7 +154,7 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
         T (int): Timestep
         output_path (Path): Directory to save plots
     Returns:
-        Tuple[float, float, float, float]: (MSE(x_t_minus_1, x0), Corr(x_t_minus_1, x0), MSE(x_t_minus_1, x_t), Corr(x_t_minus_1, x_t))
+        Tuple[float, float, float, float]: (MSE(x_t_minus_1, x0), r(x_t_minus_1, x0), MSE(x_t_minus_1, x_t), r(x_t_minus_1, x_t))
     """
 
     x0_np = torch_to_numpy(x0).flatten()
@@ -192,7 +196,7 @@ def plot_denoising_comparison(x0, x_t, x_t_minus_1, T, output_path):
 
     # Annotate MSE and correlation
     axs[1].annotate(
-        f"MSE ($x_{{t-1}}$, $x_0$): {mse_x0:.6f}, Corr ($x_{{t-1}}$, $x_0$): {corr_x0:.6f}\nMSE ($x_{{t-1}}$, $x_t$): {mse_xt:.6f}, Corr ($x_{{t-1}}$, $x_t$): {corr_xt:.6f}",
+        f"MSE ($x_{{t-1}}$, $x_0$): {mse_x0:.6f}, r ($x_{{t-1}}$, $x_0$): {corr_x0:.6f}\nMSE ($x_{{t-1}}$, $x_t$): {mse_xt:.6f}, r ($x_{{t-1}}$, $x_t$): {corr_xt:.6f}",
         xy=(0.02, 0.98),
         xycoords="axes fraction",
         bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="gray", alpha=0.8),

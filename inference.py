@@ -123,11 +123,15 @@ def main():
 
     # Generate samples from model
     logger.info(f"Getting {num_samples_to_use} generated samples from model...")
+
+    timestep = config["diffusion"]["timesteps"]
+    logger.info(f"Starting at denoising from T={timestep}")
+
     with torch.no_grad():
         generated_samples = generate_samples(
             model,
             num_samples=num_samples_to_use,
-            start_timestep=1000,
+            start_timestep=timestep,
             discretize=args.discretize,
         )
     logger.info(f"Generated sample shape: {generated_samples.shape}")

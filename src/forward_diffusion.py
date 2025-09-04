@@ -112,21 +112,22 @@ class ForwardDiffusion:
         self, x0: torch.Tensor, t: torch.Tensor, eps: torch.Tensor
     ) -> torch.Tensor:
         """
-        Samples from the forward diffusion process q(x_t | x_0).
+        Samples from the forward diffusion process q(xt | x0).
 
         Implements:
-            q(x_t|x_0) = N(x_t; sqrt(ᾱ_t) * x_0, (1-ᾱ_t)I)
-            x_t = sqrt(ᾱ_t) * x_0 + sqrt(1-ᾱ_t) * ε, ε ~ N(0, I)
+            q(xt|x0) = N(xt; sqrt(ᾱ_t) * x0, (1-ᾱ_t)I)
+            xt = sqrt(ᾱ_t) * x0 + sqrt(1-ᾱ_t) * ε, ε ~ N(0, I)
 
         Args:
-            x0: Clean data sample of shape [B, C, seq_len].
-            t: Timestep indices, shape (batch_size,). Should be in [1, time_steps].
+            x0: Clean data sample of shape [B, C, L].
+            t: Timestep indices, shape (B,). Should be in [1, time_steps].
             eps: Pre-generated noise of same shape as x0.
 
         Returns:
-            torch.Tensor: Noisy sample x_t.
+            torch.Tensor: Noisy sample xt.
         """
         device = x0.device
+
         # Ensure x0 has the correct shape [B, C, L]
         x0 = prepare_batch_shape(x0)
 
@@ -134,20 +135,20 @@ class ForwardDiffusion:
         t = tensor_to_device(t, device).long()
 
         # Get parameters and ensure they're on the same device as x0
-        alpha_bar_t = self.alpha_bar(t)
-        sigma_t = self.sigma(t)
+        alpha_bar_t = self.alpha_bar(t)  # ᾱ_t = Π_{s=1}^t (1-β_s)
+        sigma_t = self.sigma(t)  # σ_t = √(1-ᾱ_t)
 
         # Broadcast parameters to match x0's dimensions
-        ndim = x0.ndim
-        alpha_bar_t = bcast_right(alpha_bar_t, ndim)
-        sigma_t = bcast_right(sigma_t, ndim)
+        alpha_bar_t = bcast_right(alpha_bar_t, x0.ndim)
+        sigma_t = bcast_right(sigma_t, x0.ndim)
 
         # Ensure noise is on the same device
         eps = tensor_to_device(eps, device)
 
         # Compute noisy sample
-        x_t = torch.sqrt(alpha_bar_t) * x0 + sigma_t * eps
-        return x_t
+        # xt = sqrt(ᾱ_t) * x0 + σ_t * ε
+        xt = torch.sqrt(alpha_bar_t) * x0 + sigma_t * eps
+        return xt
 
     # ====================== nn.Module like Methods ======================
     def register_buffer(self, name: str, tensor: torch.Tensor) -> None:
