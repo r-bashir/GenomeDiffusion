@@ -3,24 +3,63 @@
 # Purpose: Verify sweep setup works before running full HPO
 
 program: train_sweep.py
+
 method: bayes
+
 metric:
   goal: minimize
   name: val_loss_epoch
 
-# Early termination
+# Early termination to save compute
 early_terminate:
   type: hyperband
-  min_iter: 5
-  eta: 2
+  min_iter: 10  # More aggressive early stopping
+  eta: 5  # Faster elimination of poor trials
 
 parameters:
+
+  # === DATA ===
+  batch_size:
+    values: [16, 32, 64]
+
+  # === UNET1D ARCHITECTURE ===
+  embedding_dim:
+    values: [16, 32, 64, 128]
+
+  dim_mults:
+    values: [[1, 2], [1, 2, 4], [1, 2, 4, 8]]
+
+  with_time_emb:
+    values: [true, false]
+
+  with_pos_emb:
+    values: [true, false]
+
+  edge_pad:
+    values: [1, 2, 4]
+
+  norm_groups:
+    values: [2, 4, 8, 16]
+
+  # === TRAINING ===
+  epochs:
+    value: 50
+
+  warmup_epochs:
+    values: [5, 10]
+
+  accumulate_grad_batches:
+    values: [4, 8, 16]
+
   # === OPTIMIZER ===
   learning_rate:
-    values: [1e-4, 3e-4, 5e-4, 1e-3, 3e-3]
+    values: [0.0001, 0.0003, 0.0005, 0.001, 0.003, 0.005, 0.01]
+
+  min_lr:
+    values: [0.000001, 0.000003, 0.000005, 0.00001]
 
   weight_decay:
-    values: [1e-5, 1e-4, 1e-3]
+    values: [0.00001, 0.00003, 0.0001, 0.0003, 0.001]
 
   amsgrad:
     values: [true, false]
@@ -29,30 +68,23 @@ parameters:
   scheduler_type:
     values: ['cosine', 'reduce']
 
-  # === DATA ===
-  batch_size:
-    values: [16, 32, 64]
+  eta_min:
+    values: [1e-6, 1e-5, 1e-4]
 
-  # === TRAINING ===
-  epochs:
-    value: 20
+  scheduler_factor:
+    values: [0.3, 0.5, 0.7]
 
-  # === MODEL / ATTENTION COMPARISON ===
-  attention_type:
-    values: ["full", "linear", "sparse"]
+  scheduler_patience:
+    values: [5, 10, 15, 20]
 
-  # Only applies to sparse; for full/linear it is ignored by the model
-  attention_window:
-    values: [16, 32, 128, 512]
+  scheduler_mode:
+    values: ['min', 'max']
 
-  num_global_tokens:
-    values: [16, 32, 64]
+  scheduler_factor:
+    values: [0.3, 0.5, 0.7]
 
-  # Keep heads/dim_head fixed for fairness (override if needed)
+  scheduler_threshold:
+    values: [1e-6, 1e-5, 1e-4]
 
-  # === DATA SEQ LENGTHS ===
-  seq_length:
-    values: [100, 1000]
-
-# Small number of runs for testing
-# Note: count is specified via --count flag when running the agent
+  scheduler_min_lr:
+    values: [1e-6, 1e-5, 1e-4]

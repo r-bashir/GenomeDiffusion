@@ -48,13 +48,13 @@ unet:
   edge_pad: 4                  # Edge padding for boundary preservation
   enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
   use_attention: false         # Enable multi-head self-attention blocks
-  attention_type: "sparse"     # Attention types 'full', 'linear', or 'sparse'
   attention_heads: 32          # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
-  attention_window: 512        # Window size for sparse attention
-  num_global_tokens: 64        # Number of global tokens for sparse attention
-  dropout: 0.2                 # Dropout rate for ResNet blocks (for Kenneweg)
-  use_scale_shift_norm: true   # Use scale-shift norm for ResNet blocks (for Kenneweg)
+
+  attention_window: 512        # Window size (for Sparse Attention)
+  num_global_tokens: 64        # No of global tokens (for Sparse Attention)
+  dropout: 0.2                 # Dropout for ResNet blocks (for Kenneweg)
+  use_scale_shift_norm: true   # Scale-shift norm for ResNet blocks (for Kenneweg)
 
 # Trainer
 training:

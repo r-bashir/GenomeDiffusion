@@ -67,12 +67,11 @@ class DiffusionModel(NetworkBase):
             edge_pad=hparams["unet"]["edge_pad"],
             enable_checkpointing=hparams["unet"]["enable_checkpointing"],
             use_attention=hparams["unet"]["use_attention"],
-            attention_type=hparams["unet"]["attention_type"],
             attention_heads=hparams["unet"]["attention_heads"],
             attention_dim_head=hparams["unet"]["attention_dim_head"],
+            # Enhancements
             attention_window=hparams["unet"]["attention_window"],
             num_global_tokens=hparams["unet"]["num_global_tokens"],
-            # Dropout & Scale Shift Norm
             dropout=hparams["unet"]["dropout"],
             use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
         )
