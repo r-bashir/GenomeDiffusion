@@ -440,7 +440,7 @@ class UNet1D(nn.Module):
 
         # ========== UNet1D Architecture ==========
         num_resolutions = len(in_out)
-        block_klass = partial(ResnetBlock1D, groups=self.norm_groups)
+        resnet_block = partial(ResnetBlock1D, groups=self.norm_groups)
 
         # ENCODER / DOWNSAMPLING
         self.downs = nn.ModuleList([])
@@ -467,8 +467,8 @@ class UNet1D(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_in, dim_in, time_emb_dim=time_dim),
-                        block_klass(dim_in, dim_in, time_emb_dim=time_dim),
+                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
+                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
                         attn_block,
                         (
                             Downsample1D(dim_in, dim_out)
@@ -481,7 +481,7 @@ class UNet1D(nn.Module):
 
         # BOTTLENECK
         mid_dim = dims[-1]
-        self.mid_block1 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block1 = resnet_block(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         # Attention1D for bottleneck (full attention for maximum expressiveness)
         self.mid_attn = (
@@ -498,7 +498,7 @@ class UNet1D(nn.Module):
             if self.use_attention
             else nn.Identity()
         )
-        self.mid_block2 = block_klass(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block2 = resnet_block(mid_dim, mid_dim, time_emb_dim=time_dim)
 
         # DECODER / UPSAMPLING
         self.ups = nn.ModuleList([])
@@ -525,8 +525,8 @@ class UNet1D(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        block_klass(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+                        resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+                        resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         attn_block,
                         (
                             Upsample1D(dim_out, dim_in)
@@ -539,7 +539,7 @@ class UNet1D(nn.Module):
 
         # Enhanced OUTPUT with multi-scale final processing
         self.out_dim = out_dim if out_dim is not None else self.channels
-        self.final_res_block = block_klass(dims[0] * 2, dims[0], time_emb_dim=time_dim)
+        self.final_res_block = resnet_block(dims[0] * 2, dims[0], time_emb_dim=time_dim)
 
         # Multi-scale final convolution for better reconstruction
         self.final_conv = nn.Sequential(
@@ -583,8 +583,17 @@ class UNet1D(nn.Module):
             return x
         if cur_len < target_len:
             pad_right = target_len - cur_len
-            # (left, right) padding
-            return F.pad(x, (0, pad_right), mode="reflect")
+
+            # Handle extreme padding that exceeds PyTorch limits
+            # PyTorch padding size must be < input dimension
+            if pad_right >= cur_len:
+                # For extreme differences, use interpolation instead of padding
+                return F.interpolate(
+                    x, size=target_len, mode="linear", align_corners=False
+                )
+            else:
+                # Normal reflective padding for small differences
+                return F.pad(x, (0, pad_right), mode="reflect")
         # cur_len > target_len: crop on the right
         return x[..., :target_len]
 
