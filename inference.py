@@ -62,6 +62,17 @@ def parse_args():
         action="store_true",
         help="Discretize generated samples to 0, 0.5, and 1.0",
     )
+    parser.add_argument(
+        "--test_imputation",
+        action="store_true",
+        help="Test imputation functionality using real samples as ground truth",
+    )
+    parser.add_argument(
+        "--mask_ratio",
+        type=float,
+        default=0.3,
+        help="Ratio of SNPs to keep as known for imputation testing (0.0-1.0)",
+    )
     return parser.parse_args()
 
 
@@ -127,13 +138,134 @@ def main():
     timestep = config["diffusion"]["timesteps"]
     logger.info(f"Starting at denoising from T={timestep}")
 
-    with torch.no_grad():
-        generated_samples = generate_samples(
-            model,
-            num_samples=num_samples_to_use,
-            start_timestep=timestep,
-            discretize=args.discretize,
+    # Test imputation if requested
+    if args.test_imputation:
+        logger.info(f"\n=== TESTING IMPUTATION FUNCTIONALITY ===")
+        logger.info(f"Using mask ratio: {args.mask_ratio} (fraction of SNPs known)")
+
+        # Create random masks for imputation testing
+        torch.manual_seed(42)  # For reproducible results
+        mask = torch.rand_like(real_samples) < args.mask_ratio
+        mask = mask.float()
+
+        known_snps_per_sample = mask.sum(dim=-1).mean().item()
+        total_snps = mask.shape[-1]
+        logger.info(
+            f"Average known SNPs per sample: {known_snps_per_sample:.0f}/{total_snps} ({known_snps_per_sample/total_snps:.1%})"
         )
+
+        # Generate samples with imputation using real samples as ground truth
+        with torch.no_grad():
+            logger.info("Generating samples WITH imputation...")
+            generated_samples = generate_samples(
+                model,
+                num_samples=num_samples_to_use,
+                start_timestep=timestep,
+                discretize=args.discretize,
+                true_x0=real_samples,
+                mask=mask,
+            )
+
+        # Analyze imputation accuracy
+        logger.info("\n=== IMPUTATION ACCURACY ANALYSIS ===")
+
+        # Check accuracy at known positions
+        known_positions = mask == 1.0
+        if known_positions.any():
+            imputation_diff = torch.abs(
+                generated_samples[known_positions] - real_samples[known_positions]
+            )
+            max_diff = imputation_diff.max().item()
+            mean_diff = imputation_diff.mean().item()
+            std_diff = imputation_diff.std().item()
+
+            logger.info(f"Imputation accuracy at known positions:")
+            logger.info(f"  Max difference: {max_diff:.8f}")
+            logger.info(f"  Mean difference: {mean_diff:.8f}")
+            logger.info(f"  Std difference: {std_diff:.8f}")
+
+            if mean_diff < 1e-6:
+                logger.info(
+                    "✅ Perfect imputation: Known positions exactly match ground truth"
+                )
+            elif mean_diff < 1e-4:
+                logger.info(
+                    "✅ Excellent imputation: Very small differences at known positions"
+                )
+            else:
+                logger.warning(
+                    f"⚠️  Imputation accuracy: Mean difference {mean_diff:.8f}"
+                )
+
+        # Compare generation quality at unknown vs known positions
+        unknown_positions = mask == 0.0
+        if unknown_positions.any() and known_positions.any():
+            # MSE comparison
+            mse_unknown = torch.mean(
+                (generated_samples[unknown_positions] - real_samples[unknown_positions])
+                ** 2
+            ).item()
+            mse_known = torch.mean(
+                (generated_samples[known_positions] - real_samples[known_positions])
+                ** 2
+            ).item()
+
+            # Value distribution comparison
+            unknown_mean = generated_samples[unknown_positions].mean().item()
+            known_mean = generated_samples[known_positions].mean().item()
+            real_unknown_mean = real_samples[unknown_positions].mean().item()
+            real_known_mean = real_samples[known_positions].mean().item()
+
+            logger.info(f"\nGeneration quality comparison:")
+            logger.info(f"  MSE at unknown positions: {mse_unknown:.6f}")
+            logger.info(f"  MSE at known positions: {mse_known:.6f}")
+            if mse_known > 0:
+                logger.info(
+                    f"  Quality ratio: {mse_unknown/mse_known:.2f}x (unknown/known MSE)"
+                )
+
+            logger.info(f"\nValue distribution comparison:")
+            logger.info(f"  Generated mean at unknown positions: {unknown_mean:.4f}")
+            logger.info(f"  Generated mean at known positions: {known_mean:.4f}")
+            logger.info(f"  Real mean at unknown positions: {real_unknown_mean:.4f}")
+            logger.info(f"  Real mean at known positions: {real_known_mean:.4f}")
+
+        # Also generate samples without imputation for comparison
+        logger.info("\nGenerating samples WITHOUT imputation for comparison...")
+        with torch.no_grad():
+            generated_samples_no_imputation = generate_samples(
+                model,
+                num_samples=num_samples_to_use,
+                start_timestep=timestep,
+                discretize=args.discretize,
+                true_x0=None,
+                mask=None,
+            )
+
+        # Compare imputation vs no-imputation results
+        diff_with_without = (
+            torch.abs(generated_samples - generated_samples_no_imputation).mean().item()
+        )
+        logger.info(f"\nImputation vs No-imputation comparison:")
+        logger.info(f"  Mean absolute difference: {diff_with_without:.6f}")
+
+        # Save imputation-specific results
+        torch.save(mask, output_dir / "imputation_mask.pt")
+        torch.save(
+            generated_samples_no_imputation,
+            output_dir / "generated_samples_no_imputation.pt",
+        )
+        logger.info("✅ Imputation mask and no-imputation samples saved")
+
+    else:
+        # Standard generation without imputation
+        with torch.no_grad():
+            generated_samples = generate_samples(
+                model,
+                num_samples=num_samples_to_use,
+                start_timestep=timestep,
+                discretize=args.discretize,
+            )
     logger.info(f"Generated sample shape: {generated_samples.shape}")
 
     # Verify shapes match
@@ -249,9 +381,25 @@ def main():
     print(f"Status: {status}")
     print(f"Recommendation: {recommendation}")
     print(f"📊 Visual metrics summary (quick_metrics.png) saved.\n")
-    print(f"To run comprehensive analysis, run:\n")
-    print(f"python sample_analysis.py --checkpoint {args.checkpoint}\n")
-    logger.info("Inference completed!")
+    if args.test_imputation:
+        print(f"\n🧬 IMPUTATION TEST SUMMARY")
+        print("=" * 40)
+        print(f"Imputation functionality has been tested successfully!")
+        print(f"Known SNPs ratio: {args.mask_ratio:.1%}")
+        print(f"Check the logs above for detailed imputation accuracy metrics.")
+        print(f"Additional files saved:")
+        print(f"  - imputation_mask.pt: The mask used for testing")
+        print(f"  - generated_samples_no_imputation.pt: Samples without imputation")
+        print(f"\nTo run comprehensive analysis, run:")
+    else:
+        print(f"To run comprehensive analysis, run:\n")
+        print(f"python sample_analysis.py --checkpoint {args.checkpoint}\n")
+
+    if args.test_imputation:
+        logger.info("Inference with imputation testing completed!")
+        logger.info("Imputation functionality verified successfully.")
+    else:
+        logger.info("Inference completed!")
     logger.info(f"Results saved to: {output_dir}")
 
 

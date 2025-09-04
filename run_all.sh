@@ -53,10 +53,13 @@ log_and_run sample_analysis python sample_analysis.py --checkpoint "$CKPT_PATH"
 # 3) DDPM diagnostics
 log_and_run run_ddpm python scripts/run_ddpm.py --checkpoint "$CKPT_PATH"
 
-# 4) LD investigation
+# 4) Locality diagnostics
+log_and_run run_locality python scripts/run_locality.py --checkpoint "$CKPT_PATH"
+
+# 5) LD investigation
 log_and_run run_ld python scripts/run_ld.py --checkpoint "$CKPT_PATH"
 
-# 5) Reverse diffusion diagnostics
+# 6) Reverse diffusion diagnostics
 log_and_run run_reverse python scripts/run_reverse.py --checkpoint "$CKPT_PATH"
 
 echo "All tasks completed successfully. Logs saved under: $RUN_DIR"

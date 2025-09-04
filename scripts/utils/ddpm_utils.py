@@ -71,6 +71,8 @@ def run_denoising_process(
     device: torch.device,
     return_all_steps: bool = True,
     print_mse: bool = False,
+    true_x0: Optional[Tensor] = None,  # Ground-truth for imputation
+    mask: Optional[Tensor] = None,  # Mask for imputation (1=known, 0=unknown)
 ) -> Dict[int, Tensor]:
     """
     Run the Markov chain reverse diffusion process starting from a noisy sample x_t at timestep T.
@@ -82,6 +84,8 @@ def run_denoising_process(
         device (torch.device): The device (CPU/GPU) for all tensor operations.
         return_all_steps (bool): If True, return all intermediate samples. If False, only return x0.
         print_mse (bool): If True, print MSE and correlation metrics between denoised samples and both x0 and x_t.
+        true_x0 (Optional[Tensor]): Ground-truth clean sample for imputation testing.
+        mask (Optional[Tensor]): Mask tensor with 1=known SNP, 0=unknown SNP for imputation.
     Returns:
         Dict[int, Tensor]: Dictionary mapping timesteps to samples.
             If return_all_steps is False, only {0: x0_pred} is returned.
@@ -116,7 +120,7 @@ def run_denoising_process(
         for t in range(T, 0, -1):
             t_tensor = torch.full((1,), t, device=device, dtype=torch.long)
             x_t_minus_1 = model.reverse_diffusion.reverse_diffusion_step(
-                x_t_minus_1, t_tensor, true_x0=None, mask=None, return_all=False
+                x_t_minus_1, t_tensor, true_x0=true_x0, mask=mask, return_all=False
             )
             samples[t - 1] = x_t_minus_1.clone()
 

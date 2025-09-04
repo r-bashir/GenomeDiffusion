@@ -104,10 +104,19 @@ def run_reverse_step(
     model: DiffusionModel,
     x0: Tensor,
     timestep: int,
+    true_x0: Optional[Tensor] = None,
+    mask: Optional[Tensor] = None,
 ) -> ReverseDiffusionResult:
     """
     Run a single reverse diffusion step for a single sample and return all diagnostics.
     All variables are single-sample tensors or scalars for clarity.
+
+    Args:
+        model: The diffusion model
+        x0: Original clean sample
+        timestep: Current timestep
+        true_x0: Ground-truth clean sample for imputation (optional)
+        mask: Mask tensor with 1=known SNP, 0=unknown SNP (optional)
     """
     model.eval()
     with torch.no_grad():
@@ -125,7 +134,7 @@ def run_reverse_step(
 
         # Get all diagnostics from the core reverse step (dictionary output)
         reverse_dict = model.reverse_diffusion.reverse_diffusion_step(
-            xt, t_tensor, return_all=True
+            xt, t_tensor, true_x0=true_x0, mask=mask, return_all=True
         )
 
         # x_t_minus_1: denoised sample after reverse step [1, 1, seq_len]

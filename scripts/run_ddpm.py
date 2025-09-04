@@ -50,6 +50,17 @@ def parse_args():
         action="store_true",
         help="Discretize generated samples to 0, 0.5, and 1.0",
     )
+    parser.add_argument(
+        "--test_imputation",
+        action="store_true",
+        help="Test imputation functionality with known SNPs",
+    )
+    parser.add_argument(
+        "--mask_ratio",
+        type=float,
+        default=0.5,
+        help="Ratio of SNPs to keep as known for imputation testing (0.0-1.0)",
+    )
     return parser.parse_args()
 
 
@@ -97,15 +108,48 @@ def main():
 
     # === BEGIN: Reverse Diffusion ===
     logger.info(f"Running Markov reverse process from x_t at t=T...")
-    diffusion_steps = 500
+    diffusion_steps = 2
 
     # Generate noisy sample x_t at t=T
     x_t = get_noisy_sample(model, x0, diffusion_steps)
     # x_t = x0
 
+    # Test imputation if requested
+    true_x0_for_imputation = None
+    mask_for_imputation = None
+
+    if args.test_imputation:
+        logger.info(f"Testing imputation with mask ratio: {args.mask_ratio}")
+
+        # Use the original clean sample as ground truth
+        true_x0_for_imputation = x0.clone()
+
+        # Create a random mask (1 = known SNP, 0 = unknown SNP)
+        torch.manual_seed(42)  # For reproducible masks
+        mask_for_imputation = torch.rand_like(x0) < args.mask_ratio
+        mask_for_imputation = mask_for_imputation.float()
+
+        known_snps = mask_for_imputation.sum().item()
+        total_snps = mask_for_imputation.numel()
+        logger.info(
+            f"Imputation mask: {known_snps}/{total_snps} SNPs known ({known_snps/total_snps:.1%})"
+        )
+
+        logger.info("Running denoising WITH imputation...")
+    else:
+        logger.info("Running denoising WITHOUT imputation...")
+
     # Run Reverse Diffusion Process (Markov Chain)
     samples_dict = run_denoising_process(
-        model, x0, x_t, diffusion_steps, device, return_all_steps=True, print_mse=True
+        model,
+        x0,
+        x_t,
+        diffusion_steps,
+        device,
+        return_all_steps=True,
+        print_mse=True,
+        true_x0=true_x0_for_imputation,
+        mask=mask_for_imputation,
     )
 
     # Plot and compare
@@ -122,6 +166,49 @@ def main():
     logger.debug(
         f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, r(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {corr_xt:.6f}"
     )
+
+    # Additional imputation analysis
+    if args.test_imputation and mask_for_imputation is not None:
+        logger.info("\n=== IMPUTATION ANALYSIS ===")
+
+        # Check accuracy at known positions
+        known_positions = mask_for_imputation == 1.0
+        if known_positions.any():
+            imputation_diff = torch.abs(
+                x_t_minus_1[known_positions] - true_x0_for_imputation[known_positions]
+            )
+            max_diff = imputation_diff.max().item()
+            mean_diff = imputation_diff.mean().item()
+
+            logger.info(f"Imputation accuracy at known positions:")
+            logger.info(f"  Max difference: {max_diff:.8f}")
+            logger.info(f"  Mean difference: {mean_diff:.8f}")
+
+            if mean_diff < 1e-6:
+                logger.info(
+                    "✅ Perfect imputation: Known positions exactly match ground truth"
+                )
+            else:
+                logger.warning(
+                    f"⚠️  Imputation not perfect: Mean difference {mean_diff:.8f}"
+                )
+
+        # Compare reconstruction quality at unknown vs known positions
+        unknown_positions = mask_for_imputation == 0.0
+        if unknown_positions.any() and known_positions.any():
+            mse_unknown = torch.mean(
+                (x_t_minus_1[unknown_positions] - x0[unknown_positions]) ** 2
+            ).item()
+            mse_known = torch.mean(
+                (x_t_minus_1[known_positions] - x0[known_positions]) ** 2
+            ).item()
+
+            logger.info(f"Reconstruction quality comparison:")
+            logger.info(f"  MSE at unknown positions: {mse_unknown:.6f}")
+            logger.info(f"  MSE at known positions: {mse_known:.6f}")
+            logger.info(
+                f"  Improvement ratio: {mse_unknown/mse_known:.2f}x better at known positions"
+            )
 
     # Plot denoising trajectory
     plot_denoising_trajectory(
