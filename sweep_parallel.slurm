@@ -10,15 +10,16 @@
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
 # Parallel W&B Sweep Script
-# Usage: sbatch sweep_parallel.slurm [config_file] [num_sweeps] [runs_per_sweep]
-# Example: sbatch sweep_parallel.slurm sweep.yaml 5 20
+# Usage: sbatch sweep_parallel.slurm [config_file] [num_sweeps] [runs_per_sweep] [hpo_name]
+# Example: sbatch sweep_parallel.slurm sweep.yaml 5 20 HPO
 
 CONFIG_FILE=${1:-"sweep.yaml"}
 NUM_SWEEPS=${2:-5}
 RUNS_PER_SWEEP=${3:-20}
+HPO_NAME=${4:-"HPO"}
 TOTAL_RUNS=$((NUM_SWEEPS * RUNS_PER_SWEEP))
 
-echo "Config: $CONFIG_FILE | Sweeps: $NUM_SWEEPS | Runs/sweep: $RUNS_PER_SWEEP | Total: $TOTAL_RUNS"
+echo "Config: $CONFIG_FILE | Sweeps: $NUM_SWEEPS | Runs/sweep: $RUNS_PER_SWEEP | Total: $TOTAL_RUNS | HPO: $HPO_NAME"
 
 mkdir -p slurm_logs
 
@@ -46,9 +47,9 @@ for i in $(seq 1 $NUM_SWEEPS); do
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
         $CONTAINER bash -c "cd /workspace && \
-        python run_sweep.py --init --config $CONFIG_FILE --project HPO && \
+        python run_sweep.py --init --config $CONFIG_FILE --project $HPO_NAME && \
         SWEEP_ID=\$(python -c \"import yaml; f=open('current_sweep.yaml'); data=yaml.safe_load(f); f.close(); print(data.get('sweep_id', ''))\") && \
-        python run_sweep.py --agent \$SWEEP_ID --count $RUNS_PER_SWEEP" \
+        python run_sweep.py --agent \$SWEEP_ID --count $RUNS_PER_SWEEP --project $HPO_NAME" \
         > sweep_${i}_${SLURM_JOB_ID}.log 2>&1 &
     
     SWEEP_PIDS+=($!)
@@ -86,7 +87,7 @@ if [ ${#SWEEP_IDS[@]} -gt 0 ]; then
             --bind $PROJECT_DIR:/workspace \
             --env WANDB_API_KEY=$WANDB_API_KEY \
             $CONTAINER bash -c "cd /workspace && \
-            python run_sweep.py --analyze $sweep_id" \
+            python run_sweep.py --analyze $sweep_id --project $HPO_NAME" \
             >> analysis_${SLURM_JOB_ID}.log 2>&1
     done
     

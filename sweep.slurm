@@ -10,16 +10,14 @@
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
 # W&B Sweep SLURM Script for GenomeDiffusion HPO
-# Usage: sbatch sweep.slurm [config_file] [hpo_name] [count]
+# Usage: sbatch sweep.slurm [config_file] [count] [hpo_name]
 
 # Set default config file if not provided
 CONFIG_FILE=${1:-"sweep.yaml"}
 COUNT=${2:-10}  # Default to 10 runs if not specified
 HPO_NAME=${3:-"HPO"}
 
-echo "Using sweep config: $CONFIG_FILE"
-echo "Agent run count: $COUNT"
-echo "HPO project name: $HPO_NAME"
+echo "Config: $CONFIG_FILE | Count: $COUNT | HPO: $HPO_NAME"
 
 # Create logs directory if it doesn't exist
 mkdir -p slurm_logs
@@ -67,9 +65,9 @@ apptainer exec --nv \
     if [[ -z \"\$SWEEP_ID\" ]]; then echo '[ERROR] Could not read sweep_id from current_sweep.yaml' >&2; exit 2; fi && \
     echo \"Sweep ID: \$SWEEP_ID\" && \
     echo 'Starting sweep agent...' && \
-    python run_sweep.py --agent \"\$SWEEP_ID\" --count $COUNT 2>&1 | tee sweep_${SLURM_JOB_ID}.log && \
+    python run_sweep.py --agent \"\$SWEEP_ID\" --count $COUNT --project $HPO_NAME 2>&1 | tee sweep_${SLURM_JOB_ID}.log && \
     echo 'Sweep agent completed. Analyzing best parameters...' && \
-    python run_sweep.py --analyze \"\$SWEEP_ID\" 2>&1 | tee -a sweep_${SLURM_JOB_ID}.log \
+    python run_sweep.py --analyze \"\$SWEEP_ID\" --project $HPO_NAME 2>&1 | tee -a sweep_${SLURM_JOB_ID}.log \
     " || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
