@@ -10,7 +10,7 @@ data:
   seq_length: 1000             # Total length is 160858
   batch_size: 16               # Batch size for DataLoader class
   num_workers: 4               # Number of workers for DataLoader class
-  datasplit: [1850, 150, 67]   # Data split, we can set 0 for test dataset
+  datasplit: [1867, 150, 50]   # Data split, we can set 0 for test dataset
   missing_value: 9             # None, to not handle missing values
   normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
   augment: false               # Augment data with staircase structure
