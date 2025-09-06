@@ -10,14 +10,16 @@
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
 # W&B Sweep SLURM Script for GenomeDiffusion HPO
-# Usage: sbatch sweep.slurm [config_file] [count]
+# Usage: sbatch sweep.slurm [config_file] [hpo_name] [count]
 
 # Set default config file if not provided
-CONFIG_FILE=${1:-"sweep_small.yaml"}
+CONFIG_FILE=${1:-"sweep.yaml"}
 COUNT=${2:-10}  # Default to 10 runs if not specified
+HPO_NAME=${3:-"HPO"}
 
 echo "Using sweep config: $CONFIG_FILE"
 echo "Agent run count: $COUNT"
+echo "HPO project name: $HPO_NAME"
 
 # Create logs directory if it doesn't exist
 mkdir -p slurm_logs
@@ -59,7 +61,7 @@ apptainer exec --nv \
     --env CUDA_LAUNCH_BLOCKING=$CUDA_LAUNCH_BLOCKING \
     $CONTAINER bash -c "cd /workspace && \
     echo 'Initializing sweep with config $CONFIG_FILE...' && \
-    python run_sweep.py --init --config $CONFIG_FILE --project HPO && \
+    python run_sweep.py --init --config $CONFIG_FILE --project $HPO_NAME && \
     echo 'Parsing sweep ID from current_sweep.yaml...' && \
     SWEEP_ID=\$(python -c \"import yaml; f=open('current_sweep.yaml'); data=yaml.safe_load(f); f.close(); print(data.get('sweep_id', ''))\") && \
     if [[ -z \"\$SWEEP_ID\" ]]; then echo '[ERROR] Could not read sweep_id from current_sweep.yaml' >&2; exit 2; fi && \

@@ -1,6 +1,6 @@
-# W&B Sweeps Configuration for GenomeDiffusion HPO
-# Comprehensive hyperparameter optimization for cluster/server
-# Purpose: Full hyperparameter search across all important parameters
+# Small W&B Sweeps Configuration for Local Testing
+# Focus: Key parameters only for quick validation
+# Purpose: Verify sweep setup works before running full HPO
 
 program: train_sweep.py
 
@@ -40,16 +40,6 @@ parameters:
 
   norm_groups:
     values: [2, 4, 8, 16]
-
-  # === ATTENTION MECHANISM ===
-  use_attention:
-    values: [true, false]
-
-  attention_heads:
-    values: [4, 8, 16, 32]
-
-  attention_dim_head:
-    values: [16, 32, 64, 128]
 
   # === TRAINING ===
   epochs:

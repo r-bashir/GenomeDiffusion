@@ -13,7 +13,7 @@
 # Usage: sbatch sweep_parallel.slurm [config_file] [num_sweeps] [runs_per_sweep]
 # Example: sbatch sweep_parallel.slurm sweep.yaml 5 20
 
-CONFIG_FILE=${1:-"sweep_small.yaml"}
+CONFIG_FILE=${1:-"sweep.yaml"}
 NUM_SWEEPS=${2:-5}
 RUNS_PER_SWEEP=${3:-20}
 TOTAL_RUNS=$((NUM_SWEEPS * RUNS_PER_SWEEP))
