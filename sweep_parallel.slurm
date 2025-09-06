@@ -47,7 +47,7 @@ for i in $(seq 1 $NUM_SWEEPS); do
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
         $CONTAINER bash -c "cd /workspace && \
-        python run_sweep.py --init --config $CONFIG_FILE --project $HPO_NAME && \
+        python run_sweep.py --config $CONFIG_FILE --project $HPO_NAME && \
         SWEEP_ID=\$(python -c \"import yaml; f=open('current_sweep.yaml'); data=yaml.safe_load(f); f.close(); print(data.get('sweep_id', ''))\") && \
         python run_sweep.py --agent \$SWEEP_ID --count $RUNS_PER_SWEEP --project $HPO_NAME" \
         > sweep_${i}_${SLURM_JOB_ID}.log 2>&1 &

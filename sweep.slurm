@@ -59,7 +59,7 @@ apptainer exec --nv \
     --env CUDA_LAUNCH_BLOCKING=$CUDA_LAUNCH_BLOCKING \
     $CONTAINER bash -c "cd /workspace && \
     echo 'Initializing sweep with config $CONFIG_FILE...' && \
-    python run_sweep.py --init --config $CONFIG_FILE --project $HPO_NAME && \
+    python run_sweep.py --config $CONFIG_FILE --project $HPO_NAME && \
     echo 'Parsing sweep ID from current_sweep.yaml...' && \
     SWEEP_ID=\$(python -c \"import yaml; f=open('current_sweep.yaml'); data=yaml.safe_load(f); f.close(); print(data.get('sweep_id', ''))\") && \
     if [[ -z \"\$SWEEP_ID\" ]]; then echo '[ERROR] Could not read sweep_id from current_sweep.yaml' >&2; exit 2; fi && \
