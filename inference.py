@@ -313,7 +313,7 @@ def main():
     sample_distribution(
         real_samples,
         generated_samples,
-        output_dir / "sample_distribution.png",
+        output_dir,
         genotype_values=genotype_values,
     )
     logger.info(
@@ -323,7 +323,7 @@ def main():
     sample_visualization(
         real_samples,
         generated_samples,
-        output_dir / "sample_visualization.png",
+        output_dir,
         genotype_values=genotype_values,
         max_seq_len=100,
     )
@@ -336,7 +336,7 @@ def main():
     logger.info("✅ Generated samples (generated_samples.pt) are saved")
 
     # === Basic Quality Assessment ===
-    print(f"\n📊 QUICK QUALITY METRICS")
+    print(f"\n📊 QUALITY METRICS")
     logger.info("Computing quality metrics...")
     metrics = compute_quality_metrics(
         real_samples,
@@ -351,12 +351,12 @@ def main():
     visualize_quality_metrics(
         real_samples,
         generated_samples,
-        output_dir / "quick_metrics.png",
+        output_dir,
         max_value=max_value,
         genotype_values=genotype_values,
     )
 
-    print(f"\n🎯 QUICK QUALITY ASSESSMENT SUMMARY")
+    print(f"\n🎯 QUALITY ASSESSMENT SUMMARY")
     print("=" * 40)
     print(f"Overall Quality Score: {quality_score:.3f}/1.000")
 
@@ -380,7 +380,7 @@ def main():
 
     print(f"Status: {status}")
     print(f"Recommendation: {recommendation}")
-    print(f"📊 Visual metrics summary (quick_metrics.png) saved.\n")
+    print(f"📊 Visual metrics summary (quality_metrics.png) saved.\n")
     if args.test_imputation:
         print(f"\n🧬 IMPUTATION TEST SUMMARY")
         print("=" * 40)

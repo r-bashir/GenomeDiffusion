@@ -32,7 +32,7 @@ class Residual(nn.Module):
         return self.fn(x, *args, **kwargs) + x
 
 
-class Downsample1D(nn.Module):
+class DownsampleConv(nn.Module):
     """1D downsampling with robust odd-length sequence handling."""
 
     def __init__(self, dim, dim_out=None):
@@ -48,7 +48,7 @@ class Downsample1D(nn.Module):
         return self.conv(x)
 
 
-class Upsample1D(nn.Module):
+class UpsampleConv(nn.Module):
     """1D upsampling using transposed convolution for exact reconstruction."""
 
     def __init__(self, dim, dim_out=None):
@@ -61,7 +61,7 @@ class Upsample1D(nn.Module):
         return self.conv(x)
 
 
-class Block1D(nn.Module):
+class ConvBlock(nn.Module):
     """Basic 1D convolutional block: Conv1D + GroupNorm + SiLU + Dropout."""
 
     def __init__(self, dim, dim_out, groups=8, dropout=0.0):
@@ -109,8 +109,8 @@ class ResnetBlock1D(nn.Module):
                 else None
             )
 
-        self.block1 = Block1D(dim, dim_out, groups=groups, dropout=dropout)
-        self.block2 = Block1D(dim_out, dim_out, groups=groups, dropout=dropout)
+        self.block1 = ConvBlock(dim, dim_out, groups=groups, dropout=dropout)
+        self.block2 = ConvBlock(dim_out, dim_out, groups=groups, dropout=dropout)
         self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
@@ -428,7 +428,7 @@ class UNet1D(nn.Module):
                         resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
                         attn_block,
                         (
-                            Downsample1D(dim_in, dim_out)
+                            DownsampleConv(dim_in, dim_out)
                             if not is_last
                             else nn.Conv1d(dim_in, dim_out, 3, padding=1)
                         ),
@@ -486,7 +486,7 @@ class UNet1D(nn.Module):
                         resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         attn_block,
                         (
-                            Upsample1D(dim_out, dim_in)
+                            UpsampleConv(dim_out, dim_in)
                             if not is_last
                             else nn.Conv1d(dim_out, dim_in, 3, padding=1)
                         ),

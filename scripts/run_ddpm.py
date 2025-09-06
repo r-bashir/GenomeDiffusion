@@ -86,7 +86,7 @@ def main():
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    output_dir = Path(args.checkpoint).parent.parent / "ddpm_diffusion"
+    output_dir = Path(args.checkpoint).parent.parent / "denoising"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load Dataset (Test)

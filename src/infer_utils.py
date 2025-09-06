@@ -14,6 +14,7 @@ Removed redundant/outdated functions and kept only the core utilities.
 
 from pathlib import Path
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -30,9 +31,17 @@ DEFAULT_GENOTYPE_VALUES = [0.0, 0.25, 0.5]
 def compute_wasserstein_distance(real_flat, gen_flat):
     """Compute Wasserstein distance between two flattened distributions."""
     try:
+        # Validate inputs
+        real_flat = np.asarray(real_flat).flatten()
+        gen_flat = np.asarray(gen_flat).flatten()
+
+        if len(real_flat) == 0 or len(gen_flat) == 0:
+            return np.nan
+
         return float(stats.wasserstein_distance(real_flat, gen_flat))
-    except Exception:
-        return 0.0
+    except Exception as e:
+        print(f"Warning: Wasserstein distance computation failed: {e}")
+        return np.nan
 
 
 def compute_ld_decay_metrics(real, gen, max_distance=50, n_pairs=2000):
@@ -74,33 +83,40 @@ def compute_ld_decay_metrics(real, gen, max_distance=50, n_pairs=2000):
         bins = np.arange(1, max_dist + 1)
 
         real_binned = [
-            np.mean(real_r2[real_distances == d]) if np.any(real_distances == d) else 0
+            (
+                np.mean(real_r2[real_distances == d])
+                if np.any(real_distances == d)
+                else np.nan
+            )
             for d in bins
         ]
         gen_binned = [
-            np.mean(gen_r2[gen_distances == d]) if np.any(gen_distances == d) else 0
+            (
+                np.mean(gen_r2[gen_distances == d])
+                if np.any(gen_distances == d)
+                else np.nan
+            )
             for d in bins
         ]
 
-        # Correlation of binned curves with guards
-        rb = np.array(real_binned)
-        gb = np.array(gen_binned)
-        valid = (rb > 0) | (gb > 0)
-
-        if np.sum(valid) > 1:
-            rbv = rb[valid]
-            gbv = gb[valid]
-            if np.std(rbv) > 0 and np.std(gbv) > 0:
-                ld_corr = np.corrcoef(rbv, gbv)[0, 1]
-                if np.isnan(ld_corr):
-                    ld_corr = 0.0
-            else:
-                ld_corr = 0.0
+        # Remove NaN values for correlation computation
+        valid_mask = ~(np.isnan(real_binned) | np.isnan(gen_binned))
+        if np.sum(valid_mask) < 2:
+            correlation = 0.0
         else:
-            ld_corr = 0.0
+            real_binned_clean = np.array(real_binned)[valid_mask]
+            gen_binned_clean = np.array(gen_binned)[valid_mask]
+
+            # Compute correlation of binned curves
+            if len(real_binned_clean) > 1 and len(gen_binned_clean) > 1:
+                correlation = np.corrcoef(real_binned_clean, gen_binned_clean)[0, 1]
+                if np.isnan(correlation):
+                    correlation = 0.0
+            else:
+                correlation = 0.0
 
         return (
-            float(ld_corr),
+            float(correlation),
             real_distances.tolist(),
             real_r2.tolist(),
             gen_distances.tolist(),
@@ -284,7 +300,9 @@ def denoise_samples(
 
 
 # === Sample Analysis ===
-def sample_statistics(samples, label, unique_values=False, genotype_counts=True):
+def sample_statistics(
+    samples, label, unique_values=False, genotype_counts=True, genotype_values=None
+):
     """
     Print comprehensive statistics for a sample tensor.
 
@@ -294,6 +312,9 @@ def sample_statistics(samples, label, unique_values=False, genotype_counts=True)
         unique_values (bool): Whether to show unique values
         show_genotype_counts (bool): Whether to show genotype frequency counts
     """
+    if genotype_values is None:
+        genotype_values = DEFAULT_GENOTYPE_VALUES
+
     print(f"\n{label} Statistics:")
     print(f"  Shape: {samples.shape}")
     print(f"  Mean: {torch.mean(samples):.4f}")
@@ -308,11 +329,11 @@ def sample_statistics(samples, label, unique_values=False, genotype_counts=True)
     if genotype_counts:
         # Show genotype distribution for genomic data
         flat_samples = samples.cpu().numpy().flatten()
-        counts = count_genotype_values(flat_samples)
+        counts = count_genotype_values(flat_samples, genotype_values)
         total = len(flat_samples)
 
         print(f"  Genotype Distribution:")
-        for i, (val, count) in enumerate(zip(DEFAULT_GENOTYPE_VALUES, counts)):
+        for i, (val, count) in enumerate(zip(genotype_values, counts)):
             percentage = (count / total) * 100
             print(f"    {val:.2f}: {count:,} ({percentage:.1f}%)")
 
@@ -324,13 +345,23 @@ def validate_samples(real_samples, generated_samples, flatten=False):
     Returns (real_out, gen_out)
     """
     try:
+        # Handle None inputs
+        if real_samples is None or generated_samples is None:
+            raise ValueError("Input samples cannot be None")
+
+        # Convert to tensors if needed
+        if not isinstance(real_samples, torch.Tensor):
+            real_samples = torch.tensor(real_samples)
+        if not isinstance(generated_samples, torch.Tensor):
+            generated_samples = torch.tensor(generated_samples)
+
         if real_samples.shape != generated_samples.shape:
             raise ValueError(
                 f"Input tensors must have same shape. Got {real_samples.shape} and {generated_samples.shape}"
             )
         if len(real_samples.shape) != 3:
             raise ValueError(
-                f"Samples must be 3D tensors with shape [batch_size, channels, seq_len]. "
+                f"Samples must be 3D tensors with shape [B, C, L]. "
                 f"Got shape {real_samples.shape}"
             )
     except Exception as e:
@@ -345,41 +376,49 @@ def validate_samples(real_samples, generated_samples, flatten=False):
     return real, gen
 
 
-def count_genotype_values(arr, genotype_values=None):
+def count_genotype_values(arr, genotype_values=None, atol=None):
     """
     Count occurrences of each genotype value in array.
 
     Args:
         arr: Array-like object containing genotype values
         genotype_values: List of expected genotype values
+        atol: Absolute tolerance for matching (if None, uses 1e-3)
 
     Returns:
         tuple: Counts for each genotype value
     """
     if genotype_values is None:
         genotype_values = DEFAULT_GENOTYPE_VALUES
+    if atol is None:
+        atol = 1e-3
 
-    arr = np.asarray(arr)
+    arr = np.asarray(arr).flatten()  # Ensure flattened
+    if len(arr) == 0:
+        return tuple([0] * len(genotype_values))
+
     counts = []
-
     for value in genotype_values:
-        count = np.sum(np.isclose(arr, value, atol=1e-3))
+        # Handle potential NaN/inf values in array
+        valid_mask = np.isfinite(arr)
+        valid_arr = arr[valid_mask]
+        count = np.sum(np.isclose(valid_arr, value, atol=atol, rtol=0))
         counts.append(int(count))
 
     return tuple(counts)
 
 
 def sample_distribution(
-    real_samples, generated_samples, save_path, genotype_values=None
+    real_samples, generated_samples, output_dir, genotype_values=None
 ):
     """
     Compare and plot the genotype distributions for real and generated samples.
-    Prints stats and saves a bar plot to save_path.
+    Prints stats and saves a bar plot to output_dir.
 
     Args:
         real_samples (Tensor): Real SNP data [batch_size, channels, seq_len]
         generated_samples (Tensor): Generated SNP data [batch_size, channels, seq_len]
-        save_path (str): Path to save the plot
+        output_dir (str): Path to save the plot
         genotype_values (list): Expected genotype values, defaults to DEFAULT_GENOTYPE_VALUES
 
     Returns:
@@ -388,44 +427,72 @@ def sample_distribution(
     if genotype_values is None:
         genotype_values = DEFAULT_GENOTYPE_VALUES
 
-    # Validate and Flatten samples
+    # Validate and get flattened samples
     real_flat, gen_flat = validate_samples(
         real_samples, generated_samples, flatten=True
     )
 
-    # Count genotype values
-    real_counts = count_genotype_values(real_flat, genotype_values)
-    gen_counts = count_genotype_values(gen_flat, genotype_values)
-
     # Create figure with subplots
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-    # First subplot: Histogram (consistent with visualize_quality_metrics histogram approach)
-    # Use histogram for continuous distribution view (same as visualize_quality_metrics)
-    axes[0].hist(
-        real_flat, bins=50, alpha=0.7, label="Real", density=True, color="blue"
-    )
-    axes[0].hist(
-        gen_flat,
-        bins=50,
-        alpha=0.7,
-        label="Generated",
-        density=True,
-        color="red",
+    # SUBPLOT 1: Histogram for continuous distribution view
+    # Compute shared bins for fair comparison of densities
+    data_for_bins = np.concatenate([real_flat, gen_flat])
+    bins = np.histogram_bin_edges(data_for_bins, bins=50)
+    hist_args = {
+        "bins": bins,
+        "alpha": 0.7,
+        "density": True,
+    }
+    axes[0].hist(real_flat, **hist_args, label="Real", color="blue")
+    axes[0].hist(gen_flat, **hist_args, label="Generated", color="red")
+
+    # Bin size annotation
+    bin_widths = np.diff(bins)
+    n_bins = len(bins) - 1
+    if np.allclose(bin_widths, bin_widths[0]):
+        bin_info = f"bins: {n_bins}\nwidth: {bin_widths[0]:.4g}"
+    else:
+        # Non-uniform binning (depending on strategy)
+        bin_info = f"bins: {n_bins}\nmedian width: {np.median(bin_widths):.4g}"
+
+    axes[0].text(
+        0.98,
+        0.98,
+        bin_info,
+        transform=axes[0].transAxes,
+        ha="right",
+        va="top",
+        fontsize=10,
+        bbox=dict(boxstyle="square", facecolor="white", alpha=0.8),
     )
 
-    axes[0].set_title("Genotype Value Distribution")
-    axes[0].set_xlabel("Genotype Value")
-    axes[0].set_ylabel("Density")
+    # Axis Params
+    axes[0].set_title("Genotype Value Distribution", fontsize=10)
+    axes[0].set_xlabel("Genotype Value", fontsize=10)
+    axes[0].set_ylabel("Density", fontsize=10)
     axes[0].legend()
     axes[0].grid(True, alpha=0.3)
 
-    # Second subplot: Bar plot (consistent styling with visualize_quality_metrics)
-    labels = [f"{value:.2f}" for value in genotype_values]
+    # SUBPLOT 2: Bar plot to show genotype counts.
+    # Use bin width as tolerance for consistent counting
+    bin_width = (
+        bin_widths[0]
+        if np.allclose(bin_widths, bin_widths[0])
+        else np.median(bin_widths)
+    )
+    tolerance = bin_width / 2  # Half bin width as reasonable tolerance
 
+    # Count genotype values
+    real_counts = count_genotype_values(real_flat, genotype_values, atol=tolerance)
+    gen_counts = count_genotype_values(gen_flat, genotype_values, atol=tolerance)
+
+    # Axis Params
+    labels = [f"{value:.2f}" for value in genotype_values]
     x = np.arange(len(labels))
     width = 0.35
 
+    # Bar plot
     axes[1].bar(
         x - width / 2,
         real_counts,
@@ -433,7 +500,6 @@ def sample_distribution(
         label="Real",
         alpha=0.8,
         color="blue",
-        edgecolor="darkblue",
     )
     axes[1].bar(
         x + width / 2,
@@ -442,7 +508,6 @@ def sample_distribution(
         label="Generated",
         alpha=0.8,
         color="red",
-        edgecolor="darkred",
     )
 
     # Annotate bars
@@ -458,22 +523,34 @@ def sample_distribution(
             fontsize=10,
         )
 
-    axes[1].set_xlabel("Genotype Value")
-    axes[1].set_ylabel("Count")
-    axes[1].set_title("Genotype Value Counts")
+    # Axis Params
+    axes[1].set_xlabel("Genotype Value", fontsize=10)
+    axes[1].set_ylabel("Count", fontsize=10)
+    axes[1].set_title(f"Genotype Value Counts (±{tolerance:.4f})", fontsize=10)
     axes[1].set_xticks(x)
     axes[1].set_xticklabels(labels)
     axes[1].legend()
     axes[1].grid(True, alpha=0.3)
+
+    # Figure Params
     fig.tight_layout()
-    plt.savefig(save_path)
-    plt.close()
+    fig.savefig(
+        output_dir / "sample_distribution.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        output_dir / "sample_distribution.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
 
 
 def sample_visualization(
     real_samples,
     generated_samples,
-    save_path,
+    output_dir,
     genotype_values=None,
     max_seq_len=100,
 ):
@@ -487,7 +564,7 @@ def sample_visualization(
     Args:
         real_samples (Tensor): Real SNP data [batch_size, channels, seq_len]
         generated_samples (Tensor): Generated SNP data [batch_size, channels, seq_len]
-        save_path (str): Path to save the plot
+        output_dir (str): Path to save the plot
         max_seq_len (int, optional): Max sequence length to plot in all plots. Default is 100.
         genotype_values (list): Expected genotype values, defaults to DEFAULT_GENOTYPE_VALUES
 
@@ -569,8 +646,17 @@ def sample_visualization(
     )
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+    fig.savefig(
+        output_dir / "sample_visualization.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        output_dir / "sample_visualization.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
 
 
 # === Centralized Quality Metrics ===
@@ -762,6 +848,7 @@ def compute_quality_metrics(
         print(f"📏 Range Coverage: {range_coverage:.3f} (should be 1.0)")
         print(f"🌊 Wasserstein Distance: {wasserstein_dist:.4f} (should be ~0.0)")
         print(f"🧬 LD Decay Correlation: {ld_corr:.3f} (should be 1.0)")
+        print(f"🧬 Genotype Values: {genotype_values}")
         print(f"🎯 Quality Score: {overall_score:.3f}/1.000")
 
     return metrics
@@ -770,7 +857,7 @@ def compute_quality_metrics(
 def visualize_quality_metrics(
     real_samples,
     generated_samples,
-    output_path,
+    output_dir,
     max_value: float,
     genotype_values: list[float] | None = None,
 ):
@@ -780,7 +867,7 @@ def visualize_quality_metrics(
     Args:
         real_samples: Real data [B, C, L] or [B, L]
         generated_samples: Generated data [B, C, L] or [B, L]
-        output_path: Path to save the plot
+        output_dir: Path to save the plot
         max_value: Maximum value for MAF calculations (required)
         genotype_values: Expected genotype values for discrete analysis
     """
@@ -823,214 +910,32 @@ def visualize_quality_metrics(
         metrics["gen_stats"]["max"],
     ]
 
-    # Create figure with subplots (expanded to 2x4 to add Wasserstein and LD plots)
+    # Create figure with subplots
     fig, axes = plt.subplots(2, 4, figsize=(18, 10))
-    fig.suptitle(
-        "Quick Quality Assessment - Key Metrics", fontsize=16, fontweight="bold"
-    )
+    fig.suptitle("Quality Assessment - Key Metrics", fontsize=16, fontweight="bold")
 
-    # === SUBPLOT 1: Genotype Value Distribution ===
+    # === SUBPLOT 1: Wasserstein Distance (Empirical CDFs) ===
     ax = axes[0, 0]
-
-    # Get unique values to determine if data is discrete (use centralized arrays)
-    all_unique = np.unique(np.concatenate([real_flat, gen_flat]))
-
-    # Use bar chart if we have few unique values (discrete data)
-    if len(all_unique) <= 10:
-        # Count occurrences of each unique value
-        real_counts = [
-            np.sum(np.isclose(real_flat, val, atol=1e-6)) for val in all_unique
-        ]
-        gen_counts = [
-            np.sum(np.isclose(gen_flat, val, atol=1e-6)) for val in all_unique
-        ]
-
-        # Create bar chart
-        x_pos = np.arange(len(all_unique))
-        width = 0.35
-
-        ax.bar(
-            x_pos - width / 2,
-            real_counts,
-            width,
-            label="Real",
-            alpha=0.8,
-            color="blue",
-            edgecolor="darkblue",
-        )
-        ax.bar(
-            x_pos + width / 2,
-            gen_counts,
-            width,
-            label="Generated",
-            alpha=0.8,
-            color="red",
-            edgecolor="darkred",
-        )
-
-        ax.set_xlabel("Genotype Value")
-        ax.set_ylabel("Count")
-        ax.set_title("Genotype Value Distribution")
-        ax.set_xticks(x_pos)
-        ax.set_xticklabels([f"{val:.2f}" for val in all_unique])
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-
-    else:
-        # Use regular binning for continuous data (use centralized arrays)
-        ax.hist(real_flat, bins=50, alpha=0.7, label="Real", density=True, color="blue")
-        ax.hist(
-            gen_flat,
-            bins=50,
-            alpha=0.7,
-            label="Generated",
-            density=True,
-            color="red",
-        )
-
-    ax.set_xlabel("Genotype Value")
-    ax.set_ylabel("Density")
-    ax.set_title("Genotype Value Distribution")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # === SUBPLOT 2: Basic Statistics Comparison ===
-    ax = axes[0, 1]
-
-    stat_names = ["Mean", "Std", "Min", "Max"]
-    x = np.arange(len(stat_names))
-    width = 0.35
-
-    ax.bar(x - width / 2, real_stats, width, label="Real", alpha=0.8, color="blue")
-    ax.bar(x + width / 2, gen_stats, width, label="Generated", alpha=0.8, color="red")
-    ax.set_xlabel("Statistics")
-    ax.set_ylabel("Value")
-    ax.set_title("Basic Statistics Comparison")
-    ax.set_xticks(x)
-    ax.set_xticklabels(stat_names)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # === SUBPLOT 3: Quality Metrics Summary ===
-    ax = axes[0, 2]
-
-    # Normalize metrics for visualization (0-1 scale, higher is better)
-    viz_metrics = {
-        "AF Corr": max(0, af_corr),  # Should be 1.0
-        "MAF Corr": max(0, maf_corr),  # Should be 1.0
-        "KS p-val": min(1.0, ks_pvalue * 10),  # Should be >0.05, scaled for viz
-        "KS stat": 1.0 - min(1.0, ks_stat),  # Should be ~0.0, inverted for viz
-        "Mean Sim": 1.0 - min(1.0, mean_diff * 10),  # Should be ~0.0, inverted for viz
-        "Std Sim": 1.0 - min(1.0, std_diff * 10),  # Should be ~0.0, inverted for viz
-        "Range Cov": range_coverage,  # Should be 1.0
-    }
-
-    bars = ax.bar(
-        viz_metrics.keys(),
-        viz_metrics.values(),
-        color=["blue", "green", "orange", "red", "purple", "brown", "gray"],
-    )
-    ax.set_ylabel("Quality Score (0-1, higher better)")
-    ax.set_title("Quality Metrics Summary")
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
-    ax.grid(True, alpha=0.3)
-
-    # Add value labels on bars
-    for bar, value in zip(bars, viz_metrics.values()):
-        height = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2.0,
-            height + 0.01,
-            f"{value:.3f}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
-
-    # === SUBPLOT 4: Allele Frequency Correlation ===
-    ax = axes[1, 0]
-
-    ax.scatter(real_af, gen_af, alpha=0.6, s=10, color="purple")
-    ax.plot([0, max_value], [0, max_value], "r--", alpha=0.8, linewidth=2)
-    ax.set_xlabel("Real Allele Frequency")
-    ax.set_ylabel("Generated Allele Frequency")
-    ax.set_title(f"AF Correlation (should be 1.0)\n(r = {af_corr:.3f})")
-    ax.grid(True, alpha=0.3)
-
-    # === SUBPLOT 5: MAF Correlation ===
-    ax = axes[1, 1]
-
-    ax.scatter(real_maf, gen_maf, alpha=0.6, s=10, color="green")
-    ax.plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8, linewidth=2)
-    ax.set_xlabel("Real MAF")
-    ax.set_ylabel("Generated MAF")
-    ax.set_title(f"MAF Correlation (should be 1.0)\n(r = {maf_corr:.3f})")
-    ax.grid(True, alpha=0.3)
-
-    # === SUBPLOT 6: Allele Frequency Residuals Plot ===
-    ax = axes[1, 2]
-
-    # Calculate residuals (errors) for each SNP position
-    af_residuals = gen_af - real_af
-    positions = np.arange(len(af_residuals))
-
-    # Create residuals scatter plot
-    ax.scatter(positions, af_residuals, alpha=0.6, s=8, color="red", edgecolors="none")
-
-    # Add zero line (perfect prediction)
-    ax.axhline(y=0, color="black", linestyle="-", alpha=0.8, linewidth=1)
-
-    # Add mean residual line
-    mean_residual = np.mean(af_residuals)
-    ax.axhline(
-        y=mean_residual,
-        color="blue",
-        linestyle="--",
-        alpha=0.6,
-        linewidth=1,
-        label=f"Mean: {mean_residual:.4f}",
-    )
-
-    # Formatting
-    ax.set_xlabel("SNP Position")
-    ax.set_ylabel("AF Residual (Generated - Real)")
-    ax.set_title(f"AF Residuals (RMSE should be ~0.0)\n(RMSE: {rmse_af:.4f})")
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=8)
-
-    # Add statistics text using centralized values
-    ax.text(
-        0.02,
-        0.98,
-        f"RMSE: {rmse_af:.4f}\nMAE: {mae_af:.4f}",
-        transform=ax.transAxes,
-        fontsize=8,
-        alpha=0.8,
-        verticalalignment="top",
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
-    )
-    ax.legend(fontsize=8)
-
-    # === SUBPLOT 7: Wasserstein Distance (ECDF comparison) ===
-    ax = axes[0, 3]
-
-    # Use centralized Wasserstein distance
-    # Empirical CDFs
     r_sorted = np.sort(real_flat)
     g_sorted = np.sort(gen_flat)
     r_ecdf = np.arange(1, r_sorted.size + 1) / r_sorted.size
     g_ecdf = np.arange(1, g_sorted.size + 1) / g_sorted.size
 
-    ax.step(r_sorted, r_ecdf, where="post", label="Real ECDF", color="blue", alpha=0.8)
-    ax.step(g_sorted, g_ecdf, where="post", label="Gen ECDF", color="red", alpha=0.8)
+    ax.step(r_sorted, r_ecdf, where="post", label="Real eCDF", color="blue", alpha=0.8)
+    ax.step(
+        g_sorted, g_ecdf, where="post", label="Generated eCDF", color="red", alpha=0.8
+    )
     ax.set_xlabel("Genotype Value")
-    ax.set_ylabel("ECDF")
-    ax.set_title(f"Wasserstein Distance (should be ~0.0)\n{wasserstein_dist:.4f}")
+    ax.set_ylabel("eCDF")
+    ax.set_title(
+        f"Wasserstein Distance (should be ~0.0)\n($W_1 = {wasserstein_dist:.4f}$)",
+        fontsize=10,
+    )
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # === SUBPLOT 8: LD Decay (mini) ===
-    ax = axes[1, 3]
+    # === SUBPLOT 2: LD Decay (mini) ===
+    ax = axes[0, 1]
 
     # Use centralized LD computation
     real_distances = metrics["real_distances"]
@@ -1099,25 +1004,212 @@ def visualize_quality_metrics(
             "r-s",
             linewidth=2,
             markersize=4,
-            label="Gen (binned)",
+            label="Generated (binned)",
         )
 
-        ax.set_title(f"LD Decay Correlation (should be 1.0)\nr² Corr: {ld_corr:.3f}")
+        ax.set_title(
+            f"LD Decay Correlation (should be 1.0)\n($r^2 = {ld_corr:.3f}$)",
+            fontsize=10,
+        )
         ax.set_xlabel("Distance (SNPs)")
-        ax.set_ylabel("r²")
+        ax.set_ylabel("$r^2$")
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=8)
     else:
         ax.text(0.5, 0.5, "Insufficient data for LD", ha="center", va="center")
         ax.axis("off")
 
+    # === SUBPLOT 3: Discretized CM or Q-Q plot ===
+    subplot = "qq"
+    if subplot == "dcm":
+        ax = axes[0, 2]
+        gvals = np.array(metrics["genotype_values"], dtype=float)  # [0.0, 0.25, 0.5]
+
+        # Map to nearest genotype
+        def nearest_idx(x, gvals):
+            return np.abs(x[..., None] - gvals[None, ...]).argmin(axis=-1)
+
+        real_idx = nearest_idx(real_flat, gvals)
+        gen_idx = nearest_idx(gen_flat, gvals)
+
+        # Build confusion matrix counts
+        K = len(gvals)
+        cm = np.zeros((K, K), dtype=int)
+        for i in range(K):
+            sel = real_idx == i
+            if sel.any():
+                gi = gen_idx[sel]
+                for j in range(K):
+                    cm[i, j] = int(np.sum(gi == j))
+
+        # Normalize rows to percentages (handle empty rows)
+        row_sums = cm.sum(axis=1, keepdims=True)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cm_pct = np.where(row_sums > 0, 100.0 * cm / row_sums, 0.0)
+
+        # Plot heatmap
+        im = ax.imshow(cm_pct, cmap="Blues", vmin=0, vmax=100, aspect="auto")
+        for i in range(K):
+            for j in range(K):
+                ax.text(
+                    j, i, f"{cm_pct[i, j]:.1f}%", va="center", ha="center", fontsize=9
+                )
+
+        ax.set_xticks(np.arange(K))
+        ax.set_yticks(np.arange(K))
+        ax.set_xticklabels([f"{v:.2f}" for v in gvals])
+        ax.set_yticklabels([f"{v:.2f}" for v in gvals])
+        ax.set_xlabel("Generated (nearest genotype)")
+        ax.set_ylabel("Real (nearest genotype)")
+        ax.set_title("Genotype Confusion Matrix (% per real row)")
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    if subplot == "qq":
+        ax = axes[0, 2]
+        q = np.linspace(0, 1, 200)
+        rq = np.quantile(real_flat, q)
+        gq = np.quantile(gen_flat, q)
+        ax.scatter(rq, gq, s=10, alpha=0.6, color="tab:blue")
+        lims = [min(rq.min(), gq.min()), max(rq.max(), gq.max())]
+        ax.plot(lims, lims, "r--", linewidth=2, alpha=0.8)
+        ax.set_xlabel("Real quantiles")
+        ax.set_ylabel("Generated quantiles")
+        ax.set_title("Q–Q Plot (distributional alignment)")
+        ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 4: Basic Statistics Comparison ===
+    ax = axes[0, 3]
+
+    stat_names = ["Mean", "Std", "Min", "Max"]
+    x = np.arange(len(stat_names))
+    width = 0.35
+
+    ax.bar(x - width / 2, real_stats, width, label="Real", alpha=0.8, color="blue")
+    ax.bar(x + width / 2, gen_stats, width, label="Generated", alpha=0.8, color="red")
+    ax.set_xlabel("Statistics")
+    ax.set_ylabel("Value")
+    ax.set_title("Basic Statistics Comparison")
+    ax.set_xticks(x)
+    ax.set_xticklabels(stat_names)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 5: MAF Correlation ===
+    ax = axes[1, 0]
+
+    ax.scatter(real_maf, gen_maf, alpha=0.6, s=10, color="green")
+    ax.plot([0, max_value / 2], [0, max_value / 2], "r--", alpha=0.8, linewidth=2)
+    ax.set_xlabel("Real MAF")
+    ax.set_ylabel("Generated MAF")
+    ax.set_title(f"MAF Correlation (should be 1.0)\n($r = {maf_corr:.3f}$)")
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 6: AF Correlation ===
+    ax = axes[1, 1]
+
+    ax.scatter(real_af, gen_af, alpha=0.6, s=10, color="purple")
+    ax.plot([0, max_value], [0, max_value], "r--", alpha=0.8, linewidth=2)
+    ax.set_xlabel("Real AF")
+    ax.set_ylabel("Generated AF")
+    ax.set_title(f"AF Correlation (should be 1.0)\n($r = {af_corr:.3f}$)")
+    ax.grid(True, alpha=0.3)
+
+    # === SUBPLOT 7: AF Residuals ===
+    ax = axes[1, 2]
+
+    # Calculate residuals (errors) for each SNP position
+    af_residuals = gen_af - real_af
+    positions = np.arange(len(af_residuals))
+
+    # Create residuals scatter plot
+    ax.scatter(positions, af_residuals, alpha=0.6, s=8, color="red", edgecolors="none")
+
+    # Add zero line (perfect prediction)
+    ax.axhline(y=0, color="black", linestyle="-", alpha=0.8, linewidth=1)
+
+    # Add mean residual line
+    mean_residual = np.mean(af_residuals)
+    ax.axhline(
+        y=mean_residual,
+        color="blue",
+        linestyle="--",
+        alpha=0.6,
+        linewidth=1,
+        label=f"Mean: {mean_residual:.4f}",
+    )
+
+    # Formatting
+    ax.set_xlabel("SNP Position")
+    ax.set_ylabel("AF Residual (Generated - Real)")
+    ax.set_title(f"AF Residuals (RMSE should be ~0.0)\n($RMSE = {rmse_af:.4f}$)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8)
+
+    # Add statistics text using centralized values
+    ax.text(
+        0.02,
+        0.98,
+        f"RMSE: {rmse_af:.4f}\nMAE: {mae_af:.4f}",
+        transform=ax.transAxes,
+        fontsize=8,
+        alpha=0.8,
+        verticalalignment="top",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+    ax.legend(fontsize=8)
+
+    # === SUBPLOT 8: Quality Metrics Summary ===
+    ax = axes[1, 3]
+
+    # Normalize metrics for visualization (0-1 scale, higher is better)
+    viz_metrics = {
+        "AF Corr": max(0, af_corr),  # Should be 1.0
+        "MAF Corr": max(0, maf_corr),  # Should be 1.0
+        "KS p-val": min(1.0, ks_pvalue * 10),  # Should be >0.05, scaled for viz
+        "KS stat": 1.0 - min(1.0, ks_stat),  # Should be ~0.0, inverted for viz
+        "Mean Sim": 1.0 - min(1.0, mean_diff * 10),  # Should be ~0.0, inverted for viz
+        "Std Sim": 1.0 - min(1.0, std_diff * 10),  # Should be ~0.0, inverted for viz
+        "Range Cov": range_coverage,  # Should be 1.0
+    }
+
+    bars = ax.bar(
+        viz_metrics.keys(),
+        viz_metrics.values(),
+        color=["blue", "green", "orange", "red", "purple", "brown", "gray"],
+    )
+    ax.set_ylabel("Quality Score (0-1, higher better)")
+    ax.set_title("Quality Metrics Summary")
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.grid(True, alpha=0.3)
+
+    # Add value labels on bars
+    for bar, value in zip(bars, viz_metrics.values()):
+        height = bar.get_height()
+        ax.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 0.01,
+            f"{value:.3f}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()
+    fig.savefig(
+        output_dir / "quality_metrics.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        output_dir / "quality_metrics.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close(fig)
 
 
 # === Diffusion Visualization ===
-def visualize_diffusion(samples, save_path, title, timesteps=None):
+def visualize_diffusion(samples, output_dir, title, timesteps=None):
     """Plot a grid of samples showing the diffusion process.
 
     Creates a grid visualization showing how samples evolve during the diffusion process.
@@ -1126,7 +1218,7 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
 
     Args:
         samples: Tensor of samples to plot [num_steps, batch_size, channels, seq_len]
-        save_path: Path to save the plot
+        output_dir: Path to save the plot
         title: Title for the plot
         timesteps: List of timesteps corresponding to each sample
     """
@@ -1155,5 +1247,14 @@ def visualize_diffusion(samples, save_path, title, timesteps=None):
         axes[i].set_yticks([])
 
     plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+    fig.savefig(
+        output_dir / "diffusion.png",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    fig.savefig(
+        output_dir / "diffusion.pdf",
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close(fig)

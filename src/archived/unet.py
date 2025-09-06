@@ -1,11 +1,18 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+"""Based on `https://huggingface.co/blog/annotated-diffusion` that explains
+using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
+adapted the code for 1-dimensional SNP genomic dataset. It uses single-skip
+connections, that  is close to the traditional single-skip U-Net model.
+"""
+
 from functools import partial
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from src.sinusoidal_embedding import (
     SinusoidalPositionEmbeddings,
@@ -449,22 +456,15 @@ class UNet1D(nn.Module):
                 Minimum length depends on dim_mults length.
         """
         # ========== INPUT & EMBEDDINGS ==========
-        if self.debug:
-            print(
-                f"[DEBUG] Input shape: {x.shape} (expected: [B, {self.channels}, {self.seq_length}])"
-            )
-
-        batch, c, seq_len = x.shape
-        assert c == self.channels, f"Expected {self.channels} channels, got {c}"
+        B, C, L = x.shape
+        assert C == self.channels, f"Expected {self.channels} channels, got {C}"
         original_len = x.size(-1)
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
         # Add positional embedding if enabled
         if self.with_pos_emb and self.pos_emb is not None:
-            positions = torch.arange(seq_len, device=x.device).expand(
-                batch, -1
-            )  # [B, L]
+            positions = torch.arange(L, device=x.device).expand(B, -1)  # [B, L]
             pos_encoding = self.pos_emb(positions)  # [B, L, emb]
             pos_encoding = pos_encoding.permute(0, 2, 1)  # [B, emb, L]
             # Add to input (if emb > 1, only add to first channel)
@@ -472,57 +472,64 @@ class UNet1D(nn.Module):
 
         # Edge padding for boundary preservation (configurable)
         edge_pad = self.edge_pad
+
         # Improved input validation: check after each downsampling that length is always > edge_pad
-        min_len = seq_len
+        min_len = L
         for i in range(len(self.dim_mults)):
             min_len = (min_len + 1) // 2  # Downsampling with stride 2
             if min_len <= edge_pad:
                 raise ValueError(
-                    f"Input sequence length {seq_len} is too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}. "
+                    f"Input sequence length {L} is too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}. "
                     f"At downsampling step {i}, length after downsampling would be {min_len}, which is not enough for edge_pad={edge_pad}. "
                     f"Increase seq_length or reduce dim_mults/edge_pad."
                 )
 
-        # Initial conv: [B, 1, L] → [B, init_dim, L]
+        # INITIAL CONVOLUTION
+        # [B, 1, L] → [B, init_dim, L]
         x = self.init_conv(x)
-        if self.debug:
-            print(f"[DEBUG] After initial conv: {x.shape}")
         t = self.time_mlp(time) if self.time_mlp else None
 
-        # ========== ENCODER / DOWNSAMPLING ==========
+        if self.debug:
+            print(f"[DEBUG] After initial conv: {x.shape}")
+
+        # ENCODER / DOWNSAMPLING
         h = []  # skip connections
         for i, (block1, block2, _, downsample) in enumerate(self.downs):
-            # Residual blocks (optionally with time embedding)
             if self.use_gradient_checkpointing:
-                x = torch.utils.checkpoint.checkpoint(block1, x, t, use_reentrant=False)
-                x = torch.utils.checkpoint.checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(block1, x, t, use_reentrant=False)
+                x = checkpoint(block2, x, t, use_reentrant=False)
             else:
                 x = block1(x, t)
                 x = block2(x, t)
+
             if self.debug:
                 print(f"[DEBUG] After encoder block {i}: {x.shape}")
-            # Save features before downsampling for skip connection
-            h.append(x)
+
+            h.append(x)  # Save skip after block1 + block2
+
             # Downsample for next level (halves sequence length)
             x = downsample(x)
+
             if self.debug:
                 print(f"[DEBUG] After downsampling {i}: {x.shape}")
-            # (Shape after downsampling: [B, C, L//2])
 
-        # ========== BOTTLENECK ==========
-        x = self.mid_block1(x, t)
-        if self.debug:
-            print(f"[DEBUG] After bottleneck block 1: {x.shape}")
-        x = self.mid_block2(x, t)
-        if self.debug:
-            print(f"[DEBUG] After bottleneck block 2: {x.shape}")
+        # (Shape after ENCODER/DOWNSAMPLING: [B, C, L//2])
 
-        # ========== DECODER / UPSAMPLING ==========
+        # BOTTLENECK
+        if self.use_gradient_checkpointing:
+            x = checkpoint(self.mid_block1, x, t, use_reentrant=False)
+            x = checkpoint(self.mid_block2, x, t, use_reentrant=False)
+        else:
+            x = self.mid_block1(x, t)
+            x = self.mid_block2(x, t)
+
+        # (Shape after BOTTLENECK: [B, C, L//2], Verify?)
+
+        # DECODER / UPSAMPLING
         for i, (block1, block2, _, upsample) in enumerate(self.ups):
-            # Get matching skip connection from encoder
-            skip_x = h.pop()
+            skip_x = h.pop()  # Get skip connection from encoder
 
-            # Upsample features
+            # Upsample for next level (doubles sequence length)
             x = upsample(x)
 
             if self.debug:
@@ -538,21 +545,26 @@ class UNet1D(nn.Module):
 
             # Concatenate features
             x = torch.cat((x, skip_x), dim=1)
+
             if self.debug:
                 print(f"[DEBUG] After concat {i}: {x.shape}")
+
             # Residual blocks (optionally with time embedding)
             if self.use_gradient_checkpointing:
-                x = torch.utils.checkpoint.checkpoint(block1, x, t, use_reentrant=False)
-                x = torch.utils.checkpoint.checkpoint(block2, x, t, use_reentrant=False)
+                x = checkpoint(block1, x, t, use_reentrant=False)
+                x = checkpoint(block2, x, t, use_reentrant=False)
             else:
                 x = block1(x, t)
                 x = block2(x, t)
+
             if self.debug:
                 print(f"[DEBUG] After decoder block {i}: {x.shape}")
-            # (Shape after upsampling: [B, C, L*2])
 
-        # ========== OUTPUT PROJECTION ==========
+        # (Shape after DECODER/UPSAMPLING: [B, C, L*2])
+
+        # FINAL CONVOLUTION
         x = self.final_conv(x)
+
         if self.debug:
             print(f"[DEBUG] After final conv: {x.shape}")
 
@@ -570,7 +582,6 @@ class UNet1D(nn.Module):
                 x = F.pad(x, (left_pad, right_pad), mode="reflect")
 
         if self.debug:
-            print(
-                f"[DEBUG] Output shape: {x.shape} (should match input: {original_len})"
-            )
+            print(f"[DEBUG] Output shape: {x.shape} (Input shape: {original_len})")
+
         return x

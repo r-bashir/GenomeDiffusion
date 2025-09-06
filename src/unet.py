@@ -3,9 +3,10 @@
 
 """Based on `https://huggingface.co/blog/annotated-diffusion` that explains
 using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
-adapted the code for 1-dimensional SNP genomic dataset."""
+adapted the code for 1-dimensional SNP genomic dataset. It uses dual skip
+connections, which is slightly different from traditional single-skip U-Net.
+"""
 
-import math
 from functools import partial
 
 import torch
@@ -32,7 +33,7 @@ class Residual(nn.Module):
         return self.fn(x, *args, **kwargs) + x
 
 
-class Downsample1D(nn.Module):
+class DownsampleConv(nn.Module):
     """1D downsampling with robust odd-length sequence handling."""
 
     def __init__(self, dim, dim_out=None):
@@ -48,7 +49,7 @@ class Downsample1D(nn.Module):
         return self.conv(x)
 
 
-class Upsample1D(nn.Module):
+class UpsampleConv(nn.Module):
     """1D upsampling using transposed convolution for exact reconstruction."""
 
     def __init__(self, dim, dim_out=None):
@@ -61,7 +62,7 @@ class Upsample1D(nn.Module):
         return self.conv(x)
 
 
-class Block1D(nn.Module):
+class ConvBlock(nn.Module):
     """Basic 1D convolutional block: Conv1D + GroupNorm + SiLU."""
 
     def __init__(self, dim, dim_out, groups=8):
@@ -89,8 +90,8 @@ class ResnetBlock1D(nn.Module):
             else None
         )
 
-        self.block1 = Block1D(dim, dim_out, groups=groups)
-        self.block2 = Block1D(dim_out, dim_out, groups=groups)
+        self.block1 = ConvBlock(dim, dim_out, groups=groups)
+        self.block2 = ConvBlock(dim_out, dim_out, groups=groups)
         self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
 
     def forward(self, x, time_emb=None):
@@ -341,7 +342,8 @@ class UNet1D(nn.Module):
         init_dim = 16  # [16 -> 32 -> 64 -> 256 -> 512] with progressive scaling
         out_dim = self.channels  # Always 1 for SNP data
 
-        # Initial conv layer: maps input to base feature dimension
+        # --- Initial Convolution ---
+        # Maps input to base feature dimension
         # Using larger kernel size (7) for better receptive field at the input level
         # Output: [B, 1, L] → [B, 16, L]
         kernel_size = 7  # Larger kernel for better pattern recognition
@@ -371,7 +373,7 @@ class UNet1D(nn.Module):
         self._dims = dims  # Feature dimensions at each level
         self._in_out = in_out  # Input/output dim pairs
 
-        # --- Embeddings ---
+        # --- Time and Position Embeddings ---
         # Time embeddings: crucial for diffusion models
         # Maps scalar timestep to high-dim vector via sinusoidal encoding
         # Then projects through MLP for better expressivity
@@ -431,7 +433,7 @@ class UNet1D(nn.Module):
                         resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
                         attn_block,
                         (
-                            Downsample1D(dim_in, dim_out)
+                            DownsampleConv(dim_in, dim_out)
                             if not is_last
                             else nn.Conv1d(dim_in, dim_out, 3, padding=1)
                         ),
@@ -489,7 +491,7 @@ class UNet1D(nn.Module):
                         resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
                         attn_block,
                         (
-                            Upsample1D(dim_out, dim_in)
+                            UpsampleConv(dim_out, dim_in)
                             if not is_last
                             else nn.Conv1d(dim_out, dim_in, 3, padding=1)
                         ),
@@ -583,7 +585,7 @@ class UNet1D(nn.Module):
                     f"Increase seq_length or reduce dim_mults/edge_pad."
                 )
 
-        # INPUT
+        # INITIAL CONVOLUTION
         # [B, 1, L] → [B, init_dim, L]
         x = self.init_conv(x)
         t = self.time_mlp(time) if self.time_mlp else None
@@ -650,7 +652,7 @@ class UNet1D(nn.Module):
 
             x = upsample(x)
 
-        # OUTPUT
+        # FINAL CONVOLUTION
         # Align with initial residual
         x = self._resize_to_length(x, r.size(-1))
         x = torch.cat((x, r), dim=1)
