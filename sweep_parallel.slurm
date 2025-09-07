@@ -1,26 +1,25 @@
 #!/bin/bash
-#SBATCH -J HPO_Parallel           # Job name
-#SBATCH -t 08:00:00               # Time limit
-#SBATCH --ntasks=1                # Number of tasks
-#SBATCH --gpus=1                  # Request 1 GPU
-#SBATCH --cpus-per-task=16        # 16 CPUs for parallel processing
-#SBATCH -o slurm_logs/%x-%j.out   # Standard output log
-#SBATCH -e slurm_logs/%x-%j.err   # Standard error log
+#SBATCH -J HPO_Agents              # Job name
+#SBATCH -t 08:00:00                # Time limit (HH:MM:SS)
+#SBATCH --ntasks=1                 # Number of tasks
+#SBATCH --gpus=1                   # Request 1 GPU
+#SBATCH --cpus-per-task=16         # 1 GPU –> Allocate 16 CPU tasks
+#SBATCH -o slurm_logs/%x-%j.out    # Standard output log
+#SBATCH -e slurm_logs/%x-%j.err    # Standard error log
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
-# Parallel W&B Sweep Script
-# Usage: sbatch sweep_parallel.slurm [config_file] [num_sweeps] [runs_per_sweep] [hpo_name]
-# Example: sbatch sweep_parallel.slurm sweep.yaml 5 20 HPO
+# Coordinated W&B Agents SLURM Script for GenomeDiffusion HPO
+# Usage: sbatch sweep_parallel.slurm [config_file] [num_agents] [project_name]
 
+# Arguments
 CONFIG_FILE=${1:-"sweep.yaml"}
-NUM_SWEEPS=${2:-5}
-RUNS_PER_SWEEP=${3:-20}
-HPO_NAME=${4:-"HPO"}
-TOTAL_RUNS=$((NUM_SWEEPS * RUNS_PER_SWEEP))
+NUM_AGENTS=${2:-3}
+HPO_NAME=${3:-"HPO"}
 
-echo "Config: $CONFIG_FILE | Sweeps: $NUM_SWEEPS | Runs/sweep: $RUNS_PER_SWEEP | Total: $TOTAL_RUNS | HPO: $HPO_NAME"
+echo "Config: $CONFIG_FILE | Agents: $NUM_AGENTS | Project: $HPO_NAME"
 
+# Create logs directory if it doesn't exist
 mkdir -p slurm_logs
 
 # Paths
@@ -28,74 +27,116 @@ CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
 PROJECT_DIR=/proj/gcae_berzelius/users/x_rabba/GenDiffusion
 DATA_DIR=/proj/gcae_berzelius/users/shared/HO_data
 
-# Environment
+# Set environment variables
+export PROJECT_ROOT=$PROJECT_DIR
+export CUDA_LAUNCH_BLOCKING=1
 export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
 export WANDB_MODE=online
 export CUDA_VISIBLE_DEVICES=0
 
-# Initialize sweeps and start agents
-SWEEP_PIDS=()
-echo "Starting $NUM_SWEEPS parallel sweep agents..."
+# Log Start Time
+START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+SECONDS=0  # Start timer
 
-for i in $(seq 1 $NUM_SWEEPS); do
-    echo "Starting sweep $i/$NUM_SWEEPS..."
+echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
+echo "Using GPU: $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)"
+echo "Number of coordinated agents: $NUM_AGENTS"
+
+# Set W&B cache dirs
+export WANDB_CACHE_DIR=$PROJECT_ROOT/.wandb_cache
+export WANDB_CONFIG_DIR=$PROJECT_ROOT/.wandb_config
+mkdir -p $WANDB_CACHE_DIR $WANDB_CONFIG_DIR
+
+echo "================================"
+echo "🚀 Initializing sweep inside container..."
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
+    $CONTAINER bash -c "cd /workspace && \
+    python run_sweep.py \
+        --init \
+        --config '$CONFIG_FILE' \
+        --project '$HPO_NAME' \
+        --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml'"
+
+if [ $? -ne 0 ]; then
+    echo "❌ Sweep initialization failed!"
+    exit 1
+fi
+
+# Extract sweep ID (run inside container to guarantee PyYAML is available)
+SWEEP_ID=$(apptainer exec \
+    --bind $PROJECT_DIR:/workspace \
+    $CONTAINER python -c "import yaml; print(yaml.safe_load(open('/workspace/sweep_${SLURM_JOB_ID}.yaml'))['sweep_id'])")
+
+# Get entity for dashboard link
+WANDB_ENTITY=$(wandb whoami)
+
+echo " Starting $NUM_AGENTS coordinated W&B agents..."
+echo "Sweep ID: $SWEEP_ID"
+echo "Project: $HPO_NAME"
+echo "Entity: $WANDB_ENTITY"
+echo "================================"
+
+# Array to store PIDs
+declare -a PIDS
+
+# Launch multiple agents on the same GPU
+for i in $(seq 1 $NUM_AGENTS); do
+    echo "🤖 Starting agent $i/$NUM_AGENTS..."
+    LOG_FILE="agent_${i}_${SLURM_JOB_ID}.log"
     
-    # Initialize sweep and run agent in one step
     apptainer exec --nv \
         --bind $DATA_DIR:/data \
         --bind $PROJECT_DIR:/workspace \
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
         $CONTAINER bash -c "cd /workspace && \
-        python run_sweep.py --config $CONFIG_FILE --project $HPO_NAME && \
-        SWEEP_ID=\$(python -c \"import yaml; f=open('current_sweep.yaml'); data=yaml.safe_load(f); f.close(); print(data.get('sweep_id', ''))\") && \
-        python run_sweep.py --agent \$SWEEP_ID --count $RUNS_PER_SWEEP --project $HPO_NAME" \
-        > sweep_${i}_${SLURM_JOB_ID}.log 2>&1 &
+        python run_sweep.py \
+            --agent '$SWEEP_ID' \
+            --project '$HPO_NAME'" \
+        > "$LOG_FILE" 2>&1 &
     
-    SWEEP_PIDS+=($!)
-    echo "Sweep $i started with PID: $!"
-    sleep 5
+    PID=$!
+    PIDS[$i]=$PID
+    echo "📝 Agent $i started with PID: $PID (log: $LOG_FILE)"
+    sleep 2
 done
 
-echo "All sweep agents started. PIDs: ${SWEEP_PIDS[*]}"
+echo "✅ All $NUM_AGENTS agents launched for sweep: $SWEEP_ID"
+echo "🔍 Agents will coordinate through W&B to explore hyperparameters"
+echo "⏳ Waiting for completion..."
 
-# Wait for all sweep agents to complete
-echo "Waiting for all sweep agents to finish..."
-SWEEP_IDS=()
-for i in $(seq 1 $NUM_SWEEPS); do
-    wait ${SWEEP_PIDS[$((i-1))]}
-    
-    # Extract sweep ID from log file
-    SWEEP_ID=$(grep "Sweep ID:" sweep_${i}_${SLURM_JOB_ID}.log | tail -1 | cut -d' ' -f3)
-    if [[ -n "$SWEEP_ID" ]]; then
-        SWEEP_IDS+=($SWEEP_ID)
-        echo "Sweep $i completed: $SWEEP_ID"
-    fi
+# Wait for all agents
+for i in $(seq 1 $NUM_AGENTS); do
+    PID=${PIDS[$i]}
+    echo "⏳ Waiting for agent $i (PID: $PID)..."
+    wait $PID
+    EXIT_CODE=$?
+    echo "✅ Agent $i completed with exit code: $EXIT_CODE"
 done
-echo "All sweep agents completed"
 
-# Analyze all sweeps to find best hyperparameters
-if [ ${#SWEEP_IDS[@]} -gt 0 ]; then
-    echo "Analyzing ${#SWEEP_IDS[@]} sweeps to find best hyperparameters..."
-    
-    for i in "${!SWEEP_IDS[@]}"; do
-        sweep_id=${SWEEP_IDS[$i]}
-        echo "Analyzing sweep $((i+1)): $sweep_id"
-        
-        apptainer exec --nv \
-            --bind $DATA_DIR:/data \
-            --bind $PROJECT_DIR:/workspace \
-            --env WANDB_API_KEY=$WANDB_API_KEY \
-            $CONTAINER bash -c "cd /workspace && \
-            python run_sweep.py --analyze $sweep_id --project $HPO_NAME" \
-            >> analysis_${SLURM_JOB_ID}.log 2>&1
-    done
-    
-    echo "Analysis complete. Check analysis_${SLURM_JOB_ID}.log for best hyperparameters from all sweeps."
-    echo "Sweep IDs analyzed: ${SWEEP_IDS[*]}"
-else
-    echo "Warning: No sweep IDs found for analysis"
-fi
+echo "🎉 All coordinated agents completed!"
+echo "📊 Check W&B dashboard: https://wandb.ai/$WANDB_ENTITY/$HPO_NAME/sweeps/$SWEEP_ID"
 
-echo "Job completed successfully!"
-echo "Logs: sweep_*_${SLURM_JOB_ID}.log | Analysis: analysis_${SLURM_JOB_ID}.log"
+# Final analysis
+echo "📈 Running final analysis to save best configuration..."
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
+    $CONTAINER bash -c "cd /workspace && \
+    python run_sweep.py \
+        --analyze '$SWEEP_ID' \
+        --project '$HPO_NAME'"
+
+# Log End Time
+END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
+ELAPSED_TIME=$SECONDS
+
+echo "Job $SLURM_JOB_ID finished at $END_TIME"
+echo "Total execution time: $(($ELAPSED_TIME / 60)) min $(($ELAPSED_TIME % 60)) sec"
+

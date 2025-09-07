@@ -11,19 +11,15 @@
 
 # Dual-purpose W&B Sweep Script for HPO
 # Submit to SLURM
-#   sbatch sweep.slurm [config_file] [hpo_name] [max_jobs]
+#   sbatch sweep.slurm [config_file] [hpo_name]
 # Run directly in container
-#     bash sweep.slurm [config_file] [hpo_name] [max_jobs]
+#     bash sweep.slurm [config_file] [hpo_name]
 
 # Set defaults
 CONFIG_FILE=${1:-"sweep.yaml"}
 HPO_NAME=${2:-"HPO"}
-MAX_JOBS=${3:-""}
 
 echo "Config: $CONFIG_FILE | Project: $HPO_NAME"
-if [ -n "$MAX_JOBS" ]; then
-  echo "Agent run cap (max_jobs): $MAX_JOBS"
-fi
 
 # Create logs dir
 mkdir -p slurm_logs
@@ -47,17 +43,11 @@ JOB_ID=${SLURM_JOB_ID:-$$}
 
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 echo "Using GPU: $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)"
-echo "Run Count: $COUNT"
 
 # Set W&B settings for cluster
 export WANDB_MODE=online
 export WANDB_CACHE_DIR=$PROJECT_ROOT/.wandb_cache
 export WANDB_CONFIG_DIR=$PROJECT_ROOT/.wandb_config
-
-# Optionally cap agent runs
-if [ -n "$MAX_JOBS" ]; then
-  export WANDB_AGENT_MAX_JOBS="$MAX_JOBS"
-fi
 
 # Create wandb directories
 mkdir -p $WANDB_CACHE_DIR
@@ -68,8 +58,8 @@ echo "Config: $CONFIG_FILE"
 echo "Project: $HPO_NAME"
 echo "================================"
 
-# Step 1: Initialize sweep
-echo "📋 Initializing sweep..."
+# Step 1: Initialize Sweep
+echo "📋 Initializing W&B Sweep..."
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
@@ -80,8 +70,7 @@ apptainer exec --nv \
         --init \
         --config '$CONFIG_FILE' \
         --project '$HPO_NAME' \
-        --save-sweep-id 'sweep_${JOB_ID}.yaml'
-        " || {
+        --save-sweep-id 'sweep_${JOB_ID}.yaml'" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
@@ -92,25 +81,22 @@ if [ $? -ne 0 ]; then
 fi
 
 # Extract Sweep ID from Saved File
-SWEEP_ID=$(python -c "import yaml; print(yaml.safe_load(open('sweep_${JOB_ID}.yaml'))['sweep_id'])")
+SWEEP_ID=$(apptainer exec \
+    --bind $PROJECT_DIR:/workspace \
+    $CONTAINER python -c "import yaml; print(yaml.safe_load(open('/workspace/sweep_${JOB_ID}.yaml'))['sweep_id'])")
 echo "📝 Sweep ID: $SWEEP_ID"
 
-# Step 2: Run Sweep Agent (let W&B manage naturally)
-echo "🤖 Starting W&B agent..."
+# Step 2: Run Sweep Agent
+echo "🤖 Starting W&B Agent..."
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
-    --env WANDB_AGENT_MAX_JOBS=${WANDB_AGENT_MAX_JOBS:-} \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
     $CONTAINER bash -c "cd /workspace && \
-    EXTRA=\"\"; \
-    if [ -n \"$WANDB_AGENT_MAX_JOBS\" ]; then EXTRA=\"--max-jobs $WANDB_AGENT_MAX_JOBS\"; fi; \
     python run_sweep.py \
         --agent '$SWEEP_ID' \
-        --project '$HPO_NAME' \
-        $EXTRA \
-        " || {
+        --project '$HPO_NAME'" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
@@ -128,15 +114,14 @@ apptainer exec --nv \
     $CONTAINER bash -c "cd /workspace && \
     python run_sweep.py \
         --analyze '$SWEEP_ID' \
-        --project '$HPO_NAME'
-        " || {
+        --project '$HPO_NAME'" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
 
 # Log End Time
 END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
-ELAPSED_TIME=$SECONDS  # Get elapsed seconds
+ELAPSED_TIME=$SECONDS
 
 echo "Job $SLURM_JOB_ID finished at $END_TIME"
 echo "Total execution time: $(($ELAPSED_TIME / 60)) min $(($ELAPSED_TIME % 60)) sec"

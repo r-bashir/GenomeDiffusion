@@ -4,11 +4,8 @@
 """
 Local W&B Sweep Workflow:
     1. python run_sweep.py --init --config sweep.yaml --project <hpo>  # Initialize
-    2. python run_sweep.py --agent sweep_id --project <hpo> --max-jobs <N>  # Run agent(s)
+    2. python run_sweep.py --agent sweep_id --project <hpo>  # Run agent(s)
     3. python run_sweep.py --analyze sweep_id --project <hpo>  # Analyze
-
-Alternative Step 2 (Direct W&B):
-    wandb agent entity/MyProject/sweep_id
 
 Cluster W&B Sweep Workflow:
     # Single sweep job (init + agent + analyze inside container)
@@ -38,15 +35,7 @@ import wandb
 
 
 def initialize_sweep(config_path: str, project: str = "HPO") -> str:
-    """Initialize a new W&B sweep.
-
-    Args:
-        config_path: Path to sweep configuration file
-        project: W&B project name
-
-    Returns:
-        Sweep ID
-    """
+    """Initialize a new W&B sweep."""
     if not pathlib.Path(config_path).exists():
         raise FileNotFoundError(f"Sweep config not found: {config_path}")
 
@@ -64,16 +53,7 @@ def initialize_sweep(config_path: str, project: str = "HPO") -> str:
 def save_best_config(
     sweep_id: str, project: str, entity: Optional[str] = None
 ) -> Optional[Dict]:
-    """Save the best configuration from completed sweep runs.
-    Only saves hyperparameters that were tuned in the sweep.
-
-    Args:
-        sweep_id: W&B sweep ID
-        project: W&B project name
-
-    Returns:
-        Best configuration dictionary
-    """
+    """Save the best configuration from completed sweep runs."""
     api = wandb.Api()
     sweep_path = f"{entity}/{project}/{sweep_id}" if entity else f"{project}/{sweep_id}"
     sweep = api.sweep(sweep_path)
@@ -83,16 +63,13 @@ def save_best_config(
         print("No runs found in sweep")
         return None
 
-    # Get tuned parameters from sweep config
     tuned_params = set(sweep.config.get("parameters", {}).keys())
 
-    # Filter completed runs and find best by val_loss
     completed_runs = [r for r in runs if r.state == "finished"]
     if not completed_runs:
         print("No completed runs found")
         return None
 
-    # Try different validation loss keys
     val_keys = ["val_loss", "val_loss_epoch", "final/val_loss"]
     best_run = None
     best_val = float("inf")
@@ -112,10 +89,8 @@ def save_best_config(
         print("No valid runs with validation loss found")
         return None
 
-    # Extract only tuned parameters from best config
     best_config = {k: v for k, v in best_run.config.items() if k in tuned_params}
 
-    # Save to file
     output_file = f"best_config_{sweep_id}.yaml"
     with open(output_file, "w") as f:
         f.write(f"# Best tuned hyperparameters from sweep {sweep_id}\n")
@@ -132,7 +107,6 @@ def save_best_config(
 
 
 def write_sweep_id_file(path: str, sweep_id: str, project: str, entity: str) -> None:
-    """Write sweep identification info to a YAML file."""
     data = {"sweep_id": sweep_id, "project": project, "entity": entity}
     with open(path, "w") as f:
         yaml.safe_dump(data, f)
@@ -147,16 +121,8 @@ def main():
     parser.add_argument(
         "--analyze", type=str, metavar="SWEEP_ID", help="Analyze completed sweep"
     )
-    # Common args
     parser.add_argument(
         "--config", type=str, help="Path to sweep config file (required for --init)"
-    )
-    # Optional per-agent run cap (sets WANDB_AGENT_MAX_JOBS for the agent subprocess)
-    parser.add_argument(
-        "--max-jobs",
-        type=int,
-        default=None,
-        help="Limit the number of runs this agent will execute (sets WANDB_AGENT_MAX_JOBS)",
     )
     parser.add_argument(
         "--save-sweep-id",
@@ -167,16 +133,13 @@ def main():
     parser.add_argument("--project", type=str, default="HPO", help="W&B project name")
     args = parser.parse_args()
 
-    # Require one mode
     if not (args.init or args.agent or args.analyze):
         parser.error("Must specify one of: --init, --agent, or --analyze")
 
-    # Set project root
     if "PROJECT_ROOT" not in os.environ:
         os.environ["PROJECT_ROOT"] = os.getcwd()
 
     try:
-        # Get entity from API
         api = wandb.Api()
         entity = api.default_entity
         if not entity:
@@ -184,7 +147,6 @@ def main():
                 "Could not determine wandb entity. Please login with 'wandb login'"
             )
 
-        # Mode 1: Initialize sweep
         if args.init:
             if not args.config:
                 parser.error("--init requires --config")
@@ -199,28 +161,16 @@ def main():
             print(f"   python run_sweep.py --agent {sweep_id} --project {args.project}")
             return
 
-        # Mode 2: Run agent (pure W&B)
         if args.agent:
             sweep_id = args.agent
             target = f"{entity}/{args.project}/{sweep_id}"
             print(f"🤖 Starting W&B agent: {target}")
 
-            # Let wandb agent run naturally without constraints
             cmd = ["wandb", "agent", target]
-
-            # Prepare environment, optionally setting WANDB_AGENT_MAX_JOBS
-            env = os.environ.copy()
-            if args.max_jobs is not None:
-                env["WANDB_AGENT_MAX_JOBS"] = str(args.max_jobs)
-                print(
-                    f"🔒 Limiting agent to max jobs: {args.max_jobs} (WANDB_AGENT_MAX_JOBS)"
-                )
-
-            proc = subprocess.run(cmd, env=env)
+            proc = subprocess.run(cmd, env=os.environ.copy())
             print(f"Agent finished with exit code: {proc.returncode}")
             return
 
-        # Mode 3: Analyze completed sweep
         if args.analyze:
             analyze_id = args.analyze
             print(f"📊 Analyzing sweep: {analyze_id}")

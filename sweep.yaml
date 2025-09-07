@@ -9,7 +9,7 @@ program: train_sweep.py
 method: bayes
 
 # Total trials across all agents
-count: 1
+run_cap: 50
 
 # Metric to optimize
 metric:
