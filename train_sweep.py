@@ -44,12 +44,12 @@ from typing import Dict, List, Optional, Union
 
 import pytorch_lightning as pl
 import torch
-import wandb
 import yaml
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
+import wandb
 from src import DiffusionModel
 from src.utils import load_config, set_seed
 
@@ -142,7 +142,14 @@ def validate_config(config: Dict) -> Dict:
     Raises ValueError if configuration is invalid.
     """
     # Validate required sections exist
-    required_sections = ["data", "unet", "training", "optimizer", "scheduler"]
+    required_sections = [
+        "data",
+        "unet",
+        "training",
+        "optimizer",
+        "scheduler",
+        "diffusion",
+    ]
     for section in required_sections:
         if section not in config:
             raise ValueError(f"Missing required config section: {section}")
@@ -156,6 +163,37 @@ def validate_config(config: Dict) -> Dict:
 
     if config["optimizer"].get("lr", 0) <= 0:
         raise ValueError("learning_rate must be positive")
+
+    # Ensure required UNet parameters exist with defaults
+    unet_defaults = {
+        "channels": 1,
+        "enable_checkpointing": True,
+        "use_attention": False,
+        "attention_heads": 32,
+        "attention_dim_head": 32,
+        "attention_window": 512,
+        "num_global_tokens": 64,
+        "dropout": 0.2,
+        "use_scale_shift_norm": True,
+    }
+
+    for key, default_value in unet_defaults.items():
+        if key not in config["unet"]:
+            config["unet"][key] = default_value
+
+    # Ensure required diffusion parameters exist with defaults
+    diffusion_defaults = {
+        "timesteps": 1000,
+        "beta_start": 0.00085,
+        "beta_end": 0.02,
+        "beta_schedule": "cosine",
+        "denoise_step": 1,
+        "discretize": False,
+    }
+
+    for key, default_value in diffusion_defaults.items():
+        if key not in config["diffusion"]:
+            config["diffusion"][key] = default_value
 
     return config
 
@@ -292,8 +330,13 @@ def main():
     # Load base configuration
     config = load_config(args.config)
 
-    # Initialize wandb for sweep
-    wandb.init(config=config)
+    # Initialize wandb for sweep with error handling
+    try:
+        wandb.init(config=config)
+    except Exception as e:
+        print(f"❌ Failed to initialize wandb: {e}")
+        print("This trial will be skipped.")
+        sys.exit(1)  # Exit gracefully to allow next trial
 
     # Get sweep parameters from command line args (parsed dynamically)
     sweep_params = args.sweep_params.copy()
@@ -379,29 +422,46 @@ def main():
         # Train model
         trainer.fit(model)
 
-        # Log final metrics
-        if trainer.callback_metrics:
-            final_val_loss = trainer.callback_metrics.get("val_loss", float("inf"))
-            final_train_loss = trainer.callback_metrics.get("train_loss", float("inf"))
+        # Log final metrics with error handling
+        try:
+            if trainer.callback_metrics:
+                final_val_loss = trainer.callback_metrics.get("val_loss", float("inf"))
+                final_train_loss = trainer.callback_metrics.get(
+                    "train_loss", float("inf")
+                )
 
-            wandb.log(
-                {
-                    "final/val_loss": final_val_loss,
-                    "final/train_loss": final_train_loss,
-                    "final/epochs_trained": trainer.current_epoch,
-                }
-            )
+                wandb.log(
+                    {
+                        "final/val_loss": final_val_loss,
+                        "final/train_loss": final_train_loss,
+                        "final/epochs_trained": trainer.current_epoch,
+                    }
+                )
 
-            print(f"Training completed - Final val_loss: {final_val_loss:.6f}")
+                print(f"Training completed - Final val_loss: {final_val_loss:.6f}")
+        except Exception as log_error:
+            print(f"⚠️ Failed to log final metrics: {log_error}")
 
     except Exception as e:
-        print(f"Training failed: {e}")
-        # wandb.log({"training_failed": True, "error": str(e)})
-        wandb.finish(exit_code=1)
-        return
+        print(f"❌ Training failed: {e}")
+        try:
+            wandb.log({"training_failed": True, "error": str(e)})
+        except:
+            print("⚠️ Could not log training failure to wandb")
 
-    # Finish W&B run
-    wandb.finish()
+        try:
+            wandb.finish(exit_code=1)
+        except:
+            print("⚠️ Could not finish wandb run properly")
+
+        sys.exit(1)  # Exit gracefully to allow next trial
+
+    # Finish W&B run with error handling
+    try:
+        wandb.finish()
+    except Exception as e:
+        print(f"⚠️ Failed to finish wandb run: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -2,20 +2,27 @@
 # Focus: Key parameters only for quick validation
 # Purpose: Verify sweep setup works before running full HPO
 
+# Program to run
 program: train_sweep.py
 
+# Optimization method
 method: bayes
 
+# Total trials across all agents
+count: 1
+
+# Metric to optimize
 metric:
   goal: minimize
   name: val_loss_epoch
 
-# Early termination to save compute
+# Early termination
 early_terminate:
   type: hyperband
   min_iter: 10  # More aggressive early stopping
   eta: 5  # Faster elimination of poor trials
 
+# Hyperparameter search space
 parameters:
 
   # === DATA ===
@@ -71,17 +78,14 @@ parameters:
   eta_min:
     values: [1e-6, 1e-5, 1e-4]
 
-  scheduler_factor:
-    values: [0.3, 0.5, 0.7]
-
-  scheduler_patience:
-    values: [5, 10, 15, 20]
-
   scheduler_mode:
     values: ['min', 'max']
 
   scheduler_factor:
     values: [0.3, 0.5, 0.7]
+
+  scheduler_patience:
+    values: [5, 10, 15, 20]
 
   scheduler_threshold:
     values: [1e-6, 1e-5, 1e-4]
