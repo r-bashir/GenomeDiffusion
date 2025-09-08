@@ -26,7 +26,7 @@ apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
-    $CONTAINER bash -c "cd /workspace && python inference.py --checkpoint $CHECKPOINT_DIR" || {
+    $CONTAINER bash -c "cd /workspace && python inference.py --checkpoint $CHECKPOINT_DIR 2>&1 | tee inference.log" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
