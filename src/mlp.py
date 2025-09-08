@@ -25,6 +25,7 @@ class IdentityNoisePredictor(nn.Module):
         with_pos_emb=True,
         norm_groups=8,
         seq_length=1000,
+        **kwargs,  # Accept additional arguments
     ):
         super().__init__()
         self.channels = channels
@@ -57,6 +58,7 @@ class LinearNoisePredictor(nn.Module):
         with_pos_emb=False,  # Unused but kept for interface compatibility
         norm_groups=8,  # Unused but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
+        **kwargs,  # Accept additional arguments
     ):
         super().__init__()
 
@@ -146,6 +148,7 @@ class SimpleNoisePredictor(nn.Module):
         with_pos_emb=True,  # Not used in MLP but kept for interface compatibility
         norm_groups=8,  # Not used in MLP but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
+        **kwargs,  # Accept additional arguments
     ):
         super().__init__()
 
@@ -251,6 +254,7 @@ class ComplexNoisePredictor(nn.Module):
         with_pos_emb=True,  # Not used in MLP but kept for interface compatibility
         norm_groups=8,  # Not used in MLP but kept for interface compatibility
         seq_length=1000,  # Expected sequence length (number of SNP markers)
+        **kwargs,  # Accept additional arguments
     ):
         super().__init__()
 
