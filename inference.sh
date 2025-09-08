@@ -31,6 +31,36 @@ apptainer exec --nv \
     exit 1
 }
 
+# Run the container
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER bash -c "cd /workspace && python sample_analysis.py --checkpoint $CHECKPOINT_DIR 2>&1 | tee analysis.log" || {
+    echo "Error: Apptainer execution failed!" >&2
+    exit 1
+}
+
+# Run the container
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER bash -c "cd /workspace && python scripts/run_ddpm.py --checkpoint $CHECKPOINT_DIR 2>&1 | tee ddpm.log" || {
+    echo "Error: Apptainer execution failed!" >&2
+    exit 1
+}
+
+# Run the container
+apptainer exec --nv \
+    --bind $DATA_DIR:/data \
+    --bind $PROJECT_DIR:/workspace \
+    --env WANDB_API_KEY=$WANDB_API_KEY \
+    $CONTAINER bash -c "cd /workspace && python script/run_locality.py --checkpoint $CHECKPOINT_DIR 2>&1 | tee inference.log" || {
+    echo "Error: Apptainer execution failed!" >&2
+    exit 1
+}
+
 # Log End Time
 END_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 ELAPSED_TIME=$SECONDS  # Get elapsed seconds
