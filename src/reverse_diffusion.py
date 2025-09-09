@@ -291,6 +291,9 @@ class ReverseDiffusion:
             self.forward_diffusion.alpha_bar(t_minus_1), device
         )
 
+        # Broadcast alpha_bar_prev to match xt's dimensions
+        alpha_bar_prev = bcast_right(alpha_bar_prev, ndim)
+
         # === Step 3: Compute β̃_t using Eq. 10 ===
         # β̃_t = (1-ᾱ_{t-1})/(1-ᾱ_t) * β_t
         beta_tilde = ((1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t)) * beta_t
