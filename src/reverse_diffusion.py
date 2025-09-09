@@ -81,15 +81,21 @@ class ReverseDiffusion:
         # Ensure tensors are on the correct device
         device = xt.device
 
-        # Convert integer timestep to tensor if needed
-        if isinstance(t, int):
-            t = torch.tensor([t], device=device)
-        else:
-            t = tensor_to_device(t, device)
-
         # Ensure xt has the correct shape [B, C, L]
         # xt = √(ᾱ_t) * x0 + √(1-ᾱ_t) * ε, ε ~ N(0, I) comes from ForwardDiffusion
         xt = prepare_batch_shape(xt)
+
+        # Normalize timestep tensor to have shape [B]
+        B = xt.shape[0]
+        if isinstance(t, int):
+            t = torch.full((B,), t, device=device, dtype=torch.long)
+        else:
+            t = tensor_to_device(t, device)
+            t = t.reshape(-1)
+            if t.numel() == 1 and B > 1:
+                t = t.repeat(B)
+            elif t.numel() != B:
+                t = t[:1].repeat(B)
 
         # Get diffusion parameters for timestep t, either use properties with manual indexing
         # beta_t = tensor_to_device(self.forward_diffusion.betas[t - 1], device)  # β_t
@@ -238,15 +244,21 @@ class ReverseDiffusion:
         # Ensure tensors are on the correct device
         device = xt.device
 
-        # Convert integer timestep to tensor if needed
-        if isinstance(t, int):
-            t = torch.tensor([t], device=device)
-        else:
-            t = tensor_to_device(t, device)
-
         # Ensure xt has the correct shape [B, C, L]
         # xt = √(ᾱ_t) * x0 + √(1-ᾱ_t) * ε, comes from ForwardDiffusion
         xt = prepare_batch_shape(xt)
+
+        # Normalize timestep tensor to have shape [B]
+        B = xt.shape[0]
+        if isinstance(t, int):
+            t = torch.full((B,), t, device=device, dtype=torch.long)
+        else:
+            t = tensor_to_device(t, device)
+            t = t.reshape(-1)
+            if t.numel() == 1 and B > 1:
+                t = t.repeat(B)
+            elif t.numel() != B:
+                t = t[:1].repeat(B)
 
         # Get diffusion parameters for timestep t
         # β_t, α_t, ᾱ_t (beta, alpha, and cumulative alpha)
