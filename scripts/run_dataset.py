@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import torch.utils.data
+from torch.utils.data import DataLoader
 
 # Add project root
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -29,6 +29,7 @@ from src.dataset import (
     augment_data,
     handle_missing_values,
     load_data,
+    mix_data,
     normalize_data,
     scale_data,
     setup_logging,
@@ -37,25 +38,19 @@ from src.utils import load_config
 
 
 # Print data statistics
-def plot_batch_sample(batch: torch.Tensor, save_path: Path) -> None:
-    """Plot the first sample from a batch of data.
+def plot_sample(sample: torch.Tensor, save_path: Path) -> None:
+    """Plot a SNP sample.
 
     Args:
-        batch: A batch of data from the dataloader.
+        sample: A SNP sample.
         save_path: Path to save the plot image.
     """
-    if batch is None or len(batch) == 0:
-        print("Batch is empty, skipping plot.")
-        return
-
-    sample = batch[0].cpu().numpy()
-
     fig, ax = plt.subplots(figsize=(12, 3))
 
     ax.plot(sample, "o-", color="blue", alpha=0.7, markersize=3)
-    ax.set_title("First Sample in Batch")
-    ax.set_xlabel("SNP Index")
-    ax.set_ylabel("Genotype Value")
+    ax.set_title("Sample visualization (first 100 SNPs)")
+    ax.set_xlabel("SNP Position")
+    ax.set_ylabel("Genotype Values")
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -168,7 +163,7 @@ def main() -> int:
     for key, value in data_config.items():
         logger.debug(f"  {key}: {value}")
 
-    # 1. Load and transpose data
+    # Load and transpose data
     input_path = Path(data_config["input_path"])
     logger.info(f"Loading data from {input_path}")
 
@@ -179,7 +174,7 @@ def main() -> int:
     logger.info(f"Loaded data with shape: {data.shape} (samples, markers)")
     print_data_stats(data, "Initial Data")
 
-    # 2. Apply sequence length filtering
+    # 1. Apply sequence length filtering
     try:
         seq_length = data_config.get("seq_length")
         if seq_length is not None and seq_length < data.shape[1]:
@@ -187,12 +182,13 @@ def main() -> int:
                 f"Applying sequence length filtering with {seq_length} markers..."
             )
             data = data[:, :seq_length]
+            plot_sample(data[0], PROJECT_ROOT / "1_seq_length.png")
             print_data_stats(data, "After sequence length filtering")
     except Exception as e:
         logger.error(f"Error during sequence length filtering: {e}")
         raise
 
-    # 3. Handle missing values
+    # 2. Handle missing values
     try:
         missing_value = data_config.get("missing_value", 9)
         if missing_value is not None:
@@ -203,32 +199,78 @@ def main() -> int:
                 remaining_missing = np.sum(data == missing_value)
                 print_data_stats(data, "After handling missing values")
                 logger.info(f"Missing values: {original_missing} → {remaining_missing}")
+                plot_sample(data[0], PROJECT_ROOT / "2_missing_values.png")
     except Exception as e:
         logger.error(f"Error handling missing values: {e}")
         raise
 
-    # 4. Normalize data
+    # 3. Normalize data
     try:
         if data_config.get("normalize", False):
             logger.info("Normalizing data...")
             data = normalize_data(data)
             print_data_stats(data, "After normalization")
             logger.info("Mapping: 0 → 0.0, 1 → 0.5, 2 → 1.0")
+            plot_sample(data[0], PROJECT_ROOT / "3_normalized.png")
     except Exception as e:
         logger.error(f"Error normalizing data: {e}")
         raise
 
-    # 5. Handle augmentation (fixed patterns)
+    # 4. Handle augmentation (fixed patterns)
     try:
         if data_config.get("augment", False):
-            logger.info("Applying data augmentation (fixed patterns)")
-            data = augment_data(data)
-            print_data_stats(data, "After augmentation")
+            logger.info("Applying data augmentation")
+
+            # Get pattern configuration for augmentation
+            augment_pattern = data_config.get("augment_pattern", [])
+
+            if not augment_pattern:
+                # Default augmentation pattern if none specified
+                augment_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
+                logger.info("Using default augmentation pattern: 100 SNPs")
+
+            # Convert to list of tuples
+            augment_pattern = [
+                (int(start), int(end), float(value))
+                for start, end, value in augment_pattern
+            ]
+
+            logger.info(f"Augmentation pattern: {augment_pattern}")
+
+            data = augment_data(data, augment_pattern)
+            logger.info(f"Uniques values: {np.unique(data)}")
+            plot_sample(data[0], PROJECT_ROOT / "4_augmented.png")
+
     except Exception as e:
         logger.error(f"Error during data augmentation: {e}")
         raise
 
-    # 6. Scale data (always last)
+    # Handle mixing
+    try:
+        if data_config.get("mixing", False):
+            logger.info("Applying pattern mixing")
+
+            # Get pattern configuration
+            mixing_pattern = data_config.get("mixing_pattern", [])
+            mixing_interval = data_config.get("mixing_interval", 100)
+
+            # Convert to list of tuples
+            mixing_pattern = [
+                (int(start), int(end), float(value))
+                for start, end, value in mixing_pattern
+            ]
+
+            logger.info(f"Pattern: {mixing_pattern}")
+            logger.info(f"Mixing interval: {mixing_interval}")
+
+            data = mix_data(data, mixing_pattern, mixing_interval)
+            logger.info(f"Uniques values: {np.unique(data)}")
+            plot_sample(data[0], PROJECT_ROOT / "5_mixed.png")
+    except Exception as e:
+        logger.error(f"Error during data mixing: {e}")
+        raise
+
+    # 5. Scale data (always last)
     try:
         scale_factor = data_config.get("scale_factor")
         if scale_factor is not None:
@@ -236,6 +278,9 @@ def main() -> int:
             data = scale_data(data, scale_factor)
             print_data_stats(data, "After scaling")
             logger.info(f"Scaled range: [{data.min()}, {data.max()}]")
+
+            # Plot sample
+            plot_sample(data[0], PROJECT_ROOT / "6_scaled.png")
     except Exception as e:
         logger.error(f"Error scaling data: {e}")
         raise
@@ -259,30 +304,24 @@ def main() -> int:
 
     # Test PyTorch Dataset and DataModule
     try:
-        print("\nPyTorch Dataset:")
+        print("\nPyTorch DataSet:")
 
         logger.info("Testing PyTorch Dataset...")
-        snp_dataset = SNPDataset(config)
-        logger.info(f"Dataset length: {len(snp_dataset)}")
-        logger.info(f"First example shape: {snp_dataset[0].shape}")
-        logger.debug(f"First example values: {snp_dataset[0][:10]}")
+        dataset = SNPDataset(config)
+        logger.info(
+            f"Dataset shape [N, L]: {dataset.data.shape}, and dim: {dataset.data.dim()}"
+        )
+        plot_sample(dataset[0], PROJECT_ROOT / "snp_dataset_sample.png")
 
-        print("\nPyTorch DataModule:")
+        print("\nPyTorch DataLoader:")
 
-        logger.info("Testing Lightning DataModule...")
-        data_module = SNPDataModule(config)
-        data_module.setup()
-        test_loader = data_module.test_dataloader()
-        logger.info(f"Test data batches: {len(test_loader)}")
-
-        if len(test_loader) > 0:
-            batch = next(iter(test_loader))
-            logger.info(f"Batch shape: {batch.shape}, and dim: {batch.dim()}")
-            logger.debug(f"First example values: {batch[0][:10]}")
-
-        # Plot one example from the batch
-        plot_batch_sample(batch, PROJECT_ROOT / "batch_sample.png")
-
+        logger.info("Testing PyTorch DataLoader...")
+        dataloader = DataLoader(
+            dataset, batch_size=config["data"]["batch_size"], shuffle=False
+        )
+        batch = next(iter(dataloader))  # Shape: [B, L]
+        logger.info(f"Batch shape [B, L]: {batch.shape}, and dim: {batch.dim()}")
+        plot_sample(batch[0], PROJECT_ROOT / "snp_dataloader_sample.png")
     except Exception as e:
         logger.error(f"Error during dataset testing: {e}")
         raise

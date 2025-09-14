@@ -13,8 +13,9 @@ import torch.nn.functional as F
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
     ComplexNoisePredictor,
+    LinearCNN,
+    LinearMLP,
     LinearNoisePredictor,
-    SimpleNoisePredictor,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
@@ -56,7 +57,7 @@ class DiffusionModel(NetworkBase):
         )
 
         # Noise Predictor
-        self.noise_predictor = UNet1D(
+        self.noise_predictor = LinearMLP(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
