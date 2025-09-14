@@ -1,6 +1,6 @@
-# W&B Sweeps Configuration for GenomeDiffusion HPO
+# ===== W&B Sweeps Configuration for GenomeDiffusion HPO =====
 # Comprehensive hyperparameter optimization for cluster/server
-# Purpose: Full hyperparameter search across all important parameters
+# Full hyperparameter search across all important parameters
 
 # Program to run
 program: train_sweep.py
@@ -29,7 +29,7 @@ parameters:
   batch_size:
     values: [16, 32, 64]
 
-  # === UNET1D ARCHITECTURE ===
+  # === UNet1D ===
   embedding_dim:
     values: [16, 32, 64, 128]
 
@@ -48,7 +48,7 @@ parameters:
   norm_groups:
     values: [2, 4, 8, 16]
 
-  # === ATTENTION MECHANISM ===
+  # === ATTENTION ===
   use_attention:
     values: [true, false]
 

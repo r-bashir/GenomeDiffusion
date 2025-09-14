@@ -29,24 +29,12 @@ parameters:
   batch_size:
     values: [16, 32, 64]
 
-  # === UNET1D ARCHITECTURE ===
+  # === MLP ===
   embedding_dim:
     values: [16, 32, 64, 128]
 
-  dim_mults:
-    values: [[1, 2], [1, 2, 4], [1, 2, 4, 8]]
-
   with_time_emb:
     values: [true, false]
-
-  with_pos_emb:
-    values: [true, false]
-
-  edge_pad:
-    values: [1, 2, 4]
-
-  norm_groups:
-    values: [2, 4, 8, 16]
 
   # === TRAINING ===
   epochs:
