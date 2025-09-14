@@ -21,6 +21,31 @@ from .time_sampler import UniformContinuousTimeSampler
 from .utils import bcast_right, tensor_to_device
 
 
+def build_mixing_mask(seq_length: int, pattern: list, interval: int, device=None):
+    """
+    Build a 1D mask for separating staircase vs real regions.
+
+    Args:
+        seq_length: total sequence length (L).
+        pattern: list of [start, end, value] entries from config.
+        interval: how many "real" steps between staircase blocks.
+    Returns:
+        mask: torch.BoolTensor of shape [1, 1, L].
+              True = staircase region, False = real region.
+    """
+    mask = torch.zeros(seq_length, dtype=torch.bool)
+
+    step = 0
+    while step + interval + (pattern[-1][1] - pattern[0][0]) <= seq_length:
+        for start, end, _ in pattern:
+            mask[step + start : step + end] = True
+        step += interval + (pattern[-1][1] - pattern[0][0])
+
+    if device is not None:
+        mask = mask.to(device)
+    return mask.view(1, 1, -1)
+
+
 class DiffusionModel(NetworkBase):
     """Diffusion model with 1D Convolutional network for SNP data.
 
@@ -72,10 +97,6 @@ class DiffusionModel(NetworkBase):
             use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
         )
 
-        # Zero noise predictor (zero out model params), beware that in MLP if
-        # we input staircase sample, output is always zero i.e. sample has 0's.
-        # zero_out_model_parameters(self.noise_predictor)
-
         # ReverseDiffusion: Reverse diffusion process
         self.reverse_diffusion = ReverseDiffusion(
             self.forward_diffusion,
@@ -84,6 +105,22 @@ class DiffusionModel(NetworkBase):
             denoise_step=hparams["diffusion"]["denoise_step"],
             discretize=hparams["diffusion"]["discretize"],
         )
+
+        # Testing: Zero noise predictor (zero out model params)
+        # Beware that in MLP if we input staircase sample, output
+        # is always zero as both weights and biases are set to 0.
+        # zero_out_model_parameters(self.noise_predictor)
+
+        # Testing: In mixing, get staircase, real loss separately
+        if hparams["data"].get("mixing", False):
+            mask = build_mixing_mask(
+                hparams["data"]["seq_length"],
+                hparams["data"]["mixing_pattern"],
+                hparams["data"]["mixing_interval"],
+            )
+            self.register_buffer("mask", mask)
+        else:
+            self.mask = None
 
     # ==================== Training Methods ====================
     def forward(self, xt: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -158,17 +195,35 @@ class DiffusionModel(NetworkBase):
 
         # Elementwise MSE loss
         mse = F.mse_loss(eps_theta, (xt - x0), reduction="none")  # shape: [B, C=1, L]
-        loss = mse.mean()
+
+        # Optional staircase/real separation
+        if getattr(self, "mask", None) is not None:
+            mask = self.mask.expand_as(mse)
+            loss_stair = (
+                mse[mask].mean() if mask.any() else torch.tensor(0.0, device=device)
+            )
+            loss_real = (
+                mse[~mask].mean() if (~mask).any() else torch.tensor(0.0, device=device)
+            )
+
+            # Logging (W&B / Lightning)
+            self.log(
+                "loss_stair", loss_stair, prog_bar=True, on_step=True, on_epoch=True
+            )
+            self.log("loss_real", loss_real, prog_bar=True, on_step=True, on_epoch=True)
+
+        # Aggregate to scalar (mean over all elements)
+        total_loss = mse.mean()
 
         # Scale MSE by (1 - ᾱ_t)
-        alpha_bar_t = self.forward_diffusion.alpha_bar(t)
+        alpha_bar_t = self.forward_diffusion.alpha_bar(t)  # shape: [B, L]
         alpha_bar_t = bcast_right(alpha_bar_t, eps_theta.ndim)  # shape: [B, C=1, L]
         scaled_mse = mse / (1 - alpha_bar_t)
 
         # Aggregate to scalar (mean over all elements)
-        scaled_loss = scaled_mse.mean()
+        scaled_total_loss = scaled_mse.mean()
 
-        return loss  # scaled_loss
+        return total_loss  # or use `scaled_total_loss` if you want scaling
 
     def compute_loss_Ho(self, x0: torch.Tensor) -> torch.Tensor:
         """
