@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 import argparse
 import sys
 from pathlib import Path
@@ -67,7 +71,7 @@ def main():
     logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
 
     # Select a single sample and ensure shape [1, 1, seq_len]
-    logger.info(f"Adding channel dim, and selecting single sample")
+    logger.info("Adding channel dim, and selecting single sample")
     sample_idx = 0
     x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
     logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")

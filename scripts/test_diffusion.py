@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Test script for diffusion model parameters and behavior.
@@ -16,7 +17,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
 from scipy import stats
 
 # Add project root

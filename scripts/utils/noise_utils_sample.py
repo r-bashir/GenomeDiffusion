@@ -1,10 +1,14 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 Sample-level noise analysis utilities for diffusion models.
 Includes functions for per-sample, per-channel, or per-feature noise analysis and visualization.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np

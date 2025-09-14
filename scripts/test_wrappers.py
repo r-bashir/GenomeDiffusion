@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """Test script for the updated wrapper functions in infer_utils.py.
 
@@ -8,7 +9,6 @@ to ensure they produce identical results to the original functions when using
 the same parameters (start_timestep=tmax).
 """
 
-from pathlib import Path
 
 import torch
 

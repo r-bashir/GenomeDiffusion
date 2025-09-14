@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 DDPM Markov Chain Utilities
 --------------------------
@@ -358,13 +362,13 @@ def format_metrics_report(metrics):
         (
             "Regional Analysis",
             [
-                f"\nRegion 0 (SNPs 0-24):",
+                "\nRegion 0 (SNPs 0-24):",
                 f"  Mean abs: {metrics['off_target']['regional_means']['region_0']['mean']:.6f}",
                 f"  Max abs: {metrics['off_target']['regional_means']['region_0']['max']:.6f}",
-                f"\nRegion 0.25 (SNPs 25-74):",
+                "\nRegion 0.25 (SNPs 25-74):",
                 f"  Mean abs: {metrics['off_target']['regional_means']['region_025']['mean']:.6f}",
                 f"  Max abs: {metrics['off_target']['regional_means']['region_025']['max']:.6f}",
-                f"\nRegion 0.5 (SNPs 75-99):",
+                "\nRegion 0.5 (SNPs 75-99):",
                 f"  Mean abs: {metrics['off_target']['regional_means']['region_05']['mean']:.6f}",
                 f"  Max abs: {metrics['off_target']['regional_means']['region_05']['max']:.6f}",
             ],

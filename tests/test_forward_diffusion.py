@@ -28,7 +28,6 @@ Note: Always run from the project root directory to ensure proper imports.
 
 import unittest
 
-import numpy as np
 import torch
 
 from src.forward_diffusion import ForwardDiffusion

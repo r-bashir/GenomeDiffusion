@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 Simple mock execution script to test indexing logic without external dependencies.
 This creates dummy data to verify array indexing for reverse diffusion debugging.
@@ -13,7 +16,6 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
 # ruff: noqa: E402
-import numpy as np
 import torch
 
 from src.dataset import SNPDataset
@@ -36,7 +38,7 @@ def test_indexing_for_timestep(forward_diff, t):
     alpha_array_len = len(forward_diff.alphas)
     alpha_bar_array_len = len(forward_diff.alphas_bar)
 
-    print(f"\nArray lengths:")
+    print("\nArray lengths:")
     print(f"  betas (0-indexed): {beta_array_len} elements [0 to {beta_array_len-1}]")
     print(
         f"  alphas (0-indexed): {alpha_array_len} elements [0 to {alpha_array_len-1}]"
@@ -82,7 +84,7 @@ def test_indexing_for_timestep(forward_diff, t):
     # Test parameter access
     try:
         # Beta access
-        print(f"\n--- Beta Access Test ---")
+        print("\n--- Beta Access Test ---")
         beta_method = forward_diff.beta(t)
         beta_direct = forward_diff.betas[expected_beta_idx]
         print(f"Method result: {beta_method.item():.8f}")
@@ -95,7 +97,7 @@ def test_indexing_for_timestep(forward_diff, t):
             print("✅ Beta method and direct access match")
 
         # Alpha access
-        print(f"\n--- Alpha Access Test ---")
+        print("\n--- Alpha Access Test ---")
         alpha_method = forward_diff.alpha(t)
         alpha_direct = forward_diff.alphas[expected_alpha_idx]
         print(f"Method result: {alpha_method.item():.8f}")
@@ -109,7 +111,7 @@ def test_indexing_for_timestep(forward_diff, t):
 
         # Verify alpha = 1 - beta relationship
         expected_alpha = 1.0 - beta_direct
-        print(f"\n--- Alpha-Beta Relationship Test ---")
+        print("\n--- Alpha-Beta Relationship Test ---")
         print(
             f"α_t = 1 - β_t = 1 - {beta_direct.item():.8f} = {expected_alpha.item():.8f}"
         )
@@ -122,7 +124,7 @@ def test_indexing_for_timestep(forward_diff, t):
             print("✅ α_t = 1 - β_t relationship verified")
 
         # Alpha_bar access
-        print(f"\n--- Alpha_bar Access Test ---")
+        print("\n--- Alpha_bar Access Test ---")
         alpha_bar_method = forward_diff.alpha_bar(t)
         alpha_bar_direct = forward_diff.alphas_bar[expected_alpha_bar_idx]
         print(f"Method result: {alpha_bar_method.item():.8f}")
@@ -136,8 +138,8 @@ def test_indexing_for_timestep(forward_diff, t):
 
         # Special boundary case tests
         if t == 1:
-            print(f"\n--- Boundary Case t=1 Test ---")
-            print(f"For t=1: ᾱ_1 should equal α_1")
+            print("\n--- Boundary Case t=1 Test ---")
+            print("For t=1: ᾱ_1 should equal α_1")
             print(f"  ᾱ_1 = {alpha_bar_method.item():.8f}")
             print(f"  α_1 = {alpha_method.item():.8f}")
             if (
@@ -151,7 +153,7 @@ def test_indexing_for_timestep(forward_diff, t):
 
         elif t == forward_diff.tmax:
             print(f"\n--- Boundary Case t={forward_diff.tmax} Test ---")
-            print(f"This is the maximum timestep")
+            print("This is the maximum timestep")
             print(f"  ᾱ_{t} = {alpha_bar_method.item():.8f} (should be very small)")
             if alpha_bar_method.item() > 0.1:
                 print(f"⚠️  WARNING: ᾱ_{t} seems large for max timestep")
@@ -159,7 +161,7 @@ def test_indexing_for_timestep(forward_diff, t):
                 print("✅ ᾱ_tmax is appropriately small")
 
         # Show what values we're actually getting
-        print(f"\n--- Actual Values Retrieved ---")
+        print("\n--- Actual Values Retrieved ---")
         print(f"  β_{t} = {beta_method.item():.8f}")
         print(f"  α_{t} = {alpha_method.item():.8f}")
         print(f"  ᾱ_{t} = {alpha_bar_method.item():.8f}")
@@ -296,14 +298,14 @@ def main():
         print("✅ No unused elements - all array elements are utilized")
 
     # Show some sample values to verify the pattern
-    print(f"\nSample alpha_bar values:")
+    print("\nSample alpha_bar values:")
     sample_indices = [0, 1, 2, 500, 999, 1000]
     for idx in sample_indices:
         if idx < alpha_bar_len:
             print(f"  alpha_bar[{idx}] = {forward_diff.alphas_bar[idx]:.8f}")
 
     # Verify the cumulative product pattern
-    print(f"\nVerifying cumulative product pattern:")
+    print("\nVerifying cumulative product pattern:")
     print(f"  ᾱ_1 = α_1 = {forward_diff.alphas[0]:.8f}")
     print(f"  ᾱ_2 = α_1 * α_2 = {forward_diff.alphas[0] * forward_diff.alphas[1]:.8f}")
     print(f"  ᾱ_2 (from array) = {forward_diff.alphas_bar[2]:.8f}")

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Forward Diffusion Utilities
@@ -20,7 +21,6 @@ Key Functions:
     - create_animation_frames: Generate animation showing noise progression
 """
 
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 

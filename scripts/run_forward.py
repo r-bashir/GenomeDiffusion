@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Forward Diffusion Investigation Script
@@ -28,14 +29,10 @@ from scripts.utils.forward_utils import (
     plot_diffusion_parameters,
     plot_sample_evolution,
     plot_snr,
-    print_forward_statistics,
     run_forward_process,
 )
 from scripts.utils.schedule_utils import (
     analyze_schedule_parameters,
-    plot_schedule_comparison,
-    print_schedule_comparison,
-    print_schedule_parameters,
 )
 from src.dataset import SNPDataset
 from src.forward_diffusion import ForwardDiffusion

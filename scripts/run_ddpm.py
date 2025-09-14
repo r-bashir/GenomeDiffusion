@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Test script for diffusion model parameters and behavior.
@@ -12,8 +13,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 
 # Add project root
@@ -100,14 +99,14 @@ def main():
     logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
 
     # Select a single sample and ensure shape [1, 1, seq_len]
-    logger.info(f"Adding channel dim, and selecting single sample")
+    logger.info("Adding channel dim, and selecting single sample")
     sample_idx = 0
     x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
     logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")
     logger.info(f"x0 unique values: {torch.unique(x0)}")
 
     # === BEGIN: Reverse Diffusion ===
-    logger.info(f"Running Markov reverse process from x_t at t=T...")
+    logger.info("Running Markov reverse process from x_t at t=T...")
     diffusion_steps = 2
 
     # Generate noisy sample x_t at t=T
@@ -180,7 +179,7 @@ def main():
             max_diff = imputation_diff.max().item()
             mean_diff = imputation_diff.mean().item()
 
-            logger.info(f"Imputation accuracy at known positions:")
+            logger.info("Imputation accuracy at known positions:")
             logger.info(f"  Max difference: {max_diff:.8f}")
             logger.info(f"  Mean difference: {mean_diff:.8f}")
 
@@ -203,7 +202,7 @@ def main():
                 (x_t_minus_1[known_positions] - x0[known_positions]) ** 2
             ).item()
 
-            logger.info(f"Reconstruction quality comparison:")
+            logger.info("Reconstruction quality comparison:")
             logger.info(f"  MSE at unknown positions: {mse_unknown:.6f}")
             logger.info(f"  MSE at known positions: {mse_known:.6f}")
             logger.info(

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
+
 from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt

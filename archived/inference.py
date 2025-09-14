@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """Script for generating and analyzing samples from trained SNP diffusion models.
 
@@ -16,9 +17,9 @@ Generated outputs are saved in the 'inference' directory, including:
 - Statistical analysis
 - Visualization plots
 """
-
 import argparse
 import json
+import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -40,7 +41,8 @@ def plot_sample_grid(samples, save_path, title, timesteps=None):
         timesteps: List of timesteps corresponding to each sample
     """
     n_samples = min(samples.shape[0], 500)  # Show at most 500 timesteps
-    seq_length = samples.shape[-1]
+
+    # seq_length = samples.shape[-1]
 
     # Create figure
     fig, axes = plt.subplots(n_samples, 1, figsize=(15, 2 * n_samples))

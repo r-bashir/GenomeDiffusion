@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 Test script to demonstrate UNet1D shape transformations with a mock sequence.
 Shows tensor shapes at each stage of the model's forward pass.
@@ -25,7 +29,7 @@ def test_unet_shapes():
     edge_pad = 2  # Use configurable edge_pad
 
     print("\n=== UNet1D Shape Test ===")
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"- Batch size: {batch_size}")
     print(f"- Sequence length: {seq_length}")
     print(f"- Embedding dim: {embedding_dim}")
@@ -37,7 +41,7 @@ def test_unet_shapes():
         batch_size, seq_length, embedding_dim, dim_mults, edge_pad
     )
 
-    print(f"\n=== Expected Shape Flow ===")
+    print("\n=== Expected Shape Flow ===")
     for stage, shape_info in expected_shapes.items():
         print(f"- {stage}: {shape_info}")
 

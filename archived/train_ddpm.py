@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """Main script for training the SNP diffusion model using DDPM with PyTorch Lightning.
 

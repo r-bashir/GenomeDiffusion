@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Test the functionality of SNP Dataset from src/dataset.py by running:
@@ -24,7 +25,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dataset import (
-    SNPDataModule,
     SNPDataset,
     augment_data,
     handle_missing_values,
@@ -291,7 +291,7 @@ def main() -> int:
     # Testing Data Functions and Classes
     # --------------------------------------------------------------------
     print(f"\n{'='*65}")
-    print(f"Testing Data Functions and Classes")
+    print("Testing Data Functions and Classes")
     print(f"{'='*65}")
 
     print("\nData Loading Function:")

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 import argparse
 import sys
@@ -111,12 +112,12 @@ def main():
     model_size_mb = total_params * 4 / (1024 * 1024)  # 4 bytes per float32
 
     # Print model configuration and statistics
-    print(f"\nModel Configuration:")
+    print("\nModel Configuration:")
     print(f"  - Embedding dim: {unet_config.get('embedding_dim', 32)}")
     print(f"  - Dimension multipliers: {unet_config.get('dim_mults', [1, 2, 4])}")
     print(f"  - Norm groups: {unet_config.get('norm_groups', 8)}")
     print(f"  - Sequence length: {batch.shape[-1]}")
-    print(f"Model Statistics:")
+    print("Model Statistics:")
     print(f"  - Total parameters: {total_params:,}")
     print(f"  - Trainable parameters: {trainable_params:,}")
     print(f"  - Model size: {model_size_mb:.2f} MB\n")

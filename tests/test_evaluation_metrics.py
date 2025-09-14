@@ -11,7 +11,6 @@ to compare real and generated genomic samples with various quality metrics.
 from pathlib import Path
 
 import numpy as np
-import torch
 
 from src.evaluation_metrics import (
     compute_comprehensive_evaluation,

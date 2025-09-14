@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """Utilities for analyzing diffusion schedules and parameters."""
 
 from pathlib import Path
@@ -6,7 +10,6 @@ from typing import Dict, List, Optional, Union
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import torch
 from torch import Tensor
 
 from src.forward_diffusion import ForwardDiffusion

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 import argparse
 import sys
@@ -8,17 +9,12 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
 
 # Add project root
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.dataset import SNPDataset
 from src.ddpm import DiffusionModel
-from src.forward_diffusion import ForwardDiffusion
-from src.mlp import LinearNoisePredictor
 from src.utils import load_config, set_seed, setup_logging
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

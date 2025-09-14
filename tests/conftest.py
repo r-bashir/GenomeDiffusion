@@ -4,7 +4,6 @@ This file is automatically discovered by pytest and used to define fixtures and 
 that are available to all tests in this directory and its subdirectories.
 """
 
-import os
 import sys
 from pathlib import Path
 

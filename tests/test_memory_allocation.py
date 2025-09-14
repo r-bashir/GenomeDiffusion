@@ -112,7 +112,7 @@ def test_model_memory_efficiency():
             )
 
             # Print memory usage
-            print(f"   ✅ SUCCESS - Memory usage:")
+            print("   ✅ SUCCESS - Memory usage:")
             print(f"      GPU allocated: {gpu_after_backward:.2f} GB")
             print(f"      GPU reserved:  {gpu_reserved_after_backward:.2f} GB")
             print(f"      CPU memory:    {cpu_after_backward:.2f} GB")
@@ -143,18 +143,18 @@ def test_model_memory_efficiency():
             print(f"   ❌ UNEXPECTED ERROR: {str(e)}")
             break
 
-    print(f"\n🎯 Memory Efficiency Test Complete!")
-    print(f"💡 Tips for further optimization:")
-    print(f"   - Use batch_size=1 for sequences >100K")
-    print(f"   - Enable gradient accumulation (accumulate_grad_batches=8)")
-    print(f"   - Use 16-bit mixed precision")
-    print(f"   - Consider reducing embedding_dim further if needed")
+    print("\n🎯 Memory Efficiency Test Complete!")
+    print("💡 Tips for further optimization:")
+    print("   - Use batch_size=1 for sequences >100K")
+    print("   - Enable gradient accumulation (accumulate_grad_batches=8)")
+    print("   - Use 16-bit mixed precision")
+    print("   - Consider reducing embedding_dim further if needed")
 
 
 def test_attention_memory_scaling():
     """Test how attention memory scales with sequence length."""
 
-    print(f"\n🔍 Testing Attention Memory Scaling")
+    print("\n🔍 Testing Attention Memory Scaling")
     print("=" * 40)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -223,4 +223,4 @@ if __name__ == "__main__":
     test_model_memory_efficiency()
     test_attention_memory_scaling()
 
-    print(f"\n✨ All tests completed!")
+    print("\n✨ All tests completed!")

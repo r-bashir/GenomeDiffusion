@@ -1,7 +1,6 @@
-#!/usr/bin/env python3
-
-import sys
-from pathlib import Path
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
 
 import matplotlib.pyplot as plt
 import numpy as np

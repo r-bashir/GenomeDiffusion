@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """
 Test script for diffusion model parameters and behavior.
@@ -50,7 +51,6 @@ def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
         model: The loaded DiffusionModel (on the correct device, in eval mode)
         config: The config/hparams dictionary from the checkpoint
     """
-    from src import DiffusionModel
 
     model = DiffusionModel.load_from_checkpoint(
         checkpoint_path,

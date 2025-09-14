@@ -14,7 +14,6 @@ Usage:
 import argparse
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from src.infer_utils import denoise_samples, generate_samples

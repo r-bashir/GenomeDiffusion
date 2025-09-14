@@ -1,4 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 Script to investigate Linkage Disequilibrium modeling in GenomeDiffusion.
 This script helps diagnose why the model isn't capturing spatial correlations between SNPs.
@@ -293,7 +296,7 @@ def visualize_model_behavior(model, real_samples, timestep, output_dir):
     plt.close()
 
     print(
-        f"📊 Real vs Generated sample comparison saved as 'real_vs_generated_comparison.png'"
+        "📊 Real vs Generated sample comparison saved as 'real_vs_generated_comparison.png'"
     )
 
 
@@ -369,7 +372,7 @@ def main():
     seq_length = config.get("data", {}).get("seq_length", None)
     timestep = config["diffusion"]["timesteps"]
 
-    print(f"🏗️  Model Configuration:")
+    print("🏗️  Model Configuration:")
     print(f"   Sequence length: {seq_length}")
     print(f"   Embedding dim: {config['unet'].get('embedding_dim', 'N/A')}")
     print(f"   Dim mults: {config['unet'].get('dim_mults', 'N/A')}")

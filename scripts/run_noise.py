@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
+
 """
 Script to run detailed noise analysis on a trained diffusion model.
 Initial settings, argument parsing, model/data loading, and reproducibility follow run_diffusion.py.
@@ -15,7 +17,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import DiffusionModel
-from src.utils import load_config, set_seed, setup_logging
+from src.utils import set_seed, setup_logging
 from utils.noise_utils import (
     plot_error_statistics,
     plot_loss_vs_timestep,
@@ -56,7 +58,6 @@ def load_model_from_checkpoint(checkpoint_path: str, device: torch.device):
         model: The loaded DiffusionModel (on the correct device, in eval mode)
         config: The config/hparams dictionary from the checkpoint
     """
-    from src import DiffusionModel
 
     model = DiffusionModel.load_from_checkpoint(
         checkpoint_path,
@@ -182,7 +183,7 @@ def main():
         print("=" * 70)
 
         timesteps = [1, 2, 10, 400, 500, 600, 979, 989, 999, 1000]
-        print(f"\nRunning noise analysis at selected timestep with single sample")
+        print("\nRunning noise analysis at selected timestep with single sample")
 
         sample_idx = 0
 

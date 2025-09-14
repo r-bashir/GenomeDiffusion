@@ -1,3 +1,7 @@
+#!/usr/bin/env python
+# coding: utf-8
+# ruff: noqa: E402
+
 """
 Comprehensive UNet1D test script.
 Combines shape tracing, parameter analysis, and training estimation.
@@ -8,7 +12,6 @@ import time
 from pathlib import Path
 
 import torch
-import torch.nn.functional as F
 
 # Add project root
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -121,7 +124,7 @@ def test_configurations():
     seq_length = 100  # Realistic sequence length
     batch_size = 8
 
-    print(f"\n=== Configuration Comparison ===")
+    print("\n=== Configuration Comparison ===")
     print(f"Test sequence length: {seq_length}")
     print(f"Test batch size: {batch_size}")
     print("-" * 85)
@@ -183,7 +186,7 @@ def test_from_config():
         train_samples = data_config["datasplit"][0]
         num_batches = (train_samples + batch_size - 1) // batch_size
 
-        print(f"\n=== Config.yaml Test ===")
+        print("\n=== Config.yaml Test ===")
         print(f"Dataset: {train_samples} samples, seq_length={seq_length}")
         print(f"Training: batch_size={batch_size}, {num_batches} batches/epoch")
 
@@ -222,7 +225,7 @@ def test_from_config():
             )
             total_hours = epoch_time * training_config["epochs"] / 3600
 
-            print(f"Training estimate:")
+            print("Training estimate:")
             print(f"  - Time per batch: {batch_time:.3f}s")
             print(f"  - Time per epoch: {epoch_time:.1f}s ({epoch_time/60:.1f} min)")
             print(
@@ -267,18 +270,18 @@ def main():
     config_success = test_from_config()
 
     # Summary
-    print(f"\n=== Test Summary ===")
+    print("\n=== Test Summary ===")
     print(f"Configuration tests: {len(results)} passed")
     print(f"Config.yaml test: {'✅ PASSED' if config_success else '❌ FAILED'}")
 
     if results:
         recommended = min(results, key=lambda x: x[2])  # Smallest parameter count
-        print(f"\n💡 Recommended for laptop training:")
+        print("\n💡 Recommended for laptop training:")
         print(
             f"   {recommended[0]} - {recommended[2]:,} parameters ({recommended[3]:.1f} MB)"
         )
 
-    print(f"\n🚀 UNet1D is ready for training!")
+    print("\n🚀 UNet1D is ready for training!")
 
 
 if __name__ == "__main__":

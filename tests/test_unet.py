@@ -203,13 +203,13 @@ def test_unet1d_shape_tracing():
     x = torch.randn(batch, channels, seq_length)
     t = torch.randint(0, 1000, (batch,))
 
-    print(f"\n=== UNet1D Shape Tracing Test ===")
-    print(f"Configuration:")
+    print("\n=== UNet1D Shape Tracing Test ===")
+    print("Configuration:")
     print(f"- Batch size: {batch}")
     print(f"- Sequence length: {seq_length}")
     print(f"- Embedding dim: {embedding_dim}")
     print(f"- Dimension multipliers: {dim_mults}")
-    print(f"- Edge padding: 2")
+    print("- Edge padding: 2")
 
     model = UNet1D(
         embedding_dim=embedding_dim,
@@ -222,13 +222,13 @@ def test_unet1d_shape_tracing():
         debug=True,  # Enable detailed shape tracing
     )
 
-    print(f"\n=== Forward Pass with Shape Tracing ===")
+    print("\n=== Forward Pass with Shape Tracing ===")
     print(f"Input shape: {x.shape}")
 
     with torch.no_grad():
         y = model(x, t)
 
-    print(f"\n=== Output Verification ===")
+    print("\n=== Output Verification ===")
     print(f"Output shape: {y.shape}")
     assert y.shape == x.shape, f"Output shape {y.shape} does not match input {x.shape}"
     print("✅ Shape test passed: output matches input dimensions")
