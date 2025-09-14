@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
     LinearMLP,
+    zero_out_model_parameters,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
@@ -59,17 +60,21 @@ class DiffusionModel(NetworkBase):
             with_pos_emb=hparams["unet"]["with_pos_emb"],
             norm_groups=hparams["unet"]["norm_groups"],
             seq_length=hparams["data"]["seq_length"],
+            # Additional Arguments for UNet1D
             edge_pad=hparams["unet"]["edge_pad"],
             enable_checkpointing=hparams["unet"]["enable_checkpointing"],
             use_attention=hparams["unet"]["use_attention"],
             attention_heads=hparams["unet"]["attention_heads"],
             attention_dim_head=hparams["unet"]["attention_dim_head"],
-            # Enhancements
             attention_window=hparams["unet"]["attention_window"],
             num_global_tokens=hparams["unet"]["num_global_tokens"],
             dropout=hparams["unet"]["dropout"],
             use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
         )
+
+        # Zero noise predictor (zero out model params), beware that in MLP if
+        # we input staircase sample, output is always zero i.e. sample has 0's.
+        # zero_out_model_parameters(self.noise_predictor)
 
         # ReverseDiffusion: Reverse diffusion process
         self.reverse_diffusion = ReverseDiffusion(

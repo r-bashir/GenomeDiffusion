@@ -7,8 +7,8 @@ output_path: "${PROJECT_ROOT}/outputs"
 # Dataset
 data:
   input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
-  seq_length: 100             # Total length is 160858
-  batch_size: 8               # Batch size for DataLoader class
+  seq_length: 100              # Total length is 160858
+  batch_size: 8                # Batch size for DataLoader class
   num_workers: 4               # Number of workers for DataLoader class
   datasplit: [1867, 150, 50]   # Data split, we can set 0 for test dataset
   missing_value: 9             # None, to not handle missing values

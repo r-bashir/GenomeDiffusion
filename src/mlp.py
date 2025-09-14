@@ -12,6 +12,19 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger = setup_logging(name="MLP")
 
 
+# === Zero Noise Predictor ==
+def zero_out_model_parameters(model):
+    """
+    Sets all weights and biases of nn.Linear layers in the model
+    to zero. This makes the model predict zeros for any input.
+    """
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            nn.init.constant_(module.weight, 0.0)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.0)
+
+
 # === Identity Noise Predictor ===
 class IdentityNoisePredictor(nn.Module):
     """
@@ -115,6 +128,117 @@ class LinearNoisePredictor(nn.Module):
 
         out = self.linear(x_flat)  # [B, C*L]
         return out.view(B, C, L)  # [B, C, L]
+
+
+# LinearMLP (equivalent to LinearNoisePredictor)
+class LinearMLP(nn.Module):
+    """Global n→n linear baseline (flatten + linear + unflatten)."""
+
+    def __init__(
+        self,
+        embedding_dim=64,  # To include time embeddings
+        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
+        channels=1,  # Input channels (SNP data channels is always 1)
+        with_time_emb=False,  # To include time embeddings
+        with_pos_emb=False,  # Unused, but kept for interface compatibility
+        norm_groups=8,  # Unused, but kept for interface compatibility
+        seq_length=100,  # Expected sequence length (number of SNP markers)
+        **kwargs,
+    ):
+        super().__init__()
+        self.channels = channels
+        self.seq_length = seq_length
+        self.input_dim = channels * seq_length
+        self.with_time_emb = with_time_emb
+        self.embedding_dim = embedding_dim
+
+        # Optional time embedding
+        self.time_dim = embedding_dim if with_time_emb else 0
+        if with_time_emb:
+            self.time_mlp = nn.Sequential(
+                SinusoidalTimeEmbeddings(embedding_dim),
+                nn.Linear(embedding_dim, embedding_dim),
+            )
+        else:
+            self.time_mlp = None
+
+        # Linear layer size depends on whether time embedding is used
+        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
+        # nn.init.zeros_(self.linear.bias)
+        # nn.init.eye_(self.linear.weight)
+
+        self.flatten = nn.Flatten()
+        logger.info(
+            f"Initialized LinearMLP: input_dim={self.input_dim}, time_dim={self.time_dim}"
+        )
+
+    def forward(self, x, time):
+        B, C, L = x.shape
+        x_flat = self.flatten(x)
+
+        # Concatenate time embedding if enabled
+        if self.with_time_emb and self.time_mlp is not None:
+            t_emb = self.time_mlp(time)  # [B, time_dim]
+            x_flat = torch.cat([x_flat, t_emb], dim=1)
+
+        out = self.linear(x_flat)
+        return out.view(B, C, L)
+
+
+# LinearCNN
+class LinearCNN(nn.Module):
+    """Local baseline: per-position n→n mapping with 1×1 conv."""
+
+    def __init__(
+        self,
+        embedding_dim=64,  # To include time embeddings
+        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
+        channels=1,  # Input channels (SNP data channels is always 1)
+        with_time_emb=False,  # To include time embeddings
+        with_pos_emb=False,  # Unused, but kept for interface compatibility
+        norm_groups=8,  # Unused, but kept for interface compatibility
+        seq_length=100,  # Expected sequence length (number of SNP markers)
+        **kwargs,
+    ):
+        super().__init__()
+        self.channels = channels
+        self.seq_length = seq_length
+        self.with_time_emb = with_time_emb
+        self.embedding_dim = embedding_dim
+
+        # 1x1 convolution → per-position linear map
+        self.linear = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
+        if channels == 1:
+            nn.init.constant_(self.linear.weight, 1.0)
+        else:
+            eye = torch.eye(channels).view(channels, channels, 1)
+            with torch.no_grad():
+                self.linear.weight.copy_(eye)
+
+        # Optional time embedding: channel-wise gating
+        self.time_dim = embedding_dim if with_time_emb else 0
+        if with_time_emb:
+            self.time_mlp = nn.Sequential(
+                SinusoidalTimeEmbeddings(embedding_dim),
+                nn.Linear(embedding_dim, channels),
+                nn.Sigmoid(),
+            )
+        else:
+            self.time_mlp = None
+
+        logger.info(
+            f"Initialized LinearCNN: channels={channels}, time_dim={self.time_dim}"
+        )
+
+    def forward(self, x, time):
+        out = self.linear(x)  # [B, C, L]
+
+        if self.with_time_emb and self.time_mlp is not None:
+            t_emb = self.time_mlp(time)  # [B, C]
+            t_emb = t_emb.unsqueeze(-1)  # [B, C, 1]
+            out = out * t_emb
+
+        return out
 
 
 # === Complex Noise Predictor ===
@@ -244,131 +368,3 @@ class ComplexNoisePredictor(nn.Module):
 
         # Reshape back to original dimensions
         return output.view(batch_size, channels, seq_len)
-
-    def gradient_checkpointing_enable(self):
-        """Dummy method for compatibility with UNet1D interface."""
-        pass
-
-
-# === Zero Noise Predictor ==
-def zero_out_model_parameters(model):
-    """
-    Sets all weights and biases of nn.Linear layers in the model to zero.
-    This makes the model predict zeros for any input.
-    """
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            nn.init.constant_(module.weight, 0.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
-
-
-# LinearMLP (Equivalent to LinearNoisePredictor)
-class LinearMLP(nn.Module):
-    """Global n→n linear baseline (flatten + linear + unflatten)."""
-
-    def __init__(
-        self,
-        embedding_dim=64,  # To include time embeddings
-        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
-        channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
-        norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
-        **kwargs,
-    ):
-        super().__init__()
-        self.channels = channels
-        self.seq_length = seq_length
-        self.input_dim = channels * seq_length
-        self.with_time_emb = with_time_emb
-        self.embedding_dim = embedding_dim
-
-        # Optional time embedding
-        self.time_dim = embedding_dim if with_time_emb else 0
-        if with_time_emb:
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, embedding_dim),
-            )
-        else:
-            self.time_mlp = None
-
-        # Linear layer size depends on whether time embedding is used
-        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
-        nn.init.eye_(self.linear.weight)
-        nn.init.zeros_(self.linear.bias)
-
-        self.flatten = nn.Flatten()
-        logger.info(
-            f"Initialized LinearMLP: input_dim={self.input_dim}, time_dim={self.time_dim}"
-        )
-
-    def forward(self, x, time):
-        B, C, L = x.shape
-        x_flat = self.flatten(x)
-
-        # Concatenate time embedding if enabled
-        if self.with_time_emb and self.time_mlp is not None:
-            t_emb = self.time_mlp(time)  # [B, time_dim]
-            x_flat = torch.cat([x_flat, t_emb], dim=1)
-
-        out = self.linear(x_flat)
-        return out.view(B, C, L)
-
-
-# LinearCNN
-class LinearCNN(nn.Module):
-    """Local baseline: per-position n→n mapping with 1×1 conv."""
-
-    def __init__(
-        self,
-        embedding_dim=64,  # To include time embeddings
-        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
-        channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
-        norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
-        **kwargs,
-    ):
-        super().__init__()
-        self.channels = channels
-        self.seq_length = seq_length
-        self.with_time_emb = with_time_emb
-        self.embedding_dim = embedding_dim
-
-        # 1x1 convolution → per-position linear map
-        self.linear = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        if channels == 1:
-            nn.init.constant_(self.linear.weight, 1.0)
-        else:
-            eye = torch.eye(channels).view(channels, channels, 1)
-            with torch.no_grad():
-                self.linear.weight.copy_(eye)
-
-        # Optional time embedding: channel-wise gating
-        self.time_dim = embedding_dim if with_time_emb else 0
-        if with_time_emb:
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, channels),
-                nn.Sigmoid(),
-            )
-        else:
-            self.time_mlp = None
-
-        logger.info(
-            f"Initialized LinearCNN: channels={channels}, time_dim={self.time_dim}"
-        )
-
-    def forward(self, x, time):
-        out = self.linear(x)  # [B, C, L]
-
-        if self.with_time_emb and self.time_mlp is not None:
-            t_emb = self.time_mlp(time)  # [B, C]
-            t_emb = t_emb.unsqueeze(-1)  # [B, C, 1]
-            out = out * t_emb
-
-        return out
