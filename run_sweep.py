@@ -156,7 +156,7 @@ def main():
             write_sweep_id_file(out_path, sweep_id, args.project, entity)
             print(f"📝 Sweep ID: {sweep_id}")
             print(f"📝 Saved to: {out_path}")
-            print(f"\n🤖 To run agents:")
+            print("\n🤖 To run agents:")
             print(f"   wandb agent {entity}/{args.project}/{sweep_id}")
             print(f"   python run_sweep.py --agent {sweep_id} --project {args.project}")
             return

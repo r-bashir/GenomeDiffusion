@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+import torch
+
+from .utils import bcast_right, prepare_batch_shape, set_seed, tensor_to_device
+
 """
 Reverse Diffusion Process for Denoising Diffusion Probabilistic Models (DDPM).
 
@@ -27,10 +31,6 @@ Summary: Diagnosing Rising MSE in Reverse Diffusion
 
 See FIXME comments for deterministic/noise-free test code.
 """
-
-import torch
-
-from .utils import bcast_right, prepare_batch_shape, set_seed, tensor_to_device
 
 
 class ReverseDiffusion:

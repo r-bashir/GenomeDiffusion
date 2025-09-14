@@ -5,7 +5,6 @@
 using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
 adapted the code for 1-dimensional SNP genomic dataset."""
 
-import math
 from functools import partial
 
 import torch

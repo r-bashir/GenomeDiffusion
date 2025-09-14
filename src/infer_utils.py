@@ -12,9 +12,7 @@ This module contains essential functions for:
 Removed redundant/outdated functions and kept only the core utilities.
 """
 
-from pathlib import Path
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -332,7 +330,7 @@ def sample_statistics(
         counts = count_genotype_values(flat_samples, genotype_values)
         total = len(flat_samples)
 
-        print(f"  Genotype Distribution:")
+        print("  Genotype Distribution:")
         for i, (val, count) in enumerate(zip(genotype_values, counts)):
             percentage = (count / total) * 100
             print(f"    {val:.2f}: {count:,} ({percentage:.1f}%)")
@@ -1223,7 +1221,7 @@ def visualize_diffusion(samples, output_dir, title, timesteps=None):
         timesteps: List of timesteps corresponding to each sample
     """
     n_samples = min(samples.shape[0], 20)  # Show at most 20 timesteps
-    seq_length = samples.shape[-1]
+    # seq_length = samples.shape[-1]
 
     # Create figure
     fig, axes = plt.subplots(n_samples, 1, figsize=(15, 2 * n_samples))

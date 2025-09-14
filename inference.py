@@ -140,7 +140,7 @@ def main():
 
     # Test imputation if requested
     if args.test_imputation:
-        logger.info(f"\n=== TESTING IMPUTATION FUNCTIONALITY ===")
+        logger.info("\n=== TESTING IMPUTATION FUNCTIONALITY ===")
         logger.info(f"Using mask ratio: {args.mask_ratio} (fraction of SNPs known)")
 
         # Create random masks for imputation testing
@@ -179,7 +179,7 @@ def main():
             mean_diff = imputation_diff.mean().item()
             std_diff = imputation_diff.std().item()
 
-            logger.info(f"Imputation accuracy at known positions:")
+            logger.info("Imputation accuracy at known positions:")
             logger.info(f"  Max difference: {max_diff:.8f}")
             logger.info(f"  Mean difference: {mean_diff:.8f}")
             logger.info(f"  Std difference: {std_diff:.8f}")
@@ -216,7 +216,7 @@ def main():
             real_unknown_mean = real_samples[unknown_positions].mean().item()
             real_known_mean = real_samples[known_positions].mean().item()
 
-            logger.info(f"\nGeneration quality comparison:")
+            logger.info("\nGeneration quality comparison:")
             logger.info(f"  MSE at unknown positions: {mse_unknown:.6f}")
             logger.info(f"  MSE at known positions: {mse_known:.6f}")
             if mse_known > 0:
@@ -224,7 +224,7 @@ def main():
                     f"  Quality ratio: {mse_unknown/mse_known:.2f}x (unknown/known MSE)"
                 )
 
-            logger.info(f"\nValue distribution comparison:")
+            logger.info("\nValue distribution comparison:")
             logger.info(f"  Generated mean at unknown positions: {unknown_mean:.4f}")
             logger.info(f"  Generated mean at known positions: {known_mean:.4f}")
             logger.info(f"  Real mean at unknown positions: {real_unknown_mean:.4f}")
@@ -246,7 +246,7 @@ def main():
         diff_with_without = (
             torch.abs(generated_samples - generated_samples_no_imputation).mean().item()
         )
-        logger.info(f"\nImputation vs No-imputation comparison:")
+        logger.info("\nImputation vs No-imputation comparison:")
         logger.info(f"  Mean absolute difference: {diff_with_without:.6f}")
 
         # Save imputation-specific results
@@ -293,7 +293,7 @@ def main():
     max_value = enc["max_value"]
 
     # === Basic Sample Analysis ===
-    print(f"\n📊 BASIC SAMPLE ANALYSIS")
+    print("\n📊 BASIC SAMPLE ANALYSIS")
     print("=" * 40)
 
     sample_statistics(
@@ -307,7 +307,7 @@ def main():
     )
 
     # === Sample Distribution Analysis ===
-    print(f"\n📊 SAMPLE DISTRIBUTION ANALYSIS")
+    print("\n📊 SAMPLE DISTRIBUTION ANALYSIS")
     print("=" * 40)
 
     sample_distribution(
@@ -336,7 +336,7 @@ def main():
     logger.info("✅ Generated samples (generated_samples.pt) are saved")
 
     # === Basic Quality Assessment ===
-    print(f"\n📊 QUALITY METRICS")
+    print("\n📊 QUALITY METRICS")
     logger.info("Computing quality metrics...")
     metrics = compute_quality_metrics(
         real_samples,
@@ -356,7 +356,7 @@ def main():
         genotype_values=genotype_values,
     )
 
-    print(f"\n🎯 QUALITY ASSESSMENT SUMMARY")
+    print("\n🎯 QUALITY ASSESSMENT SUMMARY")
     print("=" * 40)
     print(f"Overall Quality Score: {quality_score:.3f}/1.000")
 
@@ -380,19 +380,19 @@ def main():
 
     print(f"Status: {status}")
     print(f"Recommendation: {recommendation}")
-    print(f"📊 Visual metrics summary (quality_metrics.png) saved.\n")
+    print("📊 Visual metrics summary (quality_metrics.png) saved.\n")
     if args.test_imputation:
-        print(f"\n🧬 IMPUTATION TEST SUMMARY")
+        print("\n🧬 IMPUTATION TEST SUMMARY")
         print("=" * 40)
-        print(f"Imputation functionality has been tested successfully!")
+        print("Imputation functionality has been tested successfully!")
         print(f"Known SNPs ratio: {args.mask_ratio:.1%}")
-        print(f"Check the logs above for detailed imputation accuracy metrics.")
-        print(f"Additional files saved:")
-        print(f"  - imputation_mask.pt: The mask used for testing")
-        print(f"  - generated_samples_no_imputation.pt: Samples without imputation")
-        print(f"\nTo run comprehensive analysis, run:")
+        print("Check the logs above for detailed imputation accuracy metrics.")
+        print("Additional files saved:")
+        print("  - imputation_mask.pt: The mask used for testing")
+        print("  - generated_samples_no_imputation.pt: Samples without imputation")
+        print("\nTo run comprehensive analysis, run:")
     else:
-        print(f"To run comprehensive analysis, run:\n")
+        print("To run comprehensive analysis, run:\n")
         print(f"python sample_analysis.py --checkpoint {args.checkpoint}\n")
 
     if args.test_imputation:

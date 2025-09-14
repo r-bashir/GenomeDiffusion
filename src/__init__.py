@@ -3,12 +3,6 @@
 
 from pathlib import Path
 
-# Project paths
-PROJECT_ROOT = Path(__file__).parent.parent.absolute()
-SRC_DIR = PROJECT_ROOT / "src"
-SCRIPTS_DIR = PROJECT_ROOT / "scripts"
-DATA_DIR = PROJECT_ROOT / "data"
-
 from .dataset import SNPDataModule, SNPDataset
 from .ddpm import DiffusionModel
 from .forward_diffusion import ForwardDiffusion
@@ -23,6 +17,12 @@ from .utils import (
     set_seed,
     tensor_to_device,
 )
+
+# Project paths
+PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+SRC_DIR = PROJECT_ROOT / "src"
+SCRIPTS_DIR = PROJECT_ROOT / "scripts"
+DATA_DIR = PROJECT_ROOT / "data"
 
 __version__ = "0.1.0"
 

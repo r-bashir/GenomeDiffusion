@@ -28,10 +28,6 @@ Example:
     python src/dataset.py --config config.yaml
 """
 
-import argparse
-import logging
-from pathlib import Path
-from pprint import pprint
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -39,8 +35,6 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.utils.data
-import yaml
-from scipy import stats
 
 from .utils import setup_logging
 

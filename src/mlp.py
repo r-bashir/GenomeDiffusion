@@ -296,10 +296,9 @@ class LinearMLP(nn.Module):
             self.time_mlp = None
 
         # Linear layer size depends on whether time embedding is used
-        self.linear = nn.Linear(
-            self.input_dim + self.time_dim, self.input_dim, bias=False
-        )
+        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
         nn.init.eye_(self.linear.weight)
+        nn.init.zeros_(self.linear.bias)
 
         self.flatten = nn.Flatten()
         logger.info(

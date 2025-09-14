@@ -3,15 +3,11 @@
 
 """Base network module for PyTorch Lightning integration."""
 
-import math
-import os
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Optional
 
 import pytorch_lightning as pl
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader, random_split
 
 
 class NetworkBase(pl.LightningModule):
@@ -55,8 +51,8 @@ class NetworkBase(pl.LightningModule):
             # Load dataset
             if "data" not in self.hparams or "input_path" not in self.hparams["data"]:
                 raise ValueError("input_path must be specified in hparams['data']")
-            seq_length = self.hparams["data"].get("seq_length", None)
 
+            # seq_length = self.hparams["data"].get("seq_length", None)
             # print(f"Creating dataset with sequence length: {seq_length}")
             # print(f"Loading data from: {self.hparams['data']['input_path']}")
 

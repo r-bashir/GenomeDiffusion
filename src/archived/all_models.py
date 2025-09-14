@@ -3,7 +3,7 @@
 
 import math
 from functools import partial
-from typing import Dict, Sequence
+from typing import Sequence
 
 import numpy as np
 import torch

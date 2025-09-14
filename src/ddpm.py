@@ -3,24 +3,18 @@
 
 """Diffusion model implementation for SNP data."""
 
-import math
 from typing import Dict
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
-    ComplexNoisePredictor,
-    LinearCNN,
     LinearMLP,
-    LinearNoisePredictor,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .time_sampler import UniformContinuousTimeSampler
-from .unet import UNet1D
 
 # from .unet_kenneweg import UNet1D
 from .utils import bcast_right, tensor_to_device
@@ -56,7 +50,7 @@ class DiffusionModel(NetworkBase):
             beta_schedule=hparams["diffusion"]["beta_schedule"],
         )
 
-        # Noise Predictor
+        # Noise Predictor (LinearMLP, LinearCNN, UNet1D)
         self.noise_predictor = LinearMLP(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],

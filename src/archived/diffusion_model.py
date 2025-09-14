@@ -1,3 +1,10 @@
+from typing import Dict
+
+import torch
+
+from .unet_kenneweg import UNet1D
+
+
 class DiffusionModel(nn.Module):
     """Diffusion model with 1D Convolutional network for SNP data.
 

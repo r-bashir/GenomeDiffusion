@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Union
 
 import pytorch_lightning as pl
 import torch
-import yaml
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger

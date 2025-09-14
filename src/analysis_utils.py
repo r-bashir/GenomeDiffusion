@@ -19,7 +19,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from scipy import stats
 from sklearn.decomposition import PCA
 
 # Standard plotting configuration for consistency
@@ -1377,7 +1376,7 @@ def print_evaluation_summary(metrics):
     # Dimensionality metrics
     if metrics.get("dimensionality"):
         dim_metrics = metrics["dimensionality"]
-        print(f"\n🔍 High-Dimensional Analysis:")
+        print("\n🔍 High-Dimensional Analysis:")
         if dim_metrics.get("pca_centroid_distance") is not None:
             print(
                 f"  • PCA Centroid Distance: {dim_metrics['pca_centroid_distance']:.6f}"
@@ -1388,7 +1387,7 @@ def print_evaluation_summary(metrics):
     # Advanced genomic analysis
     if metrics.get("advanced_genomics"):
         adv_metrics = metrics["advanced_genomics"]
-        print(f"\n🧬 Advanced Genomic Analysis:")
+        print("\n🧬 Advanced Genomic Analysis:")
 
         if adv_metrics.get("ld_pattern_correlation") is not None:
             print(

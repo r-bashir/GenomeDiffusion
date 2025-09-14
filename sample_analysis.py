@@ -31,22 +31,17 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from src.analysis_utils import (
-    calculate_genetic_diversity,
     compute_dimensionality_metrics,
     create_evaluation_report,
     plot_genomic_position_effects,
     plot_haplotype_blocks,
     plot_hardy_weinberg_deviation,
-    plot_ld_decay,
     plot_sample_clustering,
     run_comprehensive_evaluation,
-    run_pca_analysis,
 )
-from src.infer_utils import compute_quality_metrics
 from src.utils import set_seed, setup_logging
 
 
@@ -188,7 +183,7 @@ def print_final_summary(metrics, input_dir, output_dir):
         interpretation = "🔴 POOR"
 
     # Final summary
-    logger.info(f"🎯 EVALUATION COMPLETE!")
+    logger.info("🎯 EVALUATION COMPLETE!")
     logger.info(f"Overall Quality Score: {overall_score:.3f}/1.000")
     logger.info(f"Interpretation: {interpretation}")
     logger.info(f"Input: {input_dir}")
@@ -280,7 +275,7 @@ def main():
 
     # 5. Print analysis summary
     logger.info("✅ All analyses complete")
-    print(f"\n📊 COMPREHENSIVE ANALYSIS RESULTS:")
+    print("\n📊 COMPREHENSIVE ANALYSIS RESULTS:")
     print(f"🎯 Overall Quality Score: {metrics['overall_quality_score']:.3f}")
     print(f"🧬 LD Correlation: {metrics['ld_correlation']:.6f}")
     print(f"📈 PCA Distance: {metrics['pca_distance']:.4f}")

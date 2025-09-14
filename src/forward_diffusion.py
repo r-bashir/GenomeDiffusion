@@ -18,7 +18,7 @@ Typical usage:
 Note: This class only implements the forward (noising) process q(x_t|x_0), NOT the full DDPM model.
 """
 
-from typing import Optional, Union
+from typing import Union
 
 import numpy as np
 import torch

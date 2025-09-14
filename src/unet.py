@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+# ruff: noqa: E402
 
 """Based on `https://huggingface.co/blog/annotated-diffusion` that explains
 using the original DDPM by Ho et al. 2022 on images i.e. 2D dataset. We
