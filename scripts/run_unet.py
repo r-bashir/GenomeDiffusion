@@ -6,7 +6,6 @@ import argparse
 import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -29,7 +28,9 @@ def parse_args():
     Returns:
         argparse.Namespace: Parsed command line arguments
     """
-    parser = argparse.ArgumentParser(description="Forward Diffusion Investigation")
+    parser = argparse.ArgumentParser(
+        description="UNet1D Sanity Checks: shapes, MSE vs true noise, gradient flow."
+    )
 
     parser.add_argument(
         "--config",
@@ -37,11 +38,9 @@ def parse_args():
         required=True,
         help="Path to configuration YAML file",
     )
+    parser.add_argument("--output-dir", type=Path, default=Path("outputs/unet_sanity"))
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("output/forward_diffusion"),
-        help="Directory to save results",
+        "--plot", action="store_true", help="Save a simple PNG visualization."
     )
     parser.add_argument(
         "--debug",
@@ -80,7 +79,7 @@ def main():
     logger.info(f"Batch shape [B, C, L]: {batch.shape}")
 
     # Prepare output directory
-    output_dir = Path(config["output_path"]) / "noise_prediction"
+    output_dir = args.output_dir
     output_dir.mkdir(exist_ok=True, parents=True)
 
     # Initialize ForwardDiffusion
@@ -89,7 +88,7 @@ def main():
         time_steps=config["diffusion"]["timesteps"],
         beta_start=config["diffusion"]["beta_start"],
         beta_end=config["diffusion"]["beta_end"],
-        schedule_type=config["diffusion"]["schedule_type"],
+        beta_schedule=config["diffusion"]["beta_schedule"],
     ).to(device)
 
     # Initialize UNet
@@ -102,8 +101,14 @@ def main():
         with_time_emb=unet_config.get("with_time_emb", True),
         with_pos_emb=unet_config.get("with_pos_emb", False),
         norm_groups=unet_config.get("norm_groups", 8),
-        seq_length=batch.shape[-1],  # Use actual sequence length
-        debug=False,  # Disable debug for cleaner output
+        seq_length=config["data"]["seq_length"],
+        edge_pad=config["unet"]["edge_pad"],
+        enable_checkpointing=config["unet"]["enable_checkpointing"],
+        strict_resize=config["unet"].get("strict_resize", True),
+        pad_value=config["unet"].get("pad_value", 0.0),
+        use_attention=config["unet"].get("use_attention", False),
+        attention_heads=config["unet"].get("attention_heads", 4),
+        attention_dim_head=config["unet"].get("attention_dim_head", 32),
     ).to(device)
 
     # Print model information
@@ -116,11 +121,34 @@ def main():
     print(f"  - Embedding dim: {unet_config.get('embedding_dim', 32)}")
     print(f"  - Dimension multipliers: {unet_config.get('dim_mults', [1, 2, 4])}")
     print(f"  - Norm groups: {unet_config.get('norm_groups', 8)}")
-    print(f"  - Sequence length: {batch.shape[-1]}")
+    print(f"  - Sequence length: {config['data']['seq_length']}")
     print("Model Statistics:")
     print(f"  - Total parameters: {total_params:,}")
     print(f"  - Trainable parameters: {trainable_params:,}")
     print(f"  - Model size: {model_size_mb:.2f} MB\n")
+
+    # Optional: print expected down/up length flow to aid debugging
+    if args.debug:
+
+        def down_lengths(L, steps):
+            lens = [L]
+            cur = L
+            for _ in range(steps):
+                # mirror DownsampleConv stride-2 conv with optional 1 pad when odd
+                if cur % 2 != 0:
+                    cur = cur + 1
+                cur = cur // 2
+                lens.append(cur)
+            return lens
+
+        dims = unet_config.get("dim_mults", [1, 2, 4])
+        steps = len(dims)
+        L0 = batch.size(-1)
+        dflow = down_lengths(L0, steps)
+        print("Expected length flow (down path):", dflow)
+        # The up path mirrors the down path in reverse with ConvTranspose1d
+        upflow = list(reversed(dflow))
+        print("Expected length flow (up path):  ", upflow)
 
     # Test UNet with different timesteps
     timesteps = [0, 250, 500, 750, 999]
@@ -129,8 +157,10 @@ def main():
     x0 = batch[0:1]  # [1, 1, seq_len]
     print(f"Single sample shape: {x0.shape}\n")
 
-    # Create figure for visualization
-    fig, axs = plt.subplots(len(timesteps), 3, figsize=(15, 15))
+    if args.plot:
+        import matplotlib.pyplot as plt
+
+        fig, axs = plt.subplots(len(timesteps), 3, figsize=(12, 3 * len(timesteps)))
 
     for i, t in enumerate(timesteps):
         # Sample noise
@@ -143,41 +173,41 @@ def main():
         # UNet should predict the noise that was added
         noise_pred = unet(noisy_data, t_tensor)
 
-        # Ensure dimensions match
-        if noise_pred.shape != noise.shape:
-            print(
-                f"WARNING: Shape mismatch at t={t}: noise_pred {noise_pred.shape}, noise {noise.shape}"
-            )
-            if noise_pred.shape[2] != noise.shape[2]:
-                noise_pred = F.interpolate(
-                    noise_pred, size=noise.shape[2], mode="linear"
-                )
+        # Ensure dimensions match strictly (model should handle this or raise early)
+        assert noise_pred.shape == noise.shape, (
+            f"Shape mismatch at t={t}: noise_pred {noise_pred.shape}, noise {noise.shape}. "
+            f"Check UNet strict_resize/padding configuration."
+        )
 
         # Calculate MSE loss
         mse_loss = F.mse_loss(noise_pred, noise).item()
         print(f"t={t}, MSE Loss: {mse_loss:.6f}")
 
-        # Plot original data, noisy data, and noise prediction
-        axs[i, 0].plot(x0[0, 0].cpu().detach().numpy(), linewidth=1)
-        axs[i, 0].set_title(f"t={t}: Original")
+        if args.plot:
+            # Plot original data, noisy data, and noise prediction
+            axs[i, 0].plot(x0[0, 0].cpu().detach().numpy(), linewidth=1)
+            axs[i, 0].set_title(f"t={t}: Original")
 
-        axs[i, 1].plot(noisy_data[0, 0].cpu().detach().numpy(), linewidth=1)
-        axs[i, 1].set_title(f"t={t}: Noisy")
+            axs[i, 1].plot(noisy_data[0, 0].cpu().detach().numpy(), linewidth=1)
+            axs[i, 1].set_title(f"t={t}: Noisy")
 
-        # Plot actual vs predicted noise
-        axs[i, 2].plot(noise[0, 0].cpu().detach().numpy(), linewidth=1, label="Actual")
-        axs[i, 2].plot(
-            noise_pred[0, 0].cpu().detach().numpy(),
-            linewidth=1,
-            label="Predicted",
-            alpha=0.7,
-        )
-        axs[i, 2].set_title(f"t={t}: Noise (MSE: {mse_loss:.4f})")
-        axs[i, 2].legend()
+            # Plot actual vs predicted noise
+            axs[i, 2].plot(
+                noise[0, 0].cpu().detach().numpy(), linewidth=1, label="Actual"
+            )
+            axs[i, 2].plot(
+                noise_pred[0, 0].cpu().detach().numpy(),
+                linewidth=1,
+                label="Predicted",
+                alpha=0.7,
+            )
+            axs[i, 2].set_title(f"t={t}: Noise (MSE: {mse_loss:.4f})")
+            axs[i, 2].legend()
 
-    fig.tight_layout()
-    fig.savefig(output_dir / "unet_prediction.png")
-    plt.close()
+    if args.plot:
+        fig.tight_layout()
+        fig.savefig(output_dir / "unet_prediction.png")
+        plt.close()
 
     # Test with full batch
     print("\nTesting with full batch...")
