@@ -242,7 +242,7 @@ class LinearCNN(nn.Module):
 
 
 # === Complex Noise Predictor ===
-class ComplexNoisePredictor(nn.Module):
+class ComplexMLP(nn.Module):
     """Deep MLP for noise prediction in diffusion models.
 
     A replacement for UNet1D that uses a deep MLP architecture instead of convolutional layers.
@@ -292,7 +292,7 @@ class ComplexNoisePredictor(nn.Module):
             self.time_mlp = None
 
         # Hidden dimensions
-        self.hidden_dims = [1024, 512, 256, 128]
+        self.hidden_dims = [1024, 512, 256, 1024]
 
         print(f"Using hidden dimensions: {self.hidden_dims}")
 

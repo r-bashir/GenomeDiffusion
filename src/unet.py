@@ -42,12 +42,14 @@ class DownsampleConv(nn.Module):
         if dim_out is None:
             dim_out = dim
         self.conv = nn.Conv1d(dim, dim_out, 4, stride=2, padding=1)
+        self.act = nn.SiLU()
 
     def forward(self, x):
-        # Handle odd sequence lengths with reflective padding
+        # Handle odd sequence lengths with ZERO padding (genomic ends should not mirror)
         if x.size(-1) % 2 != 0:
-            x = F.pad(x, (1, 0), mode="reflect")
-        return self.conv(x)
+            x = F.pad(x, (1, 0), mode="constant", value=0.0)
+        x = self.conv(x)
+        return self.act(x)
 
 
 class UpsampleConv(nn.Module):
@@ -58,9 +60,12 @@ class UpsampleConv(nn.Module):
         if dim_out is None:
             dim_out = dim
         self.conv = nn.ConvTranspose1d(dim, dim_out, 4, stride=2, padding=1)
+        self.act = nn.SiLU()
 
     def forward(self, x):
-        return self.conv(x)
+        # Keep symmetry with downsampling by adding a lightweight activation
+        x = self.conv(x)
+        return self.act(x)
 
 
 class ConvBlock(nn.Module):
@@ -94,6 +99,7 @@ class ResnetBlock1D(nn.Module):
         self.block1 = ConvBlock(dim, dim_out, groups=groups)
         self.block2 = ConvBlock(dim_out, dim_out, groups=groups)
         self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
+        self.final_act = nn.SiLU()
 
     def forward(self, x, time_emb=None):
         h = self.block1(x)
@@ -105,7 +111,7 @@ class ResnetBlock1D(nn.Module):
             h = h + time_emb
 
         h = self.block2(h)
-        return h + self.res_conv(x)
+        return self.final_act(h + self.res_conv(x))
 
 
 # Attention modules
@@ -305,10 +311,13 @@ class UNet1D(nn.Module):
         seq_length=160858,
         edge_pad=2,
         enable_checkpointing=True,
+        # Resize / padding behavior controls
+        strict_resize=True,  # If True, any length mismatch is an error (preferred)
+        pad_value=0.0,  # Value for zero padding if strict_resize is False
         use_attention=True,  # Enable attention mechanisms
         attention_heads=4,  # Number of attention heads
         attention_dim_head=32,  # Dimension per attention head
-        **kwargs,  # Accept additional arguments
+        **kwargs,
     ):
         """
         Initialize UNet1D with genomic-optimized architecture.
@@ -330,6 +339,10 @@ class UNet1D(nn.Module):
         self.seq_length = seq_length
         self.edge_pad = edge_pad
         self.use_gradient_checkpointing = enable_checkpointing
+
+        # Resize / padding behavior
+        self.strict_resize = strict_resize
+        self.pad_value = pad_value
 
         # Attention Parameters
         self.use_attention = use_attention
@@ -510,10 +523,10 @@ class UNet1D(nn.Module):
         self.use_gradient_checkpointing = True
 
     def _resize_to_length(self, x: torch.Tensor, target_len: int) -> torch.Tensor:
-        """Pad or crop a 1D feature map along the sequence dimension to match target_len.
+        """Adjust 1D feature map length to match target_len.
 
-        Uses reflective padding when increasing length to preserve boundary information.
-        This helps resolve off-by-one mismatches introduced by odd-length down/upsampling.
+        Strict by default: any mismatch raises an error to surface indexing bugs.
+        If strict resizing is disabled, only zero padding (or right-cropping) is used.
 
         Args:
             x: Tensor of shape [B, C, L]
@@ -525,19 +538,15 @@ class UNet1D(nn.Module):
         cur_len = x.size(-1)
         if cur_len == target_len:
             return x
+        if self.strict_resize:
+            raise RuntimeError(
+                f"Length mismatch during U-Net skip alignment: got {cur_len}, expected {target_len}. "
+                f"Set strict_resize=False to allow zero padding/cropping, but investigate indexing first."
+            )
+        # Non-strict path: prefer zero padding or right-cropping; never interpolate
         if cur_len < target_len:
             pad_right = target_len - cur_len
-
-            # Handle extreme padding that exceeds PyTorch limits
-            # PyTorch padding size must be < input dimension
-            if pad_right >= cur_len:
-                # For extreme differences, use interpolation instead of padding
-                return F.interpolate(
-                    x, size=target_len, mode="linear", align_corners=False
-                )
-            else:
-                # Normal reflective padding for small differences
-                return F.pad(x, (0, pad_right), mode="reflect")
+            return F.pad(x, (0, pad_right), mode="constant", value=self.pad_value)
         # cur_len > target_len: crop on the right
         return x[..., :target_len]
 

@@ -10,14 +10,14 @@ import torch.nn.functional as F
 
 from .forward_diffusion import ForwardDiffusion
 from .mlp import (
+    ComplexMLP,
     LinearMLP,
     zero_out_model_parameters,
 )
 from .network_base import NetworkBase
 from .reverse_diffusion import ReverseDiffusion
 from .time_sampler import UniformContinuousTimeSampler
-
-# from .unet_kenneweg import UNet1D
+from .unet import UNet1D
 from .utils import bcast_right, tensor_to_device
 
 
@@ -77,7 +77,7 @@ class DiffusionModel(NetworkBase):
         )
 
         # Noise Predictor (LinearMLP, LinearCNN, UNet1D)
-        self.noise_predictor = LinearMLP(
+        self.noise_predictor = UNet1D(
             embedding_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
@@ -88,6 +88,8 @@ class DiffusionModel(NetworkBase):
             # Additional Arguments for UNet1D
             edge_pad=hparams["unet"]["edge_pad"],
             enable_checkpointing=hparams["unet"]["enable_checkpointing"],
+            strict_resize=hparams["unet"]["strict_resize"],
+            pad_value=hparams["unet"]["pad_value"],
             use_attention=hparams["unet"]["use_attention"],
             attention_heads=hparams["unet"]["attention_heads"],
             attention_dim_head=hparams["unet"]["attention_dim_head"],
