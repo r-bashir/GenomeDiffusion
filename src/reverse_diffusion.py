@@ -192,7 +192,9 @@ class ReverseDiffusion:
             }
         return x_t_minus_1
 
-    def reverse_diffusion_step(self, xt, t, true_x0=None, mask=None, return_all=False):
+    def reverse_diffusion_step(
+        self, xt, t, true_x0=None, imputation_mask=None, return_all=False
+    ):
         """
         Single reverse diffusion step to estimate x_{t-1} given xt and t.
         Implements improved DDPM from Nichol & Dhariwal (2021).
@@ -237,7 +239,7 @@ class ReverseDiffusion:
             xt: Noisy sample at timestep t, shape [B, C=1, L] (must be on correct device)
             t: Current timestep (tensor of shape [B] or scalar int, 1-based)
             true_x0: Ground-truth clean sample [B, C=1, L] (optional, used for imputation)
-            mask: Tensor [B, C=1, L] with 1 = known SNP, 0 = unknown SNP (optional)
+            imputation_mask: Tensor [B, C=1, L] with 1 = known SNP, 0 = unknown SNP (optional)
         Returns:
             x_{t-1}: Sample at timestep t-1, same shape as xt
         """
@@ -279,9 +281,9 @@ class ReverseDiffusion:
         pred_x0 = xt - epsilon_theta
 
         # === Step 1b: Imputation overwrite ===
-        if true_x0 is not None and mask is not None:
+        if true_x0 is not None and imputation_mask is not None:
             # Blend predicted and true values
-            x0 = mask * true_x0 + (1 - mask) * pred_x0
+            x0 = imputation_mask * true_x0 + (1 - imputation_mask) * pred_x0
         else:
             x0 = pred_x0
 
@@ -357,7 +359,7 @@ class ReverseDiffusion:
         # for t in range(tmax, 0, -1):
         for t in reversed(range(tmin, tmax + 1, denoise_step)):
             x = self.reverse_diffusion_step(
-                x, t, true_x0=None, mask=None, return_all=False
+                x, t, true_x0=None, imputation_mask=None, return_all=False
             )
 
         # Post-processing for SNP data

@@ -177,7 +177,7 @@ def generate_samples(
     discretize=False,
     seed=42,
     true_x0=None,
-    mask=None,
+    imputation_mask=None,
 ):
     """
     Generate samples using reverse diffusion from any starting timestep.
@@ -190,7 +190,7 @@ def generate_samples(
         discretize (bool): Whether to discretize the final output
         seed (int): Random seed for reproducibility
         true_x0 (torch.Tensor, optional): Ground-truth clean sample [B, C, L] for imputation
-        mask (torch.Tensor, optional): Tensor [B, C, L] with 1 = known SNP, 0 = unknown SNP
+        imputation_mask (torch.Tensor, optional): Tensor [B, C, L] with 1 = known SNP, 0 = unknown SNP
 
     Returns:
         torch.Tensor: Generated samples [B, C, L]
@@ -225,7 +225,7 @@ def generate_samples(
         # Run reverse diffusion process
         for t in reversed(range(tmin, start_timestep + 1, denoise_step)):
             x = model.reverse_diffusion.reverse_diffusion_step(
-                x, t, true_x0=true_x0, mask=mask
+                x, t, true_x0=true_x0, imputation_mask=imputation_mask
             )
 
         # Post-processing for SNP data
@@ -243,7 +243,7 @@ def denoise_samples(
     discretize=False,
     seed=42,
     true_x0=None,
-    mask=None,
+    imputation_mask=None,
 ):
     """
     Denoise an input batch using reverse diffusion starting from an arbitrary timestep.
@@ -256,7 +256,7 @@ def denoise_samples(
         discretize (bool): Whether to discretize the final output
         seed (int): Random seed for reproducibility
         true_x0 (torch.Tensor, optional): Ground-truth clean sample [B, C, L] for imputation
-        mask (torch.Tensor, optional): Tensor [B, C, L] with 1 = known SNP, 0 = unknown SNP
+        imputation_mask (torch.Tensor, optional): Tensor [B, C, L] with 1 = known SNP, 0 = unknown SNP
 
     Returns:
         torch.Tensor: Denoised samples [B, C, L]
@@ -287,7 +287,7 @@ def denoise_samples(
         # Run reverse diffusion process
         for t in reversed(range(tmin, start_timestep + 1, denoise_step)):
             x = model.reverse_diffusion.reverse_diffusion_step(
-                x, t, true_x0=true_x0, mask=mask
+                x, t, true_x0=true_x0, imputation_mask=imputation_mask
             )
 
         # Post-processing for SNP data

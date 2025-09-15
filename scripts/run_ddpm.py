@@ -19,10 +19,7 @@ import torch
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-# All imports after path modification
-# We need to disable the import-not-at-top lint rule
-# ruff: noqa: E402
-
+from src.ddpm import build_mixing_mask
 from src.utils import load_model_from_checkpoint, set_seed, setup_logging
 from utils.ddpm_utils import (
     get_noisy_sample,
@@ -101,17 +98,17 @@ def main():
     # Select a single sample and ensure shape [1, 1, seq_len]
     logger.info("Adding channel dim, and selecting single sample")
     sample_idx = 0
-    x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
-    logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")
-    logger.info(f"x0 unique values: {torch.unique(x0)}")
+    x_0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
+    logger.info(f"x_0 shape: {x_0.shape} and dim: {x_0.dim()}")
+    logger.info(f"x_0 unique values: {torch.unique(x_0)}")
 
     # === BEGIN: Reverse Diffusion ===
     logger.info("Running Markov reverse process from x_t at t=T...")
     diffusion_steps = 2
 
     # Generate noisy sample x_t at t=T
-    x_t = get_noisy_sample(model, x0, diffusion_steps)
-    # x_t = x0
+    x_t = get_noisy_sample(model, x_0, diffusion_steps)
+    # x_t = x_0
 
     # Test imputation if requested
     true_x0_for_imputation = None
@@ -121,11 +118,11 @@ def main():
         logger.info(f"Testing imputation with mask ratio: {args.mask_ratio}")
 
         # Use the original clean sample as ground truth
-        true_x0_for_imputation = x0.clone()
+        true_x0_for_imputation = x_0.clone()
 
         # Create a random mask (1 = known SNP, 0 = unknown SNP)
         torch.manual_seed(42)  # For reproducible masks
-        mask_for_imputation = torch.rand_like(x0) < args.mask_ratio
+        mask_for_imputation = torch.rand_like(x_0) < args.mask_ratio
         mask_for_imputation = mask_for_imputation.float()
 
         known_snps = mask_for_imputation.sum().item()
@@ -138,23 +135,40 @@ def main():
     else:
         logger.info("Running denoising WITHOUT imputation...")
 
+    # Optional mixing mask for staircase vs real metrics
+    mixing_mask = None
+    try:
+        data_cfg = config.get("data", {})
+        if data_cfg.get("mixing", False):
+            pattern = data_cfg.get("mixing_pattern", [])
+            interval = int(data_cfg.get("mixing_interval", 0))
+            seq_length = int(config["data"]["seq_length"])
+            mixing_mask = build_mixing_mask(
+                seq_length, pattern, interval, device=device
+            )
+            # Ensure mask has shape [1,1,L] and boolean dtype
+            mixing_mask = mixing_mask.to(device=device, dtype=torch.bool)
+    except Exception as e:
+        logger.warning(f"Could not build mixing mask: {e}")
+
     # Run Reverse Diffusion Process (Markov Chain)
     samples_dict = run_denoising_process(
         model,
-        x0,
+        x_0,
         x_t,
         diffusion_steps,
         device,
         return_all_steps=True,
         print_mse=True,
         true_x0=true_x0_for_imputation,
-        mask=mask_for_imputation,
+        imputation_mask=mask_for_imputation,
+        mixing_mask=mixing_mask,
     )
 
     # Plot and compare
     x_t_minus_1 = samples_dict[0]  # Denoised sample (x_{t-1} at t=0)
     mse_x0, corr_x0, mse_xt, corr_xt = plot_denoising_comparison(
-        x0,
+        x_0,
         x_t,
         x_t_minus_1,
         diffusion_steps,
@@ -163,7 +177,7 @@ def main():
 
     # Debug log
     logger.debug(
-        f"MSE(x_t_minus_1, x0): {mse_x0:.6f}, r(x_t_minus_1, x0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {corr_xt:.6f}"
+        f"MSE(x_t_minus_1, x_0): {mse_x0:.6f}, r(x_t_minus_1, x_0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {corr_xt:.6f}"
     )
 
     # Additional imputation analysis
@@ -196,10 +210,10 @@ def main():
         unknown_positions = mask_for_imputation == 0.0
         if unknown_positions.any() and known_positions.any():
             mse_unknown = torch.mean(
-                (x_t_minus_1[unknown_positions] - x0[unknown_positions]) ** 2
+                (x_t_minus_1[unknown_positions] - x_0[unknown_positions]) ** 2
             ).item()
             mse_known = torch.mean(
-                (x_t_minus_1[known_positions] - x0[known_positions]) ** 2
+                (x_t_minus_1[known_positions] - x_0[known_positions]) ** 2
             ).item()
 
             logger.info("Reconstruction quality comparison:")
@@ -211,7 +225,7 @@ def main():
 
     # Plot denoising trajectory
     plot_denoising_trajectory(
-        x0,
+        x_0,
         x_t,
         samples_dict,
         diffusion_steps,
