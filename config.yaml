@@ -42,15 +42,17 @@ unet:
   embedding_dim: 64            # Sinusoidal (time, position) embedding dimension
   dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
-  with_time_emb: false         # On/off sinusoidal time embeddings
+  with_time_emb: true          # On/off sinusoidal time embeddings
   with_pos_emb: false          # On/off sinusoidal position embeddings
   norm_groups: 8               # Number of groups in GroupNorm layers
-  edge_pad: 4                  # Edge padding for boundary preservation
+  edge_pad: 1                  # Edge padding for boundary preservation
   enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
+  strict_resize: false         # If True, any length mismatch is an error (preferred)
+  pad_value: 0.0               # Value for zero padding if strict_resize is False
+
   use_attention: false         # Enable multi-head self-attention blocks
   attention_heads: 32          # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
-
   attention_window: 512        # Window size (for Sparse Attention)
   num_global_tokens: 64        # No of global tokens (for Sparse Attention)
   dropout: 0.2                 # Dropout for ResNet blocks (for Kenneweg)
@@ -59,30 +61,30 @@ unet:
 # Trainer
 training:
   epochs: 100                  # Number of epochs to train
-  warmup_epochs: 5             # Number of warmup epochs
+  warmup_epochs: 10            # Number of warmup epochs
   early_stopping: false        # Whether to use early stopping
   patience: 10                 # Patience for early stopping
   save_top_k: 1                # Number of top models to save
   logger: "wandb"              # Logger to use
   log_every_n_steps: 5         # More frequent logging for short training
   precision: "16-mixed"        # Mixed precision training (saves ~2× memory)
-  accumulate_grad_batches: 4   # Increase gradient accumulation for memory efficiency
+  accumulate_grad_batches: 8   # Increase gradient accumulation for memory efficiency
 
 # Optimizer
 optimizer:
-  lr: 0.001                    # Learning rate for AdamW optimizer
-  min_lr: 5.0e-06              # Minimum learning rate after warmup
-  weight_decay: 3.0e-05        # Weight decay (L2 regularization)
+  lr: 0.005                    # Learning rate for AdamW optimizer
+  min_lr: 3.0e-06              # Minimum learning rate after warmup
+  weight_decay: 0.0001         # Weight decay (L2 regularization)
   betas: [0.9, 0.999]          # Beta coefficients for running averages of gradient and its square
   eps: 1.0e-08                 # Term for numerical stability
-  amsgrad: false               # Use AMSGrad variant of AdamW
+  amsgrad: true                # Use AMSGrad variant of AdamW
 
 # LR Scheduler
 scheduler:
   type: "reduce"               # Either "cosine" (CosineAnnealingLR) or "reduce" (ReduceLROnPlateau)
   eta_min: 1.0e-05             # Minimum learning rate for CosineAnnealingLR
   mode: "max"                  # "min" or "max"
-  factor: 0.7                  # Gentler LR reduction for fine-tuning
-  patience: 15                 # Shorter patience for fast convergence
-  threshold: 1.0e-04           # Smaller threshold for detecting subtle improvements
+  factor: 0.3                  # Gentler LR reduction for fine-tuning
+  patience: 20                 # Shorter patience for fast convergence
+  threshold: 1.0e-05           # Smaller threshold for detecting subtle improvements
   min_lr: 1.0e-05              # Lower minimum LR for extended fine-tuning
