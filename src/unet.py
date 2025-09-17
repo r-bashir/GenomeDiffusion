@@ -573,6 +573,9 @@ class UNet1D(nn.Module):
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
+        # Save original x
+        orignal_x = x
+
         # Add positional embedding if enabled
         if self.with_pos_emb and self.pos_emb is not None:
             positions = torch.arange(L, device=x.device).expand(B, -1)  # [B, L]
@@ -667,4 +670,4 @@ class UNet1D(nn.Module):
         x = self._resize_to_length(x, r.size(-1))
         x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
-        return self.final_conv(x)
+        return orignal_x - self.final_conv(x)
