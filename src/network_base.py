@@ -3,6 +3,7 @@
 
 """Base network module for PyTorch Lightning integration."""
 
+import math
 from typing import Dict, Optional
 
 import pytorch_lightning as pl
@@ -210,8 +211,42 @@ class NetworkBase(pl.LightningModule):
 
     def configure_optimizers(self):
         """
-        Configure optimizer and learning rate scheduler (CosineAnnealingLR or ReduceLROnPlateau).
+        Configure the optimizer and learning rate scheduler for PyTorch Lightning.
+
+        Optimizer:
+            - AdamW with hyperparameters from self.hparams["optimizer"]:
+                lr, weight_decay, betas, eps, amsgrad.
+
+        Scheduler:
+            Controlled by self.hparams["scheduler"]["type"]. Options:
+
+            1. "cosine": Step-based CosineAnnealingLR
+                - LR decays from optimizer.lr → scheduler.eta_min over total training steps.
+                - interval="step" ensures per-step updates.
+
+            2. "warmup_cosine": Linear warmup + step-based CosineAnnealing (implemented via LambdaLR)
+                - warmup_epochs (from scheduler config) converted to steps.
+                - LR scales linearly 0 → base LR, then decays with cosine to eta_min.
+
+            3. "reduce": ReduceLROnPlateau
+                - Epoch-based, reduces LR when monitored metric ("val_loss") plateaus.
+                - Controlled via factor, patience, threshold, min_lr.
+                - interval="epoch".
+
+            4. "onecycle": OneCycleLR
+                - LR increases to max_lr, then decreases to min_lr over total steps.
+                - interval="step".
+
+        Notes:
+            - Do NOT implement warmup manually via on_before_optimizer_step(); conflicts with scheduler.
+            - steps_per_epoch computed directly from config: ceil(train_split / batch_size).
+            - total_steps accounts for gradient accumulation: ceil(steps_per_epoch / accumulate_grad_batches) * epochs.
+
+        Returns:
+            dict: {"optimizer": optimizer, "lr_scheduler": scheduler_dict}
         """
+
+        # 1) Optimizer
         optimizer = torch.optim.AdamW(
             self.parameters(),
             lr=float(self.hparams["optimizer"]["lr"]),
@@ -221,17 +256,47 @@ class NetworkBase(pl.LightningModule):
             amsgrad=bool(self.hparams["optimizer"]["amsgrad"]),
         )
 
-        # Get scheduler type from config (default to 'cosine')
+        # 2) Scheduler
         scheduler_type = self.hparams["scheduler"]["type"]
-        scheduler = None
         scheduler_dict = None
+
+        # Steps for step-based schedulers - computed directly from config
+        train_split = int(self.hparams["data"]["datasplit"][0])
+        batch_size = int(self.hparams["data"]["batch_size"])
+        total_epochs = int(self.hparams["training"]["epochs"])
+        accumulate = int(self.hparams["training"].get("accumulate_grad_batches", 1))
+
+        # Calculate steps per epoch from config
+        steps_per_epoch = max(1, math.ceil(train_split / batch_size))
+        # Account for gradient accumulation (optimizer steps = dataloader steps / accumulate)
+        optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accumulate))
+        total_steps = optimizer_steps_per_epoch * total_epochs
 
         if scheduler_type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=int(self.hparams["training"]["epochs"]),
+                T_max=total_steps,
                 eta_min=float(self.hparams["scheduler"]["eta_min"]),
             )
+            scheduler_dict = {"scheduler": scheduler, "interval": "step"}
+
+        elif scheduler_type == "warmup_cosine":
+            warmup_epochs = int(self.hparams["scheduler"].get("warmup_epochs", 0))
+            warmup_steps = warmup_epochs * steps_per_epoch
+            eta_min = float(self.hparams["scheduler"].get("eta_min", 0.0))
+            base_lr = float(self.hparams["optimizer"]["lr"])
+
+            def lr_lambda(step):
+                if step < warmup_steps:
+                    return step / max(1, warmup_steps)
+                progress = (step - warmup_steps) / max(1, total_steps - warmup_steps)
+                # cosine from 1.0 -> eta_min/base_lr
+                return max(
+                    eta_min / base_lr, 0.5 * (1.0 + math.cos(math.pi * progress))
+                )
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+            scheduler_dict = {"scheduler": scheduler, "interval": "step"}
 
         elif scheduler_type == "reduce":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -242,40 +307,32 @@ class NetworkBase(pl.LightningModule):
                 threshold=float(self.hparams["scheduler"]["threshold"]),
                 min_lr=float(self.hparams["scheduler"]["min_lr"]),
             )
+            scheduler_dict = {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+                "interval": "epoch",
+            }
+
+        elif scheduler_type == "onecycle":
+            max_lr = float(
+                self.hparams["scheduler"].get("max_lr", self.hparams["optimizer"]["lr"])
+            )
+            scheduler = torch.optim.lr_scheduler.OneCycleLR(
+                optimizer,
+                max_lr=max_lr,
+                total_steps=total_steps,
+                pct_start=float(self.hparams["scheduler"].get("pct_start", 0.3)),
+                anneal_strategy=self.hparams["scheduler"].get("anneal_strategy", "cos"),
+                final_div_factor=float(
+                    self.hparams["scheduler"].get("final_div_factor", 100)
+                ),
+            )
+            scheduler_dict = {"scheduler": scheduler, "interval": "step"}
 
         else:
             raise ValueError(f"Unknown scheduler type: {scheduler_type}")
 
-        scheduler_dict = {
-            "scheduler": scheduler,
-            "monitor": "val_loss",
-            "interval": "epoch",
-            "frequency": 1,
-        }
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": scheduler_dict,
-        }
-
-    def on_before_optimizer_step(self, optimizer, *args, **kwargs):
-        """Apply learning rate warmup and minimum learning rate (if enabled in config).
-
-        Args:
-            optimizer: The optimizer being used.
-        """
-        warmup_epochs = int(self.hparams["training"].get("warmup_epochs", 10))
-
-        # Warmup period
-        if warmup_epochs and (self.trainer.current_epoch < warmup_epochs):
-            lr_scale = min(1.0, float(self.trainer.current_epoch + 1) / warmup_epochs)
-            for pg in optimizer.param_groups:
-                pg["lr"] = lr_scale * float(self.hparams["optimizer"]["lr"])
-
-        # Enforce minimum learning rate
-        min_lr = float(self.hparams["optimizer"].get("min_lr", 0.0))
-        for pg in optimizer.param_groups:
-            pg["lr"] = max(pg["lr"], min_lr)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler_dict}
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the model."""

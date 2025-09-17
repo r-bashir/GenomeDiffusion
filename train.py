@@ -144,23 +144,37 @@ def setup_callbacks(config: Dict) -> List[pl.Callback]:
     Returns a list of callbacks for model training:
     - ModelCheckpoint: Saves best and last model checkpoints
     - LearningRateMonitor: Tracks learning rate changes
+    - ModelCheckpoint: Saves checkpoints every N epochs
     - EarlyStopping: Optional, stops training if no improvement
     """
+    # Mandatory callbacks
     callbacks = [
-        # Save best and last checkpoints
+        # Save best and last based on val_loss
         ModelCheckpoint(
             filename="{epoch}-{val_loss:.2f}",
             monitor="val_loss",
             save_top_k=config["training"].get("save_top_k", 3),
             mode="min",
-            save_last=True,
-            auto_insert_metric_name=False,  # Keep filenames clean
+            save_last=config["training"].get("save_last", True),
+            auto_insert_metric_name=False,
         ),
-        # Monitor learning rate
+        # Monitor learning rate changes
         LearningRateMonitor(logging_interval="step"),
     ]
 
-    # Early stopping if enabled in config
+    # Optional: save checkpoints every N epochs
+    every_n_epochs = config["training"].get("every_n_epochs", None)
+    if every_n_epochs is not None:
+        callbacks.append(
+            ModelCheckpoint(
+                filename="{epoch}-{val_loss:.2f}",
+                every_n_epochs=every_n_epochs,
+                save_top_k=-1,  # keep all periodic checkpoints
+                auto_insert_metric_name=False,
+            )
+        )
+
+    # Optional: early stopping
     if config["training"].get("early_stopping", False):
         callbacks.append(
             EarlyStopping(

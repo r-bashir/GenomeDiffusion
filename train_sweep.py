@@ -95,21 +95,25 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
         "num_global_tokens": ("unet", "num_global_tokens"),
         # Training parameters
         "epochs": ("training", "epochs"),
-        "warmup_epochs": ("training", "warmup_epochs"),
         "accumulate_grad_batches": ("training", "accumulate_grad_batches"),
         # Optimizer parameters
         "learning_rate": ("optimizer", "lr"),
-        "min_lr": ("optimizer", "min_lr"),
         "weight_decay": ("optimizer", "weight_decay"),
         "amsgrad": ("optimizer", "amsgrad"),
         # Scheduler parameters
         "scheduler_type": ("scheduler", "type"),
         "eta_min": ("scheduler", "eta_min"),
+        "warmup_epochs": ("scheduler", "warmup_epochs"),
         "scheduler_factor": ("scheduler", "factor"),
         "scheduler_patience": ("scheduler", "patience"),
         "scheduler_mode": ("scheduler", "mode"),
         "scheduler_threshold": ("scheduler", "threshold"),
         "scheduler_min_lr": ("scheduler", "min_lr"),
+        # OneCycle scheduler parameters
+        "scheduler_max_lr": ("scheduler", "max_lr"),
+        "scheduler_pct_start": ("scheduler", "pct_start"),
+        "scheduler_anneal_strategy": ("scheduler", "anneal_strategy"),
+        "scheduler_final_div_factor": ("scheduler", "final_div_factor"),
     }
 
     # Update configuration with mapped parameters

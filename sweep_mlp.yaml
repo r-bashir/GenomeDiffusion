@@ -1,6 +1,6 @@
-# Small W&B Sweeps Configuration for Local Testing
-# Focus: Key parameters only for quick validation
-# Purpose: Verify sweep setup works before running full HPO
+# ===== W&B Sweeps Configuration for GenomeDiffusion HPO =====
+# Comprehensive hyperparameter optimization for cluster/server
+# Full hyperparameter search across all important parameters
 
 # Program to run
 program: train_sweep.py
@@ -40,18 +40,12 @@ parameters:
   epochs:
     value: 50
 
-  warmup_epochs:
-    values: [5, 10]
-
   accumulate_grad_batches:
     values: [4, 8, 16]
 
   # === OPTIMIZER ===
   learning_rate:
     values: [0.0001, 0.0003, 0.0005, 0.001, 0.003, 0.005, 0.01]
-
-  min_lr:
-    values: [0.000001, 0.000003, 0.000005, 0.00001]
 
   weight_decay:
     values: [0.00001, 0.00003, 0.0001, 0.0003, 0.001]
@@ -61,11 +55,17 @@ parameters:
 
   # === SCHEDULER ===
   scheduler_type:
-    values: ['cosine', 'reduce']
+    values: ['cosine', 'warmup_cosine', 'reduce']
 
+  # Cosine scheduler
   eta_min:
     values: [1e-6, 1e-5, 1e-4]
 
+  # WarmupCosine scheduler
+  warmup_epochs:
+    values: [5, 10]
+
+  # Reduce scheduler
   scheduler_mode:
     values: ['min', 'max']
 
@@ -80,3 +80,4 @@ parameters:
 
   scheduler_min_lr:
     values: [1e-6, 1e-5, 1e-4]
+
