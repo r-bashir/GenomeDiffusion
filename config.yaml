@@ -14,6 +14,7 @@ data:
   missing_value: 9             # None, to not handle missing values
   normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
   staircase: false             # Force data to have staircase structure
+  flip_staircase: false        # Flip staircase pattern on odd-indexed samples
   staircase_pattern:           # Staircase pattern for staircase structure
     - [0, 25, 0.0]
     - [25, 75, 0.5]
@@ -40,7 +41,7 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 512           # Embedding dimension, will be projected to time_dim=128
+  embedding_dim: 128           # Embedding dimension, will be projected to time_dim=128
   dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
   with_time_emb: true          # On/off sinusoidal time embeddings
@@ -52,7 +53,7 @@ unet:
   enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
   strict_resize: false         # If True, any length mismatch is an error (preferred)
   pad_value: 0.0               # Value for zero padding if strict_resize is False
-  dropout: 0.2                 # Dropout for ResnetBlocks
+  dropout: 0.0                 # Dropout for ResnetBlocks, 0.0 for no dropout
   use_scale_shift_norm: true   # Scale-shift norm for ResnetBlocks
 
   use_attention: false         # Enable multi-head self-attention blocks

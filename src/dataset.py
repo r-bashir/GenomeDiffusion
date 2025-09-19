@@ -121,6 +121,17 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
 
         data = staircase_data(data, staircase_pattern)
         logger.info(f"Uniques values: {np.unique(data)}")
+
+        # 5a. Optionally flip the injected staircase pattern only for odd-indexed samples
+        if data_config.get("flip_staircase", False):
+            logger.info(
+                "Applying flipped staircase on odd-indexed samples (post-staircase)"
+            )
+            logger.info(
+                f"Pattern for flipped staircase (odds only): {staircase_pattern}"
+            )
+            data = staircase_data_flip_odd(data, staircase_pattern)
+            logger.info(f"Uniques values after flipped staircase: {np.unique(data)}")
     else:
         mixing_enabled = data_config.get("mixing", False)
         if mixing_enabled:
@@ -283,6 +294,43 @@ def staircase_data(
     if pattern_length <= n_markers:
         for start_offset, end_offset, value in pattern:
             data[:, start_offset:end_offset] = value
+
+    return data
+
+
+def staircase_data_flip_odd(
+    data: np.ndarray, pattern: List[Tuple[int, int, float]]
+) -> np.ndarray:
+    """Apply the flipped staircase pattern (1.0 - value) ONLY on odd-indexed samples.
+
+    This function is intended to be called AFTER `staircase_data`, so even-indexed
+    samples remain with the original injected values, while odd-indexed samples have
+    their staircase regions flipped by re-applying the same pattern with flipped values.
+
+    Args:
+        data: Input data array of shape (n_samples, n_markers)
+        pattern: List of tuples (start_offset, end_offset, value) defining the pattern
+
+    Returns:
+        Copy of input data where only odd samples have flipped staircase pattern.
+    """
+    data = data.copy()
+    n_samples, n_markers = data.shape
+
+    # Identify odd-indexed samples
+    odd_mask = (np.arange(n_samples) % 2) == 1
+    if not odd_mask.any():
+        return data
+
+    # Get pattern length from the last end_offset
+    pattern_length = max(end for _, end, _ in pattern)
+
+    # Apply at the beginning (position 0) only if pattern fits entirely (mirrors staircase_data)
+    if pattern_length <= n_markers:
+        for start_offset, end_offset, value in pattern:
+            start = start_offset
+            end = end_offset
+            data[odd_mask, start:end] = 1.0 - value
 
     return data
 

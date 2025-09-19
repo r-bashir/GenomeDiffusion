@@ -58,6 +58,57 @@ def plot_sample(sample: torch.Tensor, save_path: Path) -> None:
     plt.close(fig)
 
 
+def plot_first_n_samples(
+    dataset: torch.utils.data.Dataset, save_path: Path, n: int = 10
+) -> None:
+    """Plot the first n samples in a grid to inspect augmentations.
+
+    Creates a 5x2 grid (for n=10) with labels indicating index and parity
+    so you can confirm flipped patterns on odd-indexed samples.
+
+    Args:
+        dataset: SNPDataset instance
+        save_path: Path to save the combined plot
+        n: Number of samples to plot (default 10)
+    """
+    n = min(n, len(dataset))
+    if n == 0:
+        return
+
+    cols = 2
+    rows = (n + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(12, 2.2 * rows), squeeze=False)
+
+    for i in range(n):
+        r, c = divmod(i, cols)
+        ax = axes[r][c]
+        sample = dataset[i]
+        ax.plot(
+            sample,
+            "-",
+            color=("tab:blue" if i % 2 == 0 else "tab:orange"),
+            linewidth=0.8,
+            alpha=0.8,
+        )
+        parity = "even" if i % 2 == 0 else "odd"
+        ax.set_title(f"idx {i} ({parity})")
+        ax.grid(True, alpha=0.3)
+        if r == rows - 1:
+            ax.set_xlabel("SNP Position")
+        ax.set_ylabel("Genotype")
+
+    # Hide any unused subplots
+    total_axes = rows * cols
+    for j in range(n, total_axes):
+        r, c = divmod(j, cols)
+        axes[r][c].axis("off")
+
+    fig.suptitle("First N Samples (check even vs odd augmentations)", y=1.02)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_even_odd_samples(dataset: torch.utils.data.Dataset, save_dir: Path) -> None:
     """Randomly select and plot one even-indexed and one odd-indexed sample.
 
@@ -409,6 +460,9 @@ def main() -> int:
 
         # Visualize randomly chosen even and odd samples
         plot_even_odd_samples(dataset, PROJECT_ROOT)
+
+        # Plot first 10 samples to visually confirm augmentation (even vs odd)
+        plot_first_n_samples(dataset, PROJECT_ROOT / "first_10_samples.png", n=10)
 
         print("\nPyTorch DataLoader:")
 
