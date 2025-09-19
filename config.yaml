@@ -8,17 +8,18 @@ output_path: "${PROJECT_ROOT}/outputs"
 data:
   input_path: "${PROJECT_ROOT}/data/HO_data_filtered/HumanOrigins2067_filtered.parquet"
   seq_length: 100              # Total length is 160858
-  batch_size: 8                # Batch size for DataLoader class
+  batch_size: 128              # Batch size for DataLoader class
   num_workers: 4               # Number of workers for DataLoader class
   datasplit: [1867, 150, 50]   # Data split, we can set 0 for test dataset
   missing_value: 9             # None, to not handle missing values
   normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
-  augment: false               # Augment data with staircase structure
-  augment_pattern:             # Augment pattern for staircase structure
+  staircase: false             # Force data to have staircase structure
+  staircase_pattern:           # Staircase pattern for staircase structure
     - [0, 25, 0.0]
     - [25, 75, 0.5]
     - [75, 100, 1.0]
   mixing: false                # Mix data with staircase structure
+  flip_mixing: false           # Flip mixing pattern on odd-indexed samples, requires mixing=true
   mixing_pattern:              # Mixing pattern for staircase structure
     - [0, 3, 0.0]
     - [3, 7, 0.5]
@@ -39,24 +40,26 @@ diffusion:
 
 # UNet1D
 unet:
-  embedding_dim: 64            # Sinusoidal (time, position) embedding dimension
+  embedding_dim: 512           # Embedding dimension, will be projected to time_dim=128
   dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
-  with_time_emb: false         # On/off sinusoidal time embeddings
-  with_pos_emb: false          # On/off sinusoidal position embeddings
+  with_time_emb: true          # On/off sinusoidal time embeddings
+  time_dim: 128                # Projected time embedding dimension used inside ResnetBlocks
+  with_pos_emb: true           # On/off sinusoidal position embeddings
+  pos_dim: 128                 # Sinusoidal position embedding dimension before 1x1 projection
   norm_groups: 8               # Number of groups in GroupNorm layers
   edge_pad: 1                  # Edge padding for boundary preservation
   enable_checkpointing: true   # Enable gradient checkpointing for memory efficiency
   strict_resize: false         # If True, any length mismatch is an error (preferred)
   pad_value: 0.0               # Value for zero padding if strict_resize is False
+  dropout: 0.2                 # Dropout for ResnetBlocks
+  use_scale_shift_norm: true   # Scale-shift norm for ResnetBlocks
 
   use_attention: false         # Enable multi-head self-attention blocks
   attention_heads: 32          # Number of attention heads
   attention_dim_head: 32       # Dimension per attention head
   attention_window: 512        # Window size (for Sparse Attention)
   num_global_tokens: 64        # No of global tokens (for Sparse Attention)
-  dropout: 0.2                 # Dropout for ResNet blocks (for Kenneweg)
-  use_scale_shift_norm: true   # Scale-shift norm for ResNet blocks (for Kenneweg)
 
 # Trainer
 training:

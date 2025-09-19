@@ -20,8 +20,6 @@ from src.sinusoidal_embedding import (
     SinusoidalTimeEmbeddings,
 )
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 class Residual(nn.Module):
     """Residual connection wrapper: output = fn(x) + x."""
@@ -68,53 +66,106 @@ class UpsampleConv(nn.Module):
         return self.act(x)
 
 
-class ConvBlock(nn.Module):
-    """Basic 1D convolutional block: Conv1D + GroupNorm + SiLU."""
+# ========== ResnetBlock Modules ==========
+# The canonical form that uses FiLM Conditioning (in the first ConvBlock) and Dropout
+# (in both ConvBlocks). The approach is used by Kenneweg et al. (2025) for UNet/DDPM.
 
-    def __init__(self, dim, dim_out, groups=8):
+
+class ConvBlock(nn.Module):
+    """
+    Basic 1D convolutional block: Conv1D + GroupNorm + (FiLM) + SiLU + (Dropout).
+    Flow: x → Conv1d → GroupNorm → (FiLM conditioning) → SiLU → (Dropout) → y
+    """
+
+    def __init__(self, dim, dim_out, groups=8, dropout=0.0):
         super().__init__()
         self.proj = nn.Conv1d(dim, dim_out, 3, padding=1)
         self.norm = nn.GroupNorm(groups, dim_out)
         self.act = nn.SiLU()
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
-    def forward(self, x):
+    def forward(self, x, scale_shift=None):
         x = self.proj(x)
         x = self.norm(x)
+
+        # New: FiLM conditioning if scale & shift are provided
+        if scale_shift is not None:
+            scale, shift = scale_shift
+            x = x * (scale + 1) + shift
+
         x = self.act(x)
+        x = self.dropout(x)
         return x
 
 
-class ResnetBlock1D(nn.Module):
-    """1D ResNet block with time embedding integration for diffusion models."""
+class ResnetBlock(nn.Module):
+    """
+    1D ResNet block with FiLM-style time embedding conditioning (for DDPM).
+    Flow: output = block2(block1(x, scale_shift)) + res_conv(x)
 
-    def __init__(self, dim, dim_out, *, time_emb_dim=None, groups=8):
+    Where:
+        - x: [B, C_in, L] input sequence
+        - time_emb (optional): [B, time_dim] embedding
+            -> projected by Linear -> SiLU              # New
+            -> reshaped and split into (scale, shift)   # New
+            -> injected into GroupNorm inside block1    # New
+        - res_conv: 1x1 Conv1d if C_in != C_out, else identity
+        - block1, block2: Conv1d → GroupNorm → (FiLM if available) → SiLU
+    """
+
+    def __init__(
+        self,
+        dim_in,
+        dim_out,
+        *,
+        time_dim=None,
+        groups=8,
+        dropout=0.0,
+        use_scale_shift_norm: bool = True,
+    ):
         super().__init__()
-        # Time embedding MLP projects to dim_out for direct addition
-        self.time_mlp = (
-            nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, dim_out))
-            if time_emb_dim is not None
-            else None
+        # Support both FiLM scale-shift and additive conditioning (legacy)
+        self.use_scale_shift_norm = use_scale_shift_norm
+        if time_dim is not None:
+            if self.use_scale_shift_norm:
+                # FiLM: produce (scale, shift) — current version's order (Linear -> SiLU)
+                self.mlp = nn.Sequential(nn.Linear(time_dim, dim_out * 2), nn.SiLU())
+            else:
+                # Additive: match archived behavior order (SiLU -> Linear)
+                self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_dim, dim_out))
+        else:
+            self.mlp = None
+
+        # New: ConvBlocks now support optional scale_shift
+        self.block1 = ConvBlock(dim_in, dim_out, groups=groups, dropout=dropout)
+        self.block2 = ConvBlock(dim_out, dim_out, groups=groups, dropout=dropout)
+        self.res_conv = (
+            nn.Conv1d(dim_in, dim_out, 1) if dim_in != dim_out else nn.Identity()
         )
 
-        self.block1 = ConvBlock(dim, dim_out, groups=groups)
-        self.block2 = ConvBlock(dim_out, dim_out, groups=groups)
-        self.res_conv = nn.Conv1d(dim, dim_out, 1) if dim != dim_out else nn.Identity()
-        self.final_act = nn.SiLU()
-
     def forward(self, x, time_emb=None):
-        h = self.block1(x)
+        # FiLM (scale-shift) mode: inject inside block1's GroupNorm
+        if self.use_scale_shift_norm:
+            scale_shift = None
+            if self.mlp is not None and time_emb is not None:
+                t_proj = self.mlp(time_emb)  # [B, 2*C]
+                t_proj = t_proj.unsqueeze(-1)  # [B, 2*C, 1]
+                scale_shift = t_proj.chunk(2, dim=1)  # (scale, shift)
+            h = self.block1(x, scale_shift=scale_shift)
+            h = self.block2(h)
+        else:
+            # Additive mode: apply after block1, before block2
+            h = self.block1(x, scale_shift=None)
+            if self.mlp is not None and time_emb is not None:
+                t_proj = self.mlp(time_emb)  # [B, C]
+                t_proj = t_proj.unsqueeze(-1)  # [B, C, 1]
+                h = h + t_proj
+            h = self.block2(h)
 
-        # Add time embedding if provided
-        if self.time_mlp is not None and time_emb is not None:
-            time_emb = self.time_mlp(time_emb)
-            time_emb = time_emb.unsqueeze(-1)  # [B, C] -> [B, C, 1]
-            h = h + time_emb
-
-        h = self.block2(h)
-        return self.final_act(h + self.res_conv(x))
+        return h + self.res_conv(x)
 
 
-# Attention modules
+# ========== Attention Modules ==========
 class PreNorm(nn.Module):
     """Pre-normalization wrapper for improved training stability."""
 
@@ -257,166 +308,113 @@ class SparseAttention1D(nn.Module):
         return self.to_out(out.view(b, -1, n))
 
 
-# UNet1D Architecture for Genomic Diffusion Models
+# ========== UNet1D Architecture for Genomic Diffusion Models ==========
 class UNet1D(nn.Module):
     """
     1D U-Net for genomic SNP sequence modeling in diffusion models.
 
-    A time-conditional U-Net architecture designed for denoising genomic sequences
-    in diffusion-based generative models. Processes SNP data as 1D sequences with
-    shape [B, C=1, L].
-
-    Architecture:
-    - 4-level encoder-decoder with progressive capacity scaling [16, 32, 64, 128+]
-    - Dual skip connections per level for rich gradient flow
-    - ResNet blocks with GroupNorm and SiLU activation
-    - Specialized attention: LinearAttention1D (encoder/decoder), Attention1D (bottleneck)
-    - Sinusoidal time/position embeddings for temporal conditioning
-
-    Key Features:
-    - Handles variable-length genomic sequences (odd/even lengths)
-    - Memory-efficient with gradient checkpointing support
-    - Progressive capacity scaling: 256 channels (mid-levels), 512 channels (deep levels)
-    - Specialized attention per path: Linear (memory-efficient) + Full (high expressiveness)
-    - Robust downsampling/upsampling with precise reconstruction
-
-    Args:
-        embedding_dim (int): Time/position embedding dimension (default: 64)
-        dim_mults (tuple): Feature multipliers per level (default: (1,2,4,8))
-        channels (int): Input channels, always 1 for SNP data
-        with_time_emb (bool): Enable time embeddings for diffusion
-        with_pos_emb (bool): Enable position embeddings for spatial awareness
-        norm_groups (int): GroupNorm groups (default: 8)
-        seq_length (int): Expected sequence length for validation
-        edge_pad (int): Boundary padding size (default: 2)
-        enable_checkpointing (bool): Enable gradient checkpointing for memory efficiency
-        use_attention (bool): Enable attention mechanisms
-        attention_heads (int): Number of attention heads (default: 4)
-        attention_dim_head (int): Dimension per attention head (default: 32)
-        **kwargs: Accept additional arguments
-
-    Input/Output:
-        Input: [B, 1, L] - Noisy SNP sequences
-        Output: [B, 1, L] - Predicted noise for denoising
+    A time-conditional U-Net architecture designed for denoising genomic
+    sequences in diffusion-based generative models. Processes SNP data
+    as 1D sequences with shape [B, C, L] where C is always equal to 1.
     """
 
     def __init__(
         self,
-        embedding_dim=64,
+        emb_dim=512,
         dim_mults=(1, 2, 4, 8),
         channels=1,
         with_time_emb=True,
+        time_dim=128,
         with_pos_emb=True,
+        pos_dim=128,
         norm_groups=8,
         seq_length=160858,
         edge_pad=2,
         enable_checkpointing=True,
-        # Resize / padding behavior controls
-        strict_resize=True,  # If True, any length mismatch is an error (preferred)
-        pad_value=0.0,  # Value for zero padding if strict_resize is False
-        use_attention=True,  # Enable attention mechanisms
-        attention_heads=4,  # Number of attention heads
-        attention_dim_head=32,  # Dimension per attention head
+        strict_resize=False,
+        pad_value=0.0,
+        dropout=0.0,
+        use_scale_shift_norm=False,
+        use_attention=False,
+        attention_heads=4,
+        attention_dim_head=32,
         **kwargs,
     ):
-        """
-        Initialize UNet1D with genomic-optimized architecture.
-
-        Memory usage scales with embedding_dim × dim_mults. For efficiency:
-        - embedding_dim=64-128 balances capacity and memory
-        - dim_mults=(1,2,4,8) provides 4-level hierarchy
-        - Enable gradient checkpointing for long sequences
-        """
         super().__init__()
 
-        # Base Parameters
-        self.embedding_dim = embedding_dim
+        # Base parameters
+        self.emb_dim = emb_dim
         self.dim_mults = dim_mults
         self.channels = channels
         self.with_time_emb = with_time_emb
+        self.time_dim = time_dim
         self.with_pos_emb = with_pos_emb
+        self.pos_dim = pos_dim
         self.norm_groups = norm_groups
         self.seq_length = seq_length
         self.edge_pad = edge_pad
         self.use_gradient_checkpointing = enable_checkpointing
-
-        # Resize / padding behavior
         self.strict_resize = strict_resize
         self.pad_value = pad_value
-
-        # Attention Parameters
+        self.dropout = dropout
+        self.use_scale_shift_norm = use_scale_shift_norm
         self.use_attention = use_attention
         self.attention_heads = attention_heads
         self.attention_dim_head = attention_dim_head
 
-        # --- Model complexity and memory control ---
-        # Base feature dimension - kept small (16) to manage memory usage
-        # Progressive scaling allows higher capacity at deeper levels
-        # where spatial resolution is lower but pattern complexity is higher
-        init_dim = 16  # [16 -> 32 -> 64 -> 256 -> 512] with progressive scaling
-        out_dim = self.channels  # Always 1 for SNP data
-
-        # --- Initial Convolution ---
-        # Maps input to base feature dimension
-        # Using larger kernel size (7) for better receptive field at the input level
-        # Output: [B, 1, L] → [B, 16, L]
-        kernel_size = 7  # Larger kernel for better pattern recognition
-        padding = (kernel_size - 1) // 2  # Same padding to preserve length
+        # INITIAL CONVOLUTION
+        init_dim = 16
+        kernel_size = 7
+        padding = (kernel_size - 1) // 2
         self.init_conv = nn.Conv1d(
-            self.channels, init_dim, kernel_size=kernel_size, padding=padding
-        )
+            channels, init_dim, kernel_size=kernel_size, padding=padding
+        )  # input: [B, 1, L] → output: [B, init_dim, L]
 
-        # Calculate feature dimensions for each U-Net level with progressive scaling
-        # Example with init_dim=16, dim_mults=(1,2,4,8):
-        # dims = [16, 32, 64, 128, 256] or [16, 32, 64, 256, 512] (progressive capacity)
-        # Each level halves spatial dimension but increases features strategically
+        # STANDARD FEATURE DIMENSIONS
+        # dims shape: [16, 16, 32, 64, 128]
+        # dims = [init_dim, *map(lambda m: init_dim * m, dim_mults)]
+        # in_out shape: [(16,16), (16,32), (32,64), (64,128)]
+        # in_out = list(zip(dims[:-1], dims[1:]))
+
+        # PROGRESSIVE FEATURE DIMENSIONS, dim_mults > 8 are clamped to 256 and 512
+        # dims shape: [16, 16, 32, 64, 128]
         dims = [init_dim]
-        for i, mult in enumerate(self.dim_mults):
-            # Progressive capacity scaling: more parameters where spatial resolution is lower
-            if i < 2:
-                max_dim = 256  # Conservative for early levels (32, 64 channels)
-            else:
-                max_dim = 512  # High capacity for deeper levels (128+, 256+ channels)
+        for i, mult in enumerate(dim_mults):
+            max_dim = 256 if i < 2 else 512
             dims.append(min(init_dim * mult, max_dim))
-
-        # Create (input_dim, output_dim) pairs for each level
-        # Example: [(16,32), (32,64), (64,128), (128,256)] with progressive scaling
+        # in_out shape: [(16,16), (16,32), (32,64), (64,128)]
         in_out = list(zip(dims[:-1], dims[1:]))
 
-        # Store dimensions for debugging and shape analysis
-        self._dims = dims  # Feature dimensions at each level
-        self._in_out = in_out  # Input/output dim pairs
-
-        # --- Time and Position Embeddings ---
-        # Time embeddings: crucial for diffusion models
-        # Maps scalar timestep to high-dim vector via sinusoidal encoding
-        # Then projects through MLP for better expressivity
-        # Output dimension matches embedding_dim for consistent scale
+        # TIME EMBEDDINGS
         if self.with_time_emb:
-            time_dim = self.embedding_dim  # Consistent dimension for stability
             self.time_mlp = nn.Sequential(
-                # Initial sinusoidal encoding
-                SinusoidalTimeEmbeddings(self.embedding_dim),
-                # Project and add non-linearity for expressivity
-                nn.Linear(self.embedding_dim, time_dim),
-                nn.GELU(),  # Smooth activation
-                nn.Linear(time_dim, time_dim),  # Final projection
+                SinusoidalTimeEmbeddings(self.emb_dim),
+                nn.Linear(self.emb_dim, self.time_dim),
+                nn.GELU(),
+                nn.Linear(self.time_dim, self.time_dim),
             )
         else:
-            time_dim = None
+            self.time_dim = None
             self.time_mlp = None
 
-        # Position embeddings: help with long-range dependencies
-        # Uses same sinusoidal encoding as time embeddings
-        # Added directly to input features for spatial awareness
+        # POSITION EMBEDDINGS
         if self.with_pos_emb:
-            self.pos_emb = SinusoidalPositionEmbeddings(self.embedding_dim)
+            self.pos_emb = SinusoidalPositionEmbeddings(self.pos_dim)
+            self.pos_proj = nn.Conv1d(self.pos_dim, init_dim, 1)
+            self.pos_alpha = nn.Parameter(torch.tensor(1.0))
         else:
             self.pos_emb = None
+            self.pos_proj = None
+            self.pos_alpha = None
 
-        # ========== UNet1D Architecture ==========
+        # ===== UNet1D ARCHITECTURE =====
         num_resolutions = len(in_out)
-        resnet_block = partial(ResnetBlock1D, groups=self.norm_groups)
+        resnet_block = partial(
+            ResnetBlock,
+            groups=self.norm_groups,
+            dropout=self.dropout,
+            use_scale_shift_norm=self.use_scale_shift_norm,
+        )
 
         # ENCODER / DOWNSAMPLING
         self.downs = nn.ModuleList([])
@@ -443,8 +441,8 @@ class UNet1D(nn.Module):
             self.downs.append(
                 nn.ModuleList(
                     [
-                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
-                        resnet_block(dim_in, dim_in, time_emb_dim=time_dim),
+                        resnet_block(dim_in, dim_in, time_dim=self.time_dim),
+                        resnet_block(dim_in, dim_in, time_dim=self.time_dim),
                         attn_block,
                         (
                             DownsampleConv(dim_in, dim_out)
@@ -457,7 +455,7 @@ class UNet1D(nn.Module):
 
         # BOTTLENECK
         mid_dim = dims[-1]
-        self.mid_block1 = resnet_block(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block1 = resnet_block(mid_dim, mid_dim, time_dim=self.time_dim)
 
         # Attention1D for bottleneck (full attention for maximum expressiveness)
         self.mid_attn = (
@@ -474,7 +472,7 @@ class UNet1D(nn.Module):
             if self.use_attention
             else nn.Identity()
         )
-        self.mid_block2 = resnet_block(mid_dim, mid_dim, time_emb_dim=time_dim)
+        self.mid_block2 = resnet_block(mid_dim, mid_dim, time_dim=self.time_dim)
 
         # DECODER / UPSAMPLING
         self.ups = nn.ModuleList([])
@@ -501,8 +499,8 @@ class UNet1D(nn.Module):
             self.ups.append(
                 nn.ModuleList(
                     [
-                        resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
-                        resnet_block(dim_out + dim_in, dim_out, time_emb_dim=time_dim),
+                        resnet_block(dim_out + dim_in, dim_out, time_dim=self.time_dim),
+                        resnet_block(dim_out + dim_in, dim_out, time_dim=self.time_dim),
                         attn_block,
                         (
                             UpsampleConv(dim_out, dim_in)
@@ -514,9 +512,11 @@ class UNet1D(nn.Module):
             )
 
         # OUTPUT
-        self.out_dim = out_dim if out_dim is not None else self.channels
-        self.final_res_block = resnet_block(dims[0] * 2, dims[0], time_emb_dim=time_dim)
-        self.final_conv = nn.Conv1d(dims[0], self.out_dim, 1)
+        self.out_dim = channels
+        self.final_res_block = resnet_block(
+            dims[0] * 2, dims[0], time_dim=self.time_dim
+        )
+        self.final_conv = nn.Conv1d(dims[0], self.out_dim, 1)  # output: [B, C, L]
 
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing to reduce memory usage during training."""
@@ -526,7 +526,7 @@ class UNet1D(nn.Module):
         """Adjust 1D feature map length to match target_len.
 
         Strict by default: any mismatch raises an error to surface indexing bugs.
-        If strict resizing is disabled, only zero padding (or right-cropping) is used.
+        With strict_resize=False, only zero padding (or right-cropping) is used.
 
         Args:
             x: Tensor of shape [B, C, L]
@@ -554,9 +554,6 @@ class UNet1D(nn.Module):
         """
         Forward pass for noise prediction in diffusion models.
 
-        Processes noisy SNP sequences through encoder-decoder architecture
-        with time conditioning to predict added noise.
-
         Args:
             x (torch.Tensor): Noisy SNP sequences [B, 1, L]
             time (torch.Tensor): Diffusion timesteps [B]
@@ -567,43 +564,50 @@ class UNet1D(nn.Module):
         Raises:
             ValueError: If sequence too short for downsampling levels
         """
-        # ========== INPUT & EMBEDDINGS ==========
+        # INPUT
         B, C, L = x.shape
         assert C == self.channels, f"Expected {self.channels} channels, got {C}"
         if x.dim() == 2:
             x = x.unsqueeze(1)
 
-        # Save original x
-        orignal_x = x
+        # Original x
+        original_x = x
 
-        # Add positional embedding if enabled
-        if self.with_pos_emb and self.pos_emb is not None:
-            positions = torch.arange(L, device=x.device).expand(B, -1)  # [B, L]
-            pos_encoding = self.pos_emb(positions)  # [B, L, emb]
-            pos_encoding = pos_encoding.permute(0, 2, 1)  # [B, emb, L]
-            # Add to input (if emb > 1, only add to first channel)
-            x = x + pos_encoding[:, : x.shape[1], :]
+        # POSITIONAL EMBEDDING (post-stem): Positional embedding injection
+        # happens after stem conv to avoid 1-channel bottleneck (Moved).
 
-        # Edge padding for boundary preservation (configurable)
+        # EDGE PADDING CHECK
         edge_pad = self.edge_pad
-
-        # Improved input validation: check after each downsampling that length is always > edge_pad
         min_len = L
         for i in range(len(self.dim_mults)):
-            min_len = (min_len + 1) // 2  # Downsampling with stride 2
+            min_len = (min_len + 1) // 2  # Downsampling by 2 at each step
             if min_len <= edge_pad:
                 raise ValueError(
-                    f"Input sequence length {L} is too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}. "
-                    f"At downsampling step {i}, length after downsampling would be {min_len}, which is not enough for edge_pad={edge_pad}. "
+                    f"Input sequence length {L} too short for {len(self.dim_mults)} downsampling steps and edge_pad={edge_pad}."
+                    f"At downsampling step {i}, length after downsampling would be {min_len} which is not enough for edge_pad={edge_pad}."
                     f"Increase seq_length or reduce dim_mults/edge_pad."
                 )
 
         # INITIAL CONVOLUTION
         # [B, 1, L] → [B, init_dim, L]
         x = self.init_conv(x)
-        t = self.time_mlp(time) if self.time_mlp else None
 
-        # Save residual connection from after initial conv (for final output)
+        # POSITIONAL EMBEDDING (post-stem): inject after the stem so we can project
+        # the sinusoidal position to init_dim channels and add it. Doing this on the
+        # raw 1-channel input would bottleneck positional information into a single
+        # channel, which we explicitly avoid here.
+        if self.with_pos_emb and self.pos_emb is not None:
+            positions = torch.arange(L, device=x.device).expand(B, -1)  # [B, L]
+            pos = self.pos_emb(positions)  # [B, L, pos_dim]
+            pos = pos.permute(0, 2, 1)  # [B, pos_dim, L]
+            pos = self.pos_proj(pos)  # [B, init_dim, L]
+            # Add with optional gate
+            x = x + (self.pos_alpha * pos if hasattr(self, "pos_alpha") else pos)
+
+        # TIME EMBEDDING
+        t = self.time_mlp(time) if self.time_mlp else None  # Project time to time_dim
+
+        # RESIDUAL CONNECTION
         r = x
 
         # ENCODER / DOWNSAMPLING
@@ -628,14 +632,21 @@ class UNet1D(nn.Module):
             x = downsample(x)
 
         # BOTTLENECK
-        if self.use_gradient_checkpointing:
-            x = checkpoint(self.mid_block1, x, t, use_reentrant=False)
-            x = checkpoint(self.mid_attn, x, use_reentrant=False)
-            x = checkpoint(self.mid_block2, x, t, use_reentrant=False)
-        else:
-            x = self.mid_block1(x, t)
-            x = self.mid_attn(x)
-            x = self.mid_block2(x, t)
+        x = (  # mid_block1
+            checkpoint(self.mid_block1, x, t, use_reentrant=False)
+            if self.use_gradient_checkpointing
+            else self.mid_block1(x, t)
+        )
+        x = (  # mid_attn
+            checkpoint(self.mid_attn, x, use_reentrant=False)
+            if self.use_gradient_checkpointing
+            else self.mid_attn(x)
+        )
+        x = (  # mid_block2
+            checkpoint(self.mid_block2, x, t, use_reentrant=False)
+            if self.use_gradient_checkpointing
+            else self.mid_block2(x, t)
+        )
 
         # DECODER / UPSAMPLING
         for block1, block2, attn, upsample in self.ups:
@@ -665,9 +676,8 @@ class UNet1D(nn.Module):
 
             x = upsample(x)
 
-        # FINAL CONVOLUTION
-        # Align with initial residual
+        # OUTPUT
         x = self._resize_to_length(x, r.size(-1))
         x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
-        return orignal_x - self.final_conv(x)
+        return original_x - self.final_conv(x)

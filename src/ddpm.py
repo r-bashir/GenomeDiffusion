@@ -82,21 +82,22 @@ class DiffusionModel(NetworkBase):
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
             with_time_emb=hparams["unet"]["with_time_emb"],
+            time_dim=hparams["unet"].get("time_dim", 128),
             with_pos_emb=hparams["unet"]["with_pos_emb"],
+            pos_dim=hparams["unet"].get("pos_dim", 128),
             norm_groups=hparams["unet"]["norm_groups"],
             seq_length=hparams["data"]["seq_length"],
-            # Additional Arguments for UNet1D
             edge_pad=hparams["unet"]["edge_pad"],
             enable_checkpointing=hparams["unet"]["enable_checkpointing"],
             strict_resize=hparams["unet"]["strict_resize"],
             pad_value=hparams["unet"]["pad_value"],
+            dropout=hparams["unet"]["dropout"],
+            use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
             use_attention=hparams["unet"]["use_attention"],
             attention_heads=hparams["unet"]["attention_heads"],
             attention_dim_head=hparams["unet"]["attention_dim_head"],
             attention_window=hparams["unet"]["attention_window"],
             num_global_tokens=hparams["unet"]["num_global_tokens"],
-            dropout=hparams["unet"]["dropout"],
-            use_scale_shift_norm=hparams["unet"]["use_scale_shift_norm"],
         )
 
         # ReverseDiffusion: Reverse diffusion process

@@ -98,52 +98,63 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
         data = normalize_data(data)
         logger.info(f"Uniques values: {np.unique(data)}")
 
-    # 4. Handle augmentation
-    if data_config.get("augment", False):
-        logger.info("Applying data augmentation")
+    # 4-5. Handle augmentation gating
+    # Priority: staircase -> mixing -> flipped mixing
+    if data_config.get("staircase", False):
+        logger.info("Applying staircase structure")
 
         # Get pattern configuration for augmentation
-        augment_pattern = data_config.get("augment_pattern", [])
+        staircase_pattern = data_config.get("staircase_pattern", [])
 
-        if not augment_pattern:
+        if not staircase_pattern:
             # Default augmentation pattern if none specified
-            augment_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
+            staircase_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
             logger.info("Using default augmentation pattern: 100 SNPs")
 
         # Convert to list of tuples
-        augment_pattern = [
+        staircase_pattern = [
             (int(start), int(end), float(value))
-            for start, end, value in augment_pattern
+            for start, end, value in staircase_pattern
         ]
 
-        logger.info(f"Augmentation pattern: {augment_pattern}")
+        logger.info(f"Staircase pattern: {staircase_pattern}")
 
-        data = augment_data(data, augment_pattern)
+        data = staircase_data(data, staircase_pattern)
         logger.info(f"Uniques values: {np.unique(data)}")
+    else:
+        mixing_enabled = data_config.get("mixing", False)
+        if mixing_enabled:
+            logger.info("Applying pattern mixing (original values for all samples)")
+            mixing_pattern = data_config.get("mixing_pattern", [])
+            mixing_interval = data_config.get("mixing_interval", 100)
 
-    # 5. Handle mixing with pattern injection
-    if data_config.get("mixing", False):
-        logger.info("Applying pattern mixing")
+            if not mixing_pattern:
+                mixing_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
+                logger.info("Using default pattern: 40 SNPs staircase")
 
-        # Get pattern configuration
-        mixing_pattern = data_config.get("mixing_pattern", [])
-        mixing_interval = data_config.get("mixing_interval", 100)
+            mixing_pattern = [
+                (int(start), int(end), float(value))
+                for start, end, value in mixing_pattern
+            ]
 
-        if not mixing_pattern:
-            # Default pattern if none specified
-            mixing_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
-            logger.info("Using default pattern: 40 SNPs staircase")
+            logger.info(f"Pattern: {mixing_pattern}")
+            logger.info(f"Mixing interval: {mixing_interval}")
 
-        # Convert to list of tuples
-        mixing_pattern = [
-            (int(start), int(end), float(value)) for start, end, value in mixing_pattern
-        ]
+            data = mix_data(data, mixing_pattern, mixing_interval)
+            logger.info(f"Uniques values: {np.unique(data)}")
 
-        logger.info(f"Pattern: {mixing_pattern}")
-        logger.info(f"Mixing interval: {mixing_interval}")
+            # 5a. Optionally flip the injected pattern only for odd-indexed samples
+            if data_config.get("flip_mixing", False):
+                logger.info(
+                    "Applying flipped mixing on odd-indexed samples (post-mixing)"
+                )
 
-        data = mix_data(data, mixing_pattern, mixing_interval)
-        logger.info(f"Uniques values: {np.unique(data)}")
+                # Use the same mixing pattern and interval
+                logger.info(f"Pattern for flipped mixing (odds only): {mixing_pattern}")
+                logger.info(f"Mixing interval: {mixing_interval}")
+
+                data = mix_data_flip_odd(data, mixing_pattern, mixing_interval)
+                logger.info(f"Uniques values after flipped mixing: {np.unique(data)}")
 
     # 6. Handle scaling (always last)
     if data_config.get("scaling", False):
@@ -246,8 +257,10 @@ def scale_data(
     return data
 
 
-# Augment data
-def augment_data(data: np.ndarray, pattern: List[Tuple[int, int, float]]) -> np.ndarray:
+# Staircase data
+def staircase_data(
+    data: np.ndarray, pattern: List[Tuple[int, int, float]]
+) -> np.ndarray:
     """Apply test patterns to the data for debugging.
 
     Applies a given pattern only at the beginning of the sequence.
@@ -325,6 +338,51 @@ def mix_data(
                     data[:, start:end] = value
 
         # Move to next position: skip pattern_length + injection_interval
+        current_pos += pattern_length + injection_interval
+
+    return data
+
+
+def mix_data_flip_odd(
+    data: np.ndarray, pattern: List[Tuple[int, int, float]], injection_interval: int
+) -> np.ndarray:
+    """Inject the flipped pattern (1.0 - value) ONLY on odd-indexed samples.
+
+    This function is intended to be called AFTER `mix_data`, so even-indexed
+    samples remain with the original injected values, while odd-indexed samples
+    have their injected regions flipped by re-applying the pattern with flipped values.
+
+    Args:
+        data: Input data array of shape (n_samples, n_markers)
+        pattern: List of tuples (start_offset, end_offset, value) defining the pattern
+        injection_interval: Number of positions to skip after each pattern injection
+
+    Returns:
+        Copy of input data where only odd samples have flipped injections.
+    """
+    data = data.copy()
+    n_samples, n_markers = data.shape
+
+    # Identify odd-indexed samples
+    odd_mask = (np.arange(n_samples) % 2) == 1
+    if not odd_mask.any():
+        return data
+
+    pattern_length = max(end for _, end, _ in pattern)
+
+    current_pos = 0
+    while current_pos < n_markers:
+        if current_pos + pattern_length <= n_markers:
+            for start_offset, end_offset, value in pattern:
+                start = current_pos + start_offset
+                end = current_pos + end_offset
+                data[odd_mask, start:end] = 1.0 - value
+        else:
+            for start_offset, end_offset, value in pattern:
+                start = current_pos + start_offset
+                end = min(current_pos + end_offset, n_markers)
+                if start < n_markers and end > start:
+                    data[odd_mask, start:end] = 1.0 - value
         current_pos += pattern_length + injection_interval
 
     return data

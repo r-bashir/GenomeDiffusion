@@ -3,9 +3,8 @@
 # ruff: noqa: E402
 
 """
-Test the functionality of SNP Dataset from src/dataset.py by running:
-
-$ python scripts/run_dataset.py --config config.yaml
+Test the functionality of SNP Dataset from src/dataset.py
+by running: python scripts/run_dataset.py --config config.yaml
 """
 
 import argparse
@@ -26,13 +25,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.dataset import (
     SNPDataset,
-    augment_data,
     handle_missing_values,
     load_data,
     mix_data,
+    mix_data_flip_odd,
     normalize_data,
     scale_data,
     setup_logging,
+    staircase_data,
 )
 from src.utils import load_config
 
@@ -56,6 +56,62 @@ def plot_sample(sample: torch.Tensor, save_path: Path) -> None:
     fig.tight_layout()
     fig.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_even_odd_samples(dataset: torch.utils.data.Dataset, save_dir: Path) -> None:
+    """Randomly select and plot one even-indexed and one odd-indexed sample.
+
+    Saves three plots:
+    - even_sample.png
+    - odd_sample.png
+    - even_vs_odd_overlay.png
+    """
+    n = len(dataset)
+    if n == 0:
+        return
+
+    even_indices = np.arange(0, n, 2)
+    odd_indices = np.arange(1, n, 2)
+
+    even_idx = int(np.random.choice(even_indices)) if even_indices.size > 0 else None
+    odd_idx = int(np.random.choice(odd_indices)) if odd_indices.size > 0 else None
+
+    if even_idx is not None:
+        plot_sample(dataset[even_idx], save_dir / "even_sample.png")
+    if odd_idx is not None:
+        plot_sample(dataset[odd_idx], save_dir / "odd_sample.png")
+
+    # Overlay plot if both are available
+    if even_idx is not None and odd_idx is not None:
+        even_sample = dataset[even_idx]
+        odd_sample = dataset[odd_idx]
+
+        fig, ax = plt.subplots(figsize=(12, 3))
+        ax.plot(
+            even_sample,
+            "-",
+            color="tab:blue",
+            alpha=0.7,
+            linewidth=1.0,
+            label=f"even idx {even_idx}",
+        )
+        ax.plot(
+            odd_sample,
+            "-",
+            color="tab:orange",
+            alpha=0.7,
+            linewidth=1.0,
+            label=f"odd idx {odd_idx}",
+        )
+        ax.set_title("Even vs Odd Sample (overlay)")
+        ax.set_xlabel("SNP Position")
+        ax.set_ylabel("Genotype Values")
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right")
+
+        fig.tight_layout()
+        fig.savefig(save_dir / "even_vs_odd_overlay.png", dpi=300, bbox_inches="tight")
+        plt.close(fig)
 
 
 def print_data_stats(data: Union[np.ndarray, torch.Tensor], title: str = "") -> None:
@@ -216,38 +272,40 @@ def main() -> int:
         logger.error(f"Error normalizing data: {e}")
         raise
 
-    # 4. Handle augmentation (fixed patterns)
+    # 4. Handle staircase structure (takes precedence)
     try:
-        if data_config.get("augment", False):
-            logger.info("Applying data augmentation")
+        if data_config.get("staircase", False):
+            logger.info("Applying staircase structure")
 
             # Get pattern configuration for augmentation
-            augment_pattern = data_config.get("augment_pattern", [])
+            staircase_pattern = data_config.get("staircase_pattern", [])
 
-            if not augment_pattern:
+            if not staircase_pattern:
                 # Default augmentation pattern if none specified
-                augment_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
+                staircase_pattern = [[0, 25, 0.0], [25, 75, 0.5], [75, 100, 1.0]]
                 logger.info("Using default augmentation pattern: 100 SNPs")
 
             # Convert to list of tuples
-            augment_pattern = [
+            staircase_pattern = [
                 (int(start), int(end), float(value))
-                for start, end, value in augment_pattern
+                for start, end, value in staircase_pattern
             ]
 
-            logger.info(f"Augmentation pattern: {augment_pattern}")
+            logger.info(f"Staircase pattern: {staircase_pattern}")
 
-            data = augment_data(data, augment_pattern)
+            data = staircase_data(data, staircase_pattern)
             logger.info(f"Uniques values: {np.unique(data)}")
-            plot_sample(data[0], PROJECT_ROOT / "4_augmented.png")
+            plot_sample(data[0], PROJECT_ROOT / "4_staircase.png")
 
     except Exception as e:
-        logger.error(f"Error during data augmentation: {e}")
+        logger.error(f"Error during staircase structure: {e}")
         raise
 
-    # Handle mixing
+    # 5. Handle mixing (only when staircase is disabled)
     try:
-        if data_config.get("mixing", False):
+        if (not data_config.get("staircase", False)) and data_config.get(
+            "mixing", False
+        ):
             logger.info("Applying pattern mixing")
 
             # Get pattern configuration
@@ -270,7 +328,41 @@ def main() -> int:
         logger.error(f"Error during data mixing: {e}")
         raise
 
-    # 5. Scale data (always last)
+    # 5a. Optionally flip the injected pattern only for odd-indexed samples (post-mixing)
+    try:
+        if (
+            (not data_config.get("staircase", False))
+            and data_config.get("mixing", False)
+            and data_config.get("flip_mixing", False)
+        ):
+            logger.info("Applying flipped mixing on odd-indexed samples (post-mixing)")
+
+            # Get pattern configuration
+            mixing_pattern = data_config.get("mixing_pattern", [])
+            mixing_interval = data_config.get("mixing_interval", 100)
+
+            if not mixing_pattern:
+                mixing_pattern = [[0, 10, 0.0], [10, 30, 0.5], [30, 40, 1.0]]
+                logger.info(
+                    "Using default pattern for flipped mixing: 40 SNPs staircase"
+                )
+
+            mixing_pattern = [
+                (int(start), int(end), float(value))
+                for start, end, value in mixing_pattern
+            ]
+
+            logger.info(f"Pattern for flipped mixing (odds only): {mixing_pattern}")
+            logger.info(f"Mixing interval: {mixing_interval}")
+
+            data = mix_data_flip_odd(data, mixing_pattern, mixing_interval)
+            logger.info(f"Uniques values after flipped mixing: {np.unique(data)}")
+            plot_sample(data[1], PROJECT_ROOT / "5a_flipped_mixed.png")
+    except Exception as e:
+        logger.error(f"Error during flipped mixing: {e}")
+        raise
+
+    # 6. Scale data (always last)
     try:
         scale_factor = data_config.get("scale_factor")
         if scale_factor is not None:
@@ -311,7 +403,12 @@ def main() -> int:
         logger.info(
             f"Dataset shape [N, L]: {dataset.data.shape}, and dim: {dataset.data.dim()}"
         )
+
+        # Plot first sample
         plot_sample(dataset[0], PROJECT_ROOT / "snp_dataset_sample.png")
+
+        # Visualize randomly chosen even and odd samples
+        plot_even_odd_samples(dataset, PROJECT_ROOT)
 
         print("\nPyTorch DataLoader:")
 
