@@ -86,6 +86,8 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
         "with_pos_emb": ("unet", "with_pos_emb"),
         "edge_pad": ("unet", "edge_pad"),
         "norm_groups": ("unet", "norm_groups"),
+        "dropout": ("unet", "dropout"),
+        "use_scale_shift_norm": ("unet", "use_scale_shift_norm"),
         # Attention parameters
         "use_attention": ("unet", "use_attention"),
         "attention_type": ("unet", "attention_type"),
