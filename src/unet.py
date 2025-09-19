@@ -124,15 +124,15 @@ class ResnetBlock(nn.Module):
         use_scale_shift_norm: bool = True,
     ):
         super().__init__()
-        # Support both FiLM scale-shift and additive conditioning (legacy)
+
         self.use_scale_shift_norm = use_scale_shift_norm
         if time_dim is not None:
             if self.use_scale_shift_norm:
-                # FiLM: produce (scale, shift) — current version's order (Linear -> SiLU)
+                # FiLM: produce (scale, shift) — Linear -> SiLU
                 self.mlp = nn.Sequential(nn.Linear(time_dim, dim_out * 2), nn.SiLU())
             else:
-                # Additive: match archived behavior order (SiLU -> Linear)
-                self.mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_dim, dim_out))
+                # Additive: unified order with FiLM — Linear -> SiLU
+                self.mlp = nn.Sequential(nn.Linear(time_dim, dim_out), nn.SiLU())
         else:
             self.mlp = None
 
