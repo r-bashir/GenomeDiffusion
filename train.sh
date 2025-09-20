@@ -16,12 +16,25 @@ SECONDS=0  # Start timer
 
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 
+# Optional: To resume from checkpoint
+CHECKPOINT_PATH="${1:-}"
+RESUME_FLAG=""
+if [[ -n "$CHECKPOINT_PATH" ]]; then
+    if [[ "$CHECKPOINT_PATH" == /* ]]; then
+        MAPPED_CKPT="$CHECKPOINT_PATH"
+    else
+        REL_PATH="${CHECKPOINT_PATH#./}"
+        MAPPED_CKPT="/workspace/$REL_PATH"
+    fi
+    RESUME_FLAG="--resume \"$MAPPED_CKPT\""
+fi
+
 # Run the container
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_ROOT:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
-    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml 2>&1 | tee train.log" || {
+    $CONTAINER bash -c "cd /workspace && python train.py --config config.yaml $RESUME_FLAG 2>&1 | tee train.log" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
