@@ -565,10 +565,11 @@ class UNet1D(nn.Module):
             ValueError: If sequence too short for downsampling levels
         """
         # INPUT
+        assert (
+            x.dim() == 3
+        ), f"UNet1D expects input shape of [B, C=1, L], got {tuple(x.shape)}"
         B, C, L = x.shape
         assert C == self.channels, f"Expected {self.channels} channels, got {C}"
-        if x.dim() == 2:
-            x = x.unsqueeze(1)
 
         # Original x
         original_x = x

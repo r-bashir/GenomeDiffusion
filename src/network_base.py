@@ -110,8 +110,21 @@ class NetworkBase(pl.LightningModule):
         Returns:
             torch.Tensor: Prepared batch with shape [B, 1, L].
         """
-        if len(batch.shape) == 2:
-            batch = batch.unsqueeze(1)  # Convert to (B, 1, L)
+        # Sanity checks to surface any silent shape bugs
+        assert batch.dim() in (
+            2,
+            3,
+        ), f"Expected batch shape [B, L] or [B, 1, L], got shape {tuple(batch.shape)}"
+
+        if batch.dim() == 2:
+            # Convert to (B, 1, L)
+            batch = batch.unsqueeze(1)
+        else:
+            # Already 3D: enforce channel dimension is 1
+            assert (
+                batch.size(1) == 1
+            ), f"Expected channel dimension = 1 for input shape [B, 1, L], got {tuple(batch.shape)}"
+
         return batch
 
     def training_step(self, batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
