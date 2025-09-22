@@ -228,7 +228,9 @@ def run_denoising_process(
 
 
 # Denoising Comparison Plots
-def plot_denoising_comparison(x_0, x_t, x_t_minus_1, T, output_path):
+def plot_denoising_comparison(
+    x_0, x_t, x_t_minus_1, T, output_path, filename_suffix=None
+):
     """
     Plots and saves a comparison of original, noisy, and denoised signals using matplotlib OOP API.
     Left: x_0 and x_t; Right: x_0, x_t, x_t_minus_1. Annotates MSE and correlation metrics.
@@ -291,22 +293,23 @@ def plot_denoising_comparison(x_0, x_t, x_t_minus_1, T, output_path):
     )
 
     fig.tight_layout()
+    suffix = filename_suffix or ""
     fig.savefig(
-        str(output_path / f"denoising_comparison_t{T}.png"),
+        str(output_path / f"denoising_comparison_t{T}{suffix}.png"),
         dpi=300,
         bbox_inches="tight",
     )
     fig.savefig(
-        str(output_path / f"denoising_comparison_t{T}.pdf"),
+        str(output_path / f"denoising_comparison_t{T}{suffix}.pdf"),
         dpi=300,
         bbox_inches="tight",
     )
     plt.close(fig)
 
-    return mse_x0, corr_x0, mse_xt, corr_xt
 
-
-def plot_denoising_trajectory(x_0, x_t, samples_dict, T, output_path):
+def plot_denoising_trajectory(
+    x_0, x_t, samples_dict, T, output_path, filename_suffix=None
+):
     """
     Plots the denoising trajectory of x0_recon at each timestep during Markov reverse diffusion.
     Args:
@@ -357,13 +360,14 @@ def plot_denoising_trajectory(x_0, x_t, samples_dict, T, output_path):
     axs[1].legend(fontsize=8)
 
     fig.tight_layout()
+    suffix = filename_suffix or ""
     fig.savefig(
-        str(output_path / f"denoising_trajectory_t{T}.png"),
+        str(output_path / f"denoising_trajectory_t{T}{suffix}.png"),
         dpi=300,
         bbox_inches="tight",
     )
     fig.savefig(
-        str(output_path / f"denoising_trajectory_t{T}.pdf"),
+        str(output_path / f"denoising_trajectory_t{T}{suffix}.pdf"),
         dpi=300,
         bbox_inches="tight",
     )

@@ -269,6 +269,8 @@ def main():
         enable_checkpointing=True,  # overridden by checkpoint callback
         enable_progress_bar=True,
         enable_model_summary=True,
+        gradient_clip_val=0.0,  # If gcv > 0, clip gradient using "norm"
+        detect_anomaly=False,  # If True, detect nan, set True only for debugging
     )
     logger.info("Trainer initialized successfully...")
 

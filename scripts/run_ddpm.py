@@ -39,12 +39,15 @@ def parse_args():
         "--checkpoint", type=str, required=False, help="Path to model checkpoint"
     )
     parser.add_argument(
-        "--num_samples", type=int, default=1, help="Number of samples to analyze"
+        "--sample_idx",
+        type=int,
+        default=0,
+        help="Index of the sample within the fetched batch to denoise (0-based)",
     )
     parser.add_argument(
-        "--discretize",
+        "--plot_all",
         action="store_true",
-        help="Discretize generated samples to 0, 0.5, and 1.0",
+        help="If set, plot denoising outputs for all samples in the batch; otherwise only for --sample_idx",
     )
     parser.add_argument(
         "--test_imputation",
@@ -95,18 +98,17 @@ def main():
     test_batch = next(iter(test_loader)).to(device)
     logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
 
-    # Select a single sample and ensure shape [1, 1, seq_len]
-    logger.info("Adding channel dim, and selecting single sample")
-    sample_idx = 0
-    x_0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
-    logger.info(f"x_0 shape: {x_0.shape} and dim: {x_0.dim()}")
-    logger.info(f"x_0 unique values: {torch.unique(x_0)}")
+    # Use entire batch and add channel dim -> [B, 1, L]
+    logger.info("Adding channel dim and keeping entire batch for denoising")
+    x_0 = test_batch.unsqueeze(1)
+    B, C, L = x_0.shape
+    logger.info(f"x_0 shape: {x_0.shape} (B={B}, C={C}, L={L}) and dim: {x_0.dim()}")
 
     # === BEGIN: Reverse Diffusion ===
     logger.info("Running Markov reverse process from x_t at t=T...")
     diffusion_steps = 2
 
-    # Generate noisy sample x_t at t=T
+    # Generate noisy batch x_t at t=T
     x_t = get_noisy_sample(model, x_0, diffusion_steps)
     # x_t = x_0
 
@@ -151,7 +153,7 @@ def main():
     except Exception as e:
         logger.warning(f"Could not build mixing mask: {e}")
 
-    # Run Reverse Diffusion Process (Markov Chain)
+    # Run Reverse Diffusion Process (Denoising)
     samples_dict = run_denoising_process(
         model,
         x_0,
@@ -165,22 +167,59 @@ def main():
         mixing_mask=mixing_mask,
     )
 
-    # Plot and compare
-    x_t_minus_1 = samples_dict[0]  # Denoised sample (x_{t-1} at t=0)
-    mse_x0, corr_x0, mse_xt, corr_xt = plot_denoising_comparison(
-        x_0,
-        x_t,
-        x_t_minus_1,
-        diffusion_steps,
-        output_dir,
-    )
+    # Plotting: either selected sample or all samples
+    x_t_minus_1 = samples_dict[0]  # Final denoised batch (x_{t-1} at t=0)
+    if args.plot_all:
+        logger.info("Plotting all samples in batch...")
+        for i in range(B):
+            x0_i = x_0[i : i + 1]
+            xt_i = x_t[i : i + 1]
+            samples_i = {t: s[i : i + 1] for t, s in samples_dict.items()}
+            plot_denoising_comparison(
+                x0_i,
+                xt_i,
+                samples_i[0],
+                diffusion_steps,
+                output_dir,
+                filename_suffix=f"_sample{i}",
+            )
+            plot_denoising_trajectory(
+                x0_i,
+                xt_i,
+                samples_i,
+                diffusion_steps,
+                output_dir,
+                filename_suffix=f"_sample{i}",
+            )
+    else:
+        sample_idx = int(args.sample_idx)
+        if not (0 <= sample_idx < B):
+            logger.warning(
+                f"--sample_idx {sample_idx} is out of range for batch size {B}. Defaulting to 0."
+            )
+            sample_idx = 0
+        logger.info(f"Plotting only sample_idx={sample_idx}")
+        x0_i = x_0[sample_idx : sample_idx + 1]
+        xt_i = x_t[sample_idx : sample_idx + 1]
+        samples_i = {t: s[sample_idx : sample_idx + 1] for t, s in samples_dict.items()}
+        plot_denoising_comparison(
+            x0_i,
+            xt_i,
+            samples_i[0],
+            diffusion_steps,
+            output_dir,
+            filename_suffix=f"_sample{sample_idx}",
+        )
+        plot_denoising_trajectory(
+            x0_i,
+            xt_i,
+            samples_i,
+            diffusion_steps,
+            output_dir,
+            filename_suffix=f"_sample{sample_idx}",
+        )
 
-    # Debug log
-    logger.debug(
-        f"MSE(x_t_minus_1, x_0): {mse_x0:.6f}, r(x_t_minus_1, x_0): {corr_x0:.6f} | MSE(x_t_minus_1, x_t): {mse_xt:.6f}, r(x_t_minus_1, x_t): {corr_xt:.6f}"
-    )
-
-    # Additional imputation analysis
+    # Test Imputation
     if args.test_imputation and mask_for_imputation is not None:
         logger.info("\n=== IMPUTATION ANALYSIS ===")
 
@@ -222,15 +261,6 @@ def main():
             logger.info(
                 f"  Improvement ratio: {mse_unknown/mse_known:.2f}x better at known positions"
             )
-
-    # Plot denoising trajectory
-    plot_denoising_trajectory(
-        x_0,
-        x_t,
-        samples_dict,
-        diffusion_steps,
-        output_dir,
-    )
 
     # === END: Reverse Diffusion ===
 
