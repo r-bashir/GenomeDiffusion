@@ -186,6 +186,7 @@ def main():
                 output_dir,
                 filename_suffix=f"_sample{i}",
                 print_step_metrics=True,
+                mixing_mask=mixing_mask,
             )
     else:
         sample_idx = int(args.sample_idx)
@@ -214,6 +215,7 @@ def main():
             output_dir,
             filename_suffix=f"_sample{sample_idx}",
             print_step_metrics=True,
+            mixing_mask=mixing_mask,
         )
 
     # Test Imputation
