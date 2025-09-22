@@ -308,7 +308,13 @@ def plot_denoising_comparison(
 
 
 def plot_denoising_trajectory(
-    x_0, x_t, samples_dict, T, output_path, filename_suffix=None
+    x_0,
+    x_t,
+    samples_dict,
+    T,
+    output_path,
+    filename_suffix=None,
+    print_step_metrics: bool = False,
 ):
     """
     Plots the denoising trajectory of x0_recon at each timestep during Markov reverse diffusion.
@@ -336,6 +342,34 @@ def plot_denoising_trajectory(
         ],
         axis=0,
     )
+
+    # Optional: print per-step metrics
+    if print_step_metrics:
+        # Metrics vs x_0 and vs previous step in the chain
+        # Note: samples_dict is expected to have keys [T, T-1, ..., 0]
+        prev_t = None
+        prev_tensor = None
+
+        # loop over timesteps
+        for t in timesteps:
+            curr_tensor = samples_dict[t]
+            try:
+                mse_x0, r_x0 = compute_metrics(curr_tensor, x_0)
+            except Exception:
+                mse_x0, r_x0 = float("nan"), float("nan")
+            if prev_tensor is not None:
+                try:
+                    mse_prev, r_prev = compute_metrics(curr_tensor, prev_tensor)
+                except Exception:
+                    mse_prev, r_prev = float("nan"), float("nan")
+                print(
+                    f"t={t:4} | vs x0 -> MSE: {mse_x0:.6f}, r: {r_x0:.6f} | vs t={prev_t:4} -> MSE: {mse_prev:.6f}, r: {r_prev:.6f}"
+                )
+            else:
+                print(
+                    f"t={t:4} | vs x0 -> MSE: {mse_x0:.6f}, r: {r_x0:.6f} | (no previous step)"
+                )
+            prev_t, prev_tensor = t, curr_tensor
 
     fig, axs = plt.subplots(1, 2, figsize=(12, 4), sharey=True)
 

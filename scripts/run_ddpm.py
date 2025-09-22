@@ -41,13 +41,8 @@ def parse_args():
     parser.add_argument(
         "--sample_idx",
         type=int,
-        default=0,
-        help="Index of the sample within the fetched batch to denoise (0-based)",
-    )
-    parser.add_argument(
-        "--plot_all",
-        action="store_true",
-        help="If set, plot denoising outputs for all samples in the batch; otherwise only for --sample_idx",
+        default=None,
+        help="Optional: if provided, only plot this sample index from the batch; otherwise plot all",
     )
     parser.add_argument(
         "--test_imputation",
@@ -169,7 +164,7 @@ def main():
 
     # Plotting: either selected sample or all samples
     x_t_minus_1 = samples_dict[0]  # Final denoised batch (x_{t-1} at t=0)
-    if args.plot_all:
+    if args.sample_idx is None:
         logger.info("Plotting all samples in batch...")
         for i in range(B):
             x0_i = x_0[i : i + 1]
@@ -190,6 +185,7 @@ def main():
                 diffusion_steps,
                 output_dir,
                 filename_suffix=f"_sample{i}",
+                print_step_metrics=True,
             )
     else:
         sample_idx = int(args.sample_idx)
@@ -217,6 +213,7 @@ def main():
             diffusion_steps,
             output_dir,
             filename_suffix=f"_sample{sample_idx}",
+            print_step_metrics=True,
         )
 
     # Test Imputation
