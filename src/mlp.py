@@ -12,7 +12,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger = setup_logging(name="MLP")
 
 
-# === Zero Noise Predictor ==
+# ZeroModel
 def zero_out_model_parameters(model):
     """
     Sets all weights and biases of nn.Linear layers in the model
@@ -25,8 +25,8 @@ def zero_out_model_parameters(model):
                 nn.init.constant_(module.bias, 0.0)
 
 
-# === Identity Noise Predictor ===
-class IdentityNoisePredictor(nn.Module):
+# IdentityModel
+class IdentityModel(nn.Module):
     """
     Identity noise predictor for debugging: always returns input x as predicted noise.
     Drop-in replacement for MLP/UNet1D in DiffusionModel.
@@ -34,80 +34,80 @@ class IdentityNoisePredictor(nn.Module):
 
     def __init__(
         self,
-        embedding_dim=64,
+        emb_dim=512,
         dim_mults=(1, 2, 4, 8),
         channels=1,
         with_time_emb=True,
+        time_dim=128,
         with_pos_emb=True,
+        pos_dim=128,
         norm_groups=8,
-        seq_length=1000,
-        **kwargs,  # Accept additional arguments
+        seq_length=160858,
+        **kwargs,
     ):
         super().__init__()
+        # Base parameters
+        self.emb_dim = emb_dim
         self.channels = channels
+        self.with_time_emb = with_time_emb
+        self.time_dim = time_dim
         self.seq_length = seq_length
 
     def forward(self, x, time):
         return x
 
-    def gradient_checkpointing_enable(self):
-        pass
 
-
-# === Linear Noise Predictors ===
-class LinearNoisePredictor(nn.Module):
-    """Simple linear model for noise prediction in diffusion models.
-
-    A minimal implementation that uses a single linear layer without activation functions.
-    Maintains the same interface as UNet1D and MLP for easy swapping in the diffusion model.
-
-    This model follows the reviewer's suggestion to test with "the most simple single dense layer
-    for n SNP inputs to n SNP outputs, no activation function" to evaluate baseline performance.
+# LinearMLP
+class LinearMLP(nn.Module):
+    """
+    Linear MLP for noise prediction in diffusion models. It is designed as drop-in
+    replacement for UNet1D. Global n→n linear baseline (flatten + linear + unflatten).
     """
 
     def __init__(
         self,
-        embedding_dim=64,  # To include time embeddings
+        emb_dim=512,  # Sinusoidal embedding dimension
         dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
         channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
+        with_time_emb=True,  # To include time embeddings
+        time_dim=128,  # Final projected time embedding dimension
+        with_pos_emb=True,  # Unused, but kept for interface compatibility
+        pos_dim=128,  # Unused, but kept for interface compatibility
         norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
+        seq_length=160858,  # Expected sequence length (number of SNP markers)
         **kwargs,
     ):
         super().__init__()
+        # Base parameters
+        self.emb_dim = emb_dim
         self.channels = channels
-        self.seq_length = seq_length
-        self.input_dim = channels * seq_length
         self.with_time_emb = with_time_emb
-        self.embedding_dim = embedding_dim
+        self.time_dim = time_dim
+        self.seq_length = seq_length
 
-        # Optional time embedding
-        self.time_dim = embedding_dim if with_time_emb else 0
-        if with_time_emb:
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, embedding_dim),
-            )
-        else:
-            self.time_mlp = None
+        # Input dimension (flattened sequence)
+        self.input_dim = channels * seq_length
 
-        # Linear layer
-        self.linear = nn.Linear(
-            self.input_dim + self.time_dim, self.input_dim, bias=False
-        )
-        nn.init.eye_(self.linear.weight)  # Initialize as identity
+        # Time embedding dimension
+        self.time_dim = time_dim if with_time_emb else 0
 
         # Flatten layer
         self.flatten = nn.Flatten()
 
-        logger.info(
-            f"Initialized LinearNoisePredictor: input_dim={self.input_dim}, time_dim={self.time_dim}"
-        )
+        # Time embedding network (emb_dim -> time_dim)
+        if with_time_emb:
+            self.time_mlp = nn.Sequential(
+                SinusoidalTimeEmbeddings(self.emb_dim),
+                nn.Linear(self.emb_dim, self.time_dim),
+            )
+        else:
+            self.time_mlp = None
+
+        # Linear layer (flattened input + time embedding)
+        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
 
     def forward(self, x, time):
-        """Forward pass for LinearNoisePredictor.
+        """Forward pass for LinearMLP.
 
         Args:
             x (torch.Tensor): Input SNP data of shape [B, C, L].
@@ -119,187 +119,66 @@ class LinearNoisePredictor(nn.Module):
         B, C, L = x.shape
 
         # Flatten the input
-        x_flat = self.flatten(x)  # [B, C*L]
+        x_flat = self.flatten(x)
 
         # Concatenate time embedding if enabled
         if self.with_time_emb and self.time_mlp is not None:
             t_emb = self.time_mlp(time)  # [B, time_dim]
             x_flat = torch.cat([x_flat, t_emb], dim=1)  # [B, C*L + time_dim]
 
-        out = self.linear(x_flat)  # [B, C*L]
-        return out.view(B, C, L)  # [B, C, L]
-
-
-# LinearMLP (equivalent to LinearNoisePredictor)
-class LinearMLP(nn.Module):
-    """Global n→n linear baseline (flatten + linear + unflatten)."""
-
-    def __init__(
-        self,
-        embedding_dim=64,  # To include time embeddings
-        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
-        channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
-        norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
-        **kwargs,
-    ):
-        super().__init__()
-        self.channels = channels
-        self.seq_length = seq_length
-        self.input_dim = channels * seq_length
-        self.with_time_emb = with_time_emb
-        self.embedding_dim = embedding_dim
-
-        # Optional time embedding
-        self.time_dim = embedding_dim if with_time_emb else 0
-        if with_time_emb:
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, embedding_dim),
-            )
-        else:
-            self.time_mlp = None
-
-        # Linear layer size depends on whether time embedding is used
-        self.linear = nn.Linear(self.input_dim + self.time_dim, self.input_dim)
-        # nn.init.zeros_(self.linear.bias)
-        # nn.init.eye_(self.linear.weight)
-
-        self.flatten = nn.Flatten()
-        logger.info(
-            f"Initialized LinearMLP: input_dim={self.input_dim}, time_dim={self.time_dim}"
-        )
-
-    def forward(self, x, time):
-        B, C, L = x.shape
-        x_flat = self.flatten(x)
-
-        # Concatenate time embedding if enabled
-        if self.with_time_emb and self.time_mlp is not None:
-            t_emb = self.time_mlp(time)  # [B, time_dim]
-            x_flat = torch.cat([x_flat, t_emb], dim=1)
-
         out = self.linear(x_flat)
         return out.view(B, C, L)
 
 
-# LinearCNN
-class LinearCNN(nn.Module):
-    """Local baseline: per-position n→n mapping with 1×1 conv."""
-
-    def __init__(
-        self,
-        embedding_dim=64,  # To include time embeddings
-        dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
-        channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
-        norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
-        **kwargs,
-    ):
-        super().__init__()
-        self.channels = channels
-        self.seq_length = seq_length
-        self.with_time_emb = with_time_emb
-        self.embedding_dim = embedding_dim
-
-        # 1x1 convolution → per-position linear map
-        self.linear = nn.Conv1d(channels, channels, kernel_size=1, bias=False)
-        if channels == 1:
-            nn.init.constant_(self.linear.weight, 1.0)
-        else:
-            eye = torch.eye(channels).view(channels, channels, 1)
-            with torch.no_grad():
-                self.linear.weight.copy_(eye)
-
-        # Optional time embedding: channel-wise gating
-        self.time_dim = embedding_dim if with_time_emb else 0
-        if with_time_emb:
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, channels),
-                nn.Sigmoid(),
-            )
-        else:
-            self.time_mlp = None
-
-        logger.info(
-            f"Initialized LinearCNN: channels={channels}, time_dim={self.time_dim}"
-        )
-
-    def forward(self, x, time):
-        out = self.linear(x)  # [B, C, L]
-
-        if self.with_time_emb and self.time_mlp is not None:
-            t_emb = self.time_mlp(time)  # [B, C]
-            t_emb = t_emb.unsqueeze(-1)  # [B, C, 1]
-            out = out * t_emb
-
-        return out
-
-
-# === Complex Noise Predictor ===
+# ComplexMLP
 class ComplexMLP(nn.Module):
-    """Deep MLP for noise prediction in diffusion models.
-
-    A replacement for UNet1D that uses a deep MLP architecture instead of convolutional layers.
-    Maintains the same interface as UNet1D for easy swapping in the diffusion model.
-
-    Note: This is designed to work with SNP data where each example has a large number of markers.
-    For memory efficiency, we use a dynamic architecture that scales with sequence length.
-
-    Recommended deeper architecture:
-        hidden_dims = [2048, 1024, 512, 256, 128]
-    This can improve model expressiveness and stability, especially at extreme timesteps.
-    """
+    """Deep MLP for noise prediction in diffusion models. It is designed as drop-in replacement for UNet1D."""
 
     def __init__(
         self,
-        embedding_dim=64,  # To include time embeddings
+        emb_dim=512,  # Sinusoidal embedding dimension
         dim_mults=(1, 2, 4, 8),  # Unused, but kept for interface compatibility
         channels=1,  # Input channels (SNP data channels is always 1)
-        with_time_emb=False,  # To include time embeddings
-        with_pos_emb=False,  # Unused, but kept for interface compatibility
+        with_time_emb=True,  # To include time embeddings
+        time_dim=128,  # Final projected time embedding dimension
+        with_pos_emb=True,  # Unused, but kept for interface compatibility
+        pos_dim=128,  # Unused, but kept for interface compatibility
         norm_groups=8,  # Unused, but kept for interface compatibility
-        seq_length=100,  # Expected sequence length (number of SNP markers)
+        seq_length=160858,  # Expected sequence length (number of SNP markers)
         **kwargs,
     ):
         super().__init__()
 
+        # Base parameters
+        self.emb_dim = emb_dim
         self.channels = channels
         self.seq_length = seq_length
         self.with_time_emb = with_time_emb
 
-        print(f"Initializing MLP with sequence length: {seq_length}")
-
-        # Calculate input dimension (flattened sequence + time embedding)
+        # Input dimension (flattened sequence)
         self.input_dim = channels * seq_length
 
-        # Time embedding network
-        if with_time_emb:
-            self.time_dim = embedding_dim
-            self.time_mlp = nn.Sequential(
-                SinusoidalTimeEmbeddings(embedding_dim),
-                nn.Linear(embedding_dim, self.time_dim),
-                nn.GELU(),
-                nn.Linear(self.time_dim, self.time_dim),
-            )
-        else:
-            self.time_dim = 0
-            self.time_mlp = None
+        # Time embedding dimension
+        self.time_dim = time_dim if with_time_emb else 0
+
+        # Flatten layer
+        self.flatten = nn.Flatten()
 
         # Hidden dimensions
         self.hidden_dims = [1024, 512, 256, 1024]
 
-        print(f"Using hidden dimensions: {self.hidden_dims}")
+        # Time embedding network (emb_dim -> time_dim -> GELU -> time_dim)
+        if self.with_time_emb:
+            self.time_mlp = nn.Sequential(
+                SinusoidalTimeEmbeddings(self.emb_dim),
+                nn.Linear(self.emb_dim, self.time_dim),
+                nn.GELU(),
+                nn.Linear(self.time_dim, self.time_dim),
+            )
+        else:
+            self.time_mlp = None
 
-        # MLP layers
-        self.flatten = nn.Flatten()
-
-        # Input layer
+        # Linear input layer (flattened input + time embedding)
         self.input_layer = nn.Linear(
             self.input_dim + self.time_dim, self.hidden_dims[0]
         )
@@ -316,7 +195,7 @@ class ComplexMLP(nn.Module):
 
     def _make_residual_block(self, in_dim, out_dim):
         """Create a residual block with layer normalization."""
-        return nn.Sequential(
+        resnet_block = nn.Sequential(
             nn.Linear(in_dim, out_dim),
             nn.LayerNorm(out_dim),
             nn.GELU(),
@@ -325,29 +204,28 @@ class ComplexMLP(nn.Module):
             nn.GELU(),
             nn.Linear(out_dim, out_dim),
         )
+        return resnet_block
 
     def forward(self, x, time):
-        """Forward pass for ComplexNoisePredictor.
+        """Forward pass for ComplexMLP.
 
         Args:
-            x (torch.Tensor): Input SNP data of shape [batch, channels, seq_len].
-            time (torch.Tensor): Diffusion timesteps of shape [batch].
+            x (torch.Tensor): Input SNP data of shape [B, C, L].
+            time (torch.Tensor): Diffusion timesteps of shape [B].
 
         Returns:
             torch.Tensor: Predicted noise with same shape as input.
         """
-        batch_size, channels, seq_len = x.shape
+        B, C, L = x.shape
 
         # Flatten the input
-        x_flat = self.flatten(x)  # [batch, channels*seq_len]
+        x_flat = self.flatten(x)  # [B, C*L]
 
         # Process time embedding if enabled
         if self.with_time_emb and self.time_mlp is not None:
-            t_emb = self.time_mlp(time)  # [batch, time_dim]
+            t_emb = self.time_mlp(time)  # [B, time_dim]
             # Concatenate flattened input with time embedding
-            x_t = torch.cat(
-                [x_flat, t_emb], dim=1
-            )  # [batch, channels*seq_len + time_dim]
+            x_t = torch.cat([x_flat, t_emb], dim=1)  # [B, C*L + time_dim]
         else:
             x_t = x_flat
 
@@ -367,4 +245,4 @@ class ComplexMLP(nn.Module):
         output = self.output_layer(h)
 
         # Reshape back to original dimensions
-        return output.view(batch_size, channels, seq_len)
+        return output.view(B, C, L)
