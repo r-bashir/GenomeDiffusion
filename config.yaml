@@ -30,6 +30,9 @@ data:
   scaling: true                # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
 
+  augment_prob: 0.0            # If > 0, enable augmentation in compute_loss()
+  genotype_values: [0.25, 0.0, 0.5]
+
 # DDPM
 diffusion:
   timesteps: 1000              # Diffusion steps
