@@ -190,6 +190,12 @@ class DiffusionModel(NetworkBase):
         This method performs the forward diffusion process, predicts noise,
         and calculates the loss. One can scale the MSE with a scale factor.
 
+        Optional data augmentation (controlled by config) can replace a
+        proportion of x0 values with random valid genotype values when
+        constructing the noisy input xt. Importantly, the loss is still
+        computed against the original, true x0 (not the augmented copy),
+        as suggested.
+
         Args:
             x0: Input batch from dataloader of shape [B, C=1, L]
         Returns:
@@ -198,6 +204,9 @@ class DiffusionModel(NetworkBase):
         # Ensure batch has the correct shape of [B, C=1, L]
         device = x0.device
         x0 = self._prepare_batch(x0)
+
+        # Keep the original x0 for loss calculation
+        x0_true = x0
 
         # Sample random timesteps for each batch element
         # If max_T is provided, restrict sampling to low timesteps [1, max_T]
@@ -212,14 +221,48 @@ class DiffusionModel(NetworkBase):
         # Generate Gaussian noise
         eps = torch.randn_like(x0, device=device)
 
-        # Forward diffusion: add noise to the batch
-        xt = self.forward_diffusion.sample(x0, t, eps)
+        # Optional augmentation: replace a proportion of x0 entries with
+        # random genotype values ONLY for the forward diffusion input.
+        # This does not alter the target used in the loss.
+        aug_prob = float(self.hparams["data"]["augment_prob"])
+        if self.training and aug_prob > 0.0:
+            # Determine genotype values to sample from
+            geno_vals = self.hparams["data"]["genotype_values"]
+            geno_tensor = torch.tensor(geno_vals, device=device, dtype=x0.dtype)
+
+            # Bernoulli mask indicating which positions to replace
+            replace_mask = torch.rand_like(x0, device=device) < aug_prob
+
+            # Sample random genotype indices for all positions, then apply mask
+            rand_idx = torch.randint(
+                low=0, high=geno_tensor.numel(), size=x0.shape, device=device
+            )
+            rand_genos = geno_tensor[rand_idx]
+
+            # Create augmented x0 used only for the forward diffusion step
+            x0_aug = torch.where(replace_mask, rand_genos, x0)
+
+            # Log the realized augmentation fraction
+            self.log(
+                "augment_replace_frac",
+                replace_mask.float().mean(),
+                on_step=True,
+                on_epoch=True,
+                prog_bar=False,
+            )
+        else:
+            x0_aug = x0
+
+        # Forward diffusion: add noise to the (possibly augmented) batch
+        xt = self.forward_diffusion.sample(x0_aug, t, eps)
 
         # ε_θ(xt, t): Model's prediction of the noise added at timestep t
         eps_theta = self.predict_added_noise(xt, t)
 
         # Elementwise MSE loss
-        mse = F.mse_loss(eps_theta, (xt - x0), reduction="none")  # shape: [B, C=1, L]
+        mse = F.mse_loss(
+            eps_theta, (xt - x0_true), reduction="none"
+        )  # shape: [B, C=1, L]
 
         # Optional staircase/real separation
         if getattr(self, "mask", None) is not None:
