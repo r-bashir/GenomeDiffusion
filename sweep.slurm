@@ -18,6 +18,9 @@
 # Set defaults
 CONFIG_FILE=${1:-"sweep.yaml"}
 HPO_NAME=${2:-"HPO"}
+# Optional: checkpoint and resume strategy
+CHECKPOINT_PATH=${3:-}
+RESUME_STRATEGY=${4:-}
 
 echo "Config: $CONFIG_FILE | Project: $HPO_NAME"
 
@@ -60,6 +63,16 @@ echo "================================"
 
 # Step 1: Initialize Sweep
 echo "📋 Initializing W&B Sweep..."
+
+# Build optional flags
+INIT_FLAGS=( )
+if [ -n "$CHECKPOINT_PATH" ]; then
+  INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+fi
+if [ -n "$RESUME_STRATEGY" ]; then
+  INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+fi
+
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
@@ -70,7 +83,8 @@ apptainer exec --nv \
         --init \
         --config '$CONFIG_FILE' \
         --project '$HPO_NAME' \
-        --save-sweep-id 'sweep_${JOB_ID}.yaml'" || {
+        --save-sweep-id 'sweep_${JOB_ID}.yaml' \
+        ${INIT_FLAGS[@]}" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }

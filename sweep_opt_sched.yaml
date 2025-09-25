@@ -1,0 +1,66 @@
+# W&B Sweep: Optimizer + Scheduler Only
+# Use this sweep to re-tune a model starting from a checkpoint while keeping
+# the architecture and data settings fixed (they come from config.yaml).
+
+program: train_sweep.py
+method: bayes
+run_cap: 30
+
+metric:
+  name: val_loss_epoch
+  goal: minimize
+
+# Optional early termination to save compute on poor trials
+early_terminate:
+  type: hyperband
+  min_iter: 10
+  eta: 5
+
+parameters:
+  # =====================
+  # Optimizer parameters
+  # =====================
+  learning_rate:
+    values: [0.00005, 0.0001, 0.0003, 0.0005, 0.001]
+
+  weight_decay:
+    values: [0.0, 0.00001, 0.00003, 0.0001, 0.0003]
+
+  amsgrad:
+    values: [true, false]
+
+  # =====================
+  # Scheduler parameters
+  # =====================
+  scheduler_type:
+    values: ['cosine', 'warmup_cosine', 'reduce', 'onecycle']
+
+  # Cosine scheduler
+  eta_min:
+    values: [1e-6, 1e-5, 1e-4]
+
+  # WarmupCosine scheduler
+  warmup_epochs:
+    values: [3, 5, 10]
+
+  # ReduceLROnPlateau
+  scheduler_mode:
+    values: ['min']
+  scheduler_factor:
+    values: [0.3, 0.5, 0.7]
+  scheduler_patience:
+    values: [5, 10, 15]
+  scheduler_threshold:
+    values: [1e-6, 1e-5, 1e-4]
+  scheduler_min_lr:
+    values: [1e-6, 1e-5]
+
+  # OneCycleLR
+  scheduler_max_lr:
+    values: [0.001, 0.003, 0.005]
+  scheduler_pct_start:
+    values: [0.2, 0.3, 0.4]
+  scheduler_anneal_strategy:
+    values: ['cos', 'linear']
+  scheduler_final_div_factor:
+    values: [50, 100, 200]

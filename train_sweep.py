@@ -1,40 +1,17 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Training script integrated with W&B Sweeps for hyperparameter optimization.
+"""Training entrypoint for W&B Sweeps.
 
-This script trains the diffusion model and is intended to be launched by a W&B
-agent during sweeps. It can also be run directly for local testing. Unknown
-CLI arguments are parsed as sweep parameters and mapped into the hierarchical
-config (see `update_config_with_sweep_params()`), so you can override nested
-keys like `unet.use_attention` or `loss.discrete_penalty_weight` from the
-command line.
+This script is launched by W&B agents (see `sweep_unet.yaml: program`). It parses
+flat or dotted CLI params, merges them into the config, and trains a diffusion model.
 
-Usage examples:
-    # 1) Run locally with a base config only
-    python train_sweep.py --config config.yaml
+Supported resume flow:
+- `training.checkpoint` (set via `--checkpoint` in the sweep init) and
+  `training.resume_strategy` (weights|trainer) enable checkpoint-based re-tuning.
 
-    # 2) Run locally with manual hyperparameter overrides (dot or flat keys)
-    python train_sweep.py \
-        --config config.yaml \
-        --learning_rate 1e-4 \
-        --batch_size 32 \
-        --unet.use_attention true \
-        --attention_heads 4 \
-        --loss.use_discrete_loss true \
-        --discrete_penalty_weight 0.2
-
-    # 3) Launch a W&B sweep (sweep.yaml should specify program: train_sweep.py)
-    wandb sweep sweep.yaml
-
-    # 4) Run W&B agent to execute multiple runs from the sweep
-    wandb agent <entity/project>/<sweep_id>
-
-Requirements:
-    - WANDB_API_KEY must be configured (env var or `wandb login`).
-    - The base config file (default: config.yaml) should exist and be valid.
-    - When used via sweeps, parameters from `wandb.config` are merged with any
-      CLI overrides passed through the agent.
+For complete usage instructions (local, concurrent, and cluster), examples, and
+troubleshooting, see SWEEP.md (single source of truth).
 """
 
 import argparse
@@ -116,6 +93,9 @@ def update_config_with_sweep_params(config: Dict, sweep_params: Dict) -> Dict:
         "scheduler_pct_start": ("scheduler", "pct_start"),
         "scheduler_anneal_strategy": ("scheduler", "anneal_strategy"),
         "scheduler_final_div_factor": ("scheduler", "final_div_factor"),
+        # Checkpoint/resume parameters
+        "checkpoint": ("training", "checkpoint"),
+        "resume_strategy": ("training", "resume_strategy"),  # 'weights' or 'trainer'
     }
 
     # Update configuration with mapped parameters
@@ -200,6 +180,16 @@ def validate_config(config: Dict) -> Dict:
     for key, default_value in diffusion_defaults.items():
         if key not in config["diffusion"]:
             config["diffusion"][key] = default_value
+
+    # Defaults for resume behavior
+    training_defaults = {
+        "checkpoint": None,
+        "resume_strategy": "weights",  # 'weights' or 'trainer'
+    }
+
+    for key, default_value in training_defaults.items():
+        if key not in config["training"]:
+            config["training"][key] = default_value
 
     return config
 
@@ -323,6 +313,54 @@ def parse_args():
     return args
 
 
+def _resolve_checkpoint_path(checkpoint_ref: str) -> str:
+    """Resolve a checkpoint reference to a local .ckpt file path.
+
+    Supports either a direct filesystem path or a W&B artifact reference in the
+    form "entity/project/run_or_artifact:alias". In the latter case, downloads
+    the artifact and returns the path to the first .ckpt file inside it.
+
+    Args:
+        checkpoint_ref: local path or W&B artifact reference
+
+    Returns:
+        Local filesystem path to a .ckpt file
+
+    Raises:
+        FileNotFoundError: if the checkpoint cannot be found or resolved
+    """
+    if not checkpoint_ref:
+        raise FileNotFoundError("Empty checkpoint reference provided")
+
+    # Direct local path
+    if os.path.exists(checkpoint_ref) and os.path.isfile(checkpoint_ref):
+        return checkpoint_ref
+
+    # If it's a directory, try to find a .ckpt within
+    if os.path.isdir(checkpoint_ref):
+        for root, _, files in os.walk(checkpoint_ref):
+            for fn in files:
+                if fn.endswith(".ckpt"):
+                    return os.path.join(root, fn)
+
+    # Try interpreting as a W&B artifact reference
+    try:
+        art = wandb.use_artifact(checkpoint_ref, type="model")
+        art_dir = art.download()
+        # Find a .ckpt inside the artifact directory
+        for root, _, files in os.walk(art_dir):
+            for fn in files:
+                if fn.endswith(".ckpt"):
+                    return os.path.join(root, fn)
+        raise FileNotFoundError(
+            f"No .ckpt file found inside W&B artifact: {checkpoint_ref}"
+        )
+    except Exception as e:
+        raise FileNotFoundError(
+            f"Could not resolve checkpoint reference: {checkpoint_ref} ({e})"
+        )
+
+
 def main():
     """Main training function for W&B Sweeps."""
 
@@ -425,8 +463,51 @@ def main():
     )
 
     try:
+        # Optionally initialize from or resume a checkpoint
+        ckpt_path = None
+        checkpoint_path = config["training"].get("checkpoint")
+        resume_strategy = (
+            config["training"].get("resume_strategy") or "weights"
+        ).lower()
+
+        if checkpoint_path:
+            try:
+                resolved_ckpt = _resolve_checkpoint_path(checkpoint_path)
+                print(f"Checkpoint resolved to: {resolved_ckpt}")
+
+                if resume_strategy == "trainer":
+                    # Resume full training state (optimizer/scheduler/epoch)
+                    ckpt_path = resolved_ckpt
+                    print(
+                        "Resuming full trainer state from checkpoint (resume_strategy='trainer')."
+                    )
+                else:
+                    # Weights-only init: load model weights but start fresh optimizers/schedulers
+                    print(
+                        "Initializing model weights from checkpoint (resume_strategy='weights')."
+                    )
+                    ckpt = torch.load(resolved_ckpt, map_location="cpu")
+                    state_dict = ckpt.get("state_dict", ckpt)
+                    missing, unexpected = model.load_state_dict(
+                        state_dict, strict=False
+                    )
+                    if missing:
+                        print(
+                            f"[load_state_dict] Missing keys: {len(missing)} (showing up to 10): {missing[:10]}"
+                        )
+                    if unexpected:
+                        print(
+                            f"[load_state_dict] Unexpected keys: {len(unexpected)} (showing up to 10): {unexpected[:10]}"
+                        )
+            except FileNotFoundError as e:
+                print(f"⚠️ Checkpoint not found or could not be resolved: {e}")
+                print("Proceeding with fresh initialization.")
+
         # Train model
-        trainer.fit(model)
+        if ckpt_path is not None:
+            trainer.fit(model, ckpt_path=ckpt_path)
+        else:
+            trainer.fit(model)
 
         # Log final metrics with error handling
         try:

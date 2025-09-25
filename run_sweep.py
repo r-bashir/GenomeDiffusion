@@ -2,24 +2,17 @@
 # coding: utf-8
 
 """
-Local W&B Sweep Workflow:
-    1. python run_sweep.py --init --config sweep.yaml --project <hpo>  # Initialize
-    2. python run_sweep.py --agent sweep_id --project <hpo>  # Run agent(s)
-    3. python run_sweep.py --analyze sweep_id --project <hpo>  # Analyze
+W&B Sweep orchestration for GenomeDiffusion.
 
-Cluster W&B Sweep Workflow:
-    # Single sweep job (init + agent + analyze inside container)
-    sbatch sweep.slurm sweep.yaml MyProject
+This script supports three modes:
+- `--init`: initializes a sweep from a YAML config and can inject defaults like
+  `--checkpoint` (path or W&B artifact) and `--resume-strategy` (weights|trainer).
+- `--agent <SWEEP_ID>`: runs a local W&B agent for the sweep.
+- `--analyze <SWEEP_ID>`: summarizes results and writes best tuned params.
 
-    # Multiple coordinated agents (self-contained: init + agents + analyze)
-    sbatch sweep_parallel.slurm sweep.yaml 5 MyProject
-
-    # Job arrays at scale (self-contained: init by task 1 + agents + analyze)
-    sbatch --array=1-20 agent.slurm MyProject sweep.yaml
-
-    # Direct container execution (test locally through container)
-    bash sweep.slurm sweep.yaml MyProject
-
+For complete, up-to-date instructions (local single/concurrent agents and cluster
+workflows), flags, and examples, see SWEEP.md. SWEEP.md is the single source of
+truth for sweep usage and troubleshooting.
 """
 
 import argparse
@@ -34,13 +27,31 @@ import yaml
 import wandb
 
 
-def initialize_sweep(config_path: str, project: str = "HPO") -> str:
-    """Initialize a new W&B sweep."""
+def initialize_sweep(
+    config_path: str,
+    project: str = "HPO",
+    checkpoint_path: Optional[str] = None,
+    resume_strategy: Optional[str] = None,
+) -> str:
+    """Initialize a new W&B sweep.
+
+    Optionally inject default parameters into the sweep configuration so that
+    all agent runs receive them via wandb.config. This is the most reliable way
+    to pass extra flags to the sweep program without modifying the command.
+    """
     if not pathlib.Path(config_path).exists():
         raise FileNotFoundError(f"Sweep config not found: {config_path}")
 
     with open(config_path) as f:
         sweep_config = yaml.safe_load(f)
+
+    # Inject defaults for checkpoint/resume if provided
+    if checkpoint_path or resume_strategy:
+        sweep_config.setdefault("parameters", {})
+        if checkpoint_path:
+            sweep_config["parameters"]["checkpoint"] = {"value": checkpoint_path}
+        if resume_strategy:
+            sweep_config["parameters"]["resume_strategy"] = {"value": resume_strategy}
 
     print(
         f"🚀 Initializing sweep with {len(sweep_config.get('parameters', {}))} parameters..."
@@ -130,7 +141,25 @@ def main():
         dest="save_sweep_id",
         help="Path to save the sweep ID YAML",
     )
-    parser.add_argument("--project", type=str, default="HPO", help="W&B project name")
+    parser.add_argument(
+        "--project",
+        type=str,
+        default="HPO",
+        help="W&B Sweep project name",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Optional checkpoint (.ckpt path or W&B artifact ref) to inject as default",
+    )
+    parser.add_argument(
+        "--resume-strategy",
+        type=str,
+        choices=["weights", "trainer"],
+        default=None,
+        help="Optional resume strategy to inject as default for the sweep",
+    )
     args = parser.parse_args()
 
     if not (args.init or args.agent or args.analyze):
@@ -151,7 +180,12 @@ def main():
             if not args.config:
                 parser.error("--init requires --config")
             print("🚀 Initializing sweep...")
-            sweep_id = initialize_sweep(args.config, args.project)
+            sweep_id = initialize_sweep(
+                args.config,
+                args.project,
+                checkpoint_path=args.checkpoint,
+                resume_strategy=args.resume_strategy,
+            )
             out_path = args.save_sweep_id or "current_sweep.yaml"
             write_sweep_id_file(out_path, sweep_id, args.project, entity)
             print(f"📝 Sweep ID: {sweep_id}")

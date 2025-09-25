@@ -9,13 +9,16 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
-# Coordinated W&B Agents SLURM Script for GenomeDiffusion HPO
-# Usage: sbatch sweep_parallel.slurm [config_file] [num_agents] [project_name]
+# Coordinated W&B Agents SLURM Script for GenomeDiffusion HPO (saturate one GPU)
+# Usage: sbatch sweep_saturate.slurm [config_file] [num_agents] [project_name] [checkpoint_or_artifact] [weights|trainer]
 
 # Arguments
 CONFIG_FILE=${1:-"sweep.yaml"}
 NUM_AGENTS=${2:-3}
 HPO_NAME=${3:-"HPO"}
+# Optional: checkpoint path or W&B artifact, and resume strategy
+CHECKPOINT_PATH=${4:-}
+RESUME_STRATEGY=${5:-}
 
 echo "Config: $CONFIG_FILE | Agents: $NUM_AGENTS | Project: $HPO_NAME"
 
@@ -49,6 +52,15 @@ mkdir -p $WANDB_CACHE_DIR $WANDB_CONFIG_DIR
 
 echo "================================"
 echo "🚀 Initializing sweep inside container..."
+# Build optional flags for initialization
+INIT_FLAGS=( )
+if [ -n "$CHECKPOINT_PATH" ]; then
+  INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+fi
+if [ -n "$RESUME_STRATEGY" ]; then
+  INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+fi
+
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
@@ -59,7 +71,8 @@ apptainer exec --nv \
         --init \
         --config '$CONFIG_FILE' \
         --project '$HPO_NAME' \
-        --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml'"
+        --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml' \
+        ${INIT_FLAGS[@]}"
 
 if [ $? -ne 0 ]; then
     echo "❌ Sweep initialization failed!"

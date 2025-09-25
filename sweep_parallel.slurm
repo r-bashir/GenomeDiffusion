@@ -15,6 +15,9 @@
 # Arguments
 CONFIG_FILE=${1:-"sweep.yaml"}
 HPO_NAME=${2:-"HPO"}
+# Optional: checkpoint and resume strategy
+CHECKPOINT_PATH=${3:-}
+RESUME_STRATEGY=${4:-}
 
 # Paths
 CONTAINER=/proj/gcae_berzelius/users/x_rabba/lightning_25.01-py3.sif
@@ -35,6 +38,15 @@ mkdir -p slurm_logs $WANDB_CACHE_DIR $WANDB_CONFIG_DIR
 # Sweep initialization only by the first array job
 if [ "$SLURM_ARRAY_TASK_ID" -eq 1 ]; then
     echo "🚀 Initializing sweep..."
+    # Build optional flags
+    INIT_FLAGS=( )
+    if [ -n "$CHECKPOINT_PATH" ]; then
+        INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+    fi
+    if [ -n "$RESUME_STRATEGY" ]; then
+        INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+    fi
+
     apptainer exec --nv \
         --bind $DATA_DIR:/data \
         --bind $PROJECT_DIR:/workspace \
@@ -45,7 +57,8 @@ if [ "$SLURM_ARRAY_TASK_ID" -eq 1 ]; then
             --init \
             --config '$CONFIG_FILE' \
             --project '$HPO_NAME' \
-            --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml'"
+            --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml' \
+            ${INIT_FLAGS[@]}"
     if [ $? -ne 0 ]; then
         echo "❌ Sweep initialization failed!"
         exit 1
