@@ -36,8 +36,10 @@ diffusion:
   beta_end: 0.02               # End value for linear beta scheduler
   max_beta: 0.999              # Max value for cosine beta scheduler (not needed yet)
   beta_schedule: "cosine"      # Choose between 'linear' or 'cosine'
-  denoise_step: 1
-  discretize: false
+  denoise_step: 1              # Denoising step, default 1
+  discretize: false            # Discretize, default false
+  enable_lowT_val: true        # Enable low-T validation (compute_loss_lowT)
+  lowT_val_timesteps: 10       # Number of timesteps for low-T validation
 
 # UNet1D
 unet:

@@ -81,3 +81,33 @@ Verification code:
 # once connected, download full run (contains checkpoints, evaluation and inference results)
 sftp> get -r path/to/run
 ```
+
+## 3. Sweeps (HPO)
+
+See `SWEEP.md` for the complete guide to running W&B Sweeps locally and on the cluster, including re-tuning from checkpoints and troubleshooting. Below are quick-start commands.
+
+### Local (GPU)
+
+```shell
+# initialize a sweep and inject a checkpoint + resume strategy
+python run_sweep.py --init --config sweep_unet.yaml --project HPO \
+  --checkpoint your-entity/GenomeDiffusion/model-artifact:best \
+  --resume-strategy weights
+
+# start an agent
+SWEEP_ID=$(python -c "import yaml; print(yaml.safe_load(open('current_sweep.yaml'))['sweep_id'])")
+python run_sweep.py --agent "$SWEEP_ID" --project HPO
+```
+
+### Cluster (AppTainer)
+
+```shell
+# single job (init + one agent + analyze)
+sbatch sweep.slurm sweep_unet.yaml HPO your-entity/GenomeDiffusion/model-artifact:best weights
+
+# parallel agents (array, one GPU per agent)
+sbatch sweep_parallel.slurm sweep_unet.yaml HPO your-entity/GenomeDiffusion/model-artifact:best weights
+
+# saturate one GPU with N concurrent agents
+sbatch sweep_saturate.slurm sweep_unet.yaml 3 HPO your-entity/GenomeDiffusion/model-artifact:best weights
+```
