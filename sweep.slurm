@@ -56,7 +56,7 @@ mkdir -p $WANDB_CONFIG_DIR
 echo "🚀 Starting W&B sweep initialization..."
 
 # Step 1: Initialize Sweep
-echo "📋 Initializing W&B Sweep..."
+echo "📋 1. Initializing W&B Sweep..."
 
 # Build optional flags
 INIT_FLAGS_STR=""
@@ -71,6 +71,7 @@ fi
 
 CMD_INIT="python run_sweep.py --init --config '$CONFIG_FILE' --project '$HPO_NAME' --save-sweep-id 'sweep_${JOB_ID}.yaml'${INIT_FLAGS_STR}"
 echo "Init command: $CMD_INIT"
+
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
@@ -93,34 +94,38 @@ SWEEP_ID=$(apptainer exec \
 echo "📝 Sweep ID: $SWEEP_ID"
 
 # Step 2: Run Sweep Agent
-echo "🤖 Starting W&B Agent..."
+echo "🤖 2. Starting W&B Agent..."
+CMD_AGENT="python run_sweep.py --agent '$SWEEP_ID' --project '$HPO_NAME'"
+echo "Agent command: $CMD_AGENT"
+
+set +e
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
-    $CONTAINER bash -c "cd /workspace && \
-    python run_sweep.py \
-        --agent '$SWEEP_ID' \
-        --project '$HPO_NAME'" || {
+    $CONTAINER bash -c "cd /workspace && $CMD_AGENT" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
 
-echo "✅ Agent execution completed!"
+AGENT_EXIT=$?
+set -e 2>/dev/null || true
+
+echo "✅ Agent finished with exit code: $AGENT_EXIT"
 echo "📊 Check W&B dashboard: https://wandb.ai/$WANDB_ENTITY/$HPO_NAME/sweeps/$SWEEP_ID"
 
-# Step 3: Final Analysis (extract best configuration)
-echo "📈 Running final analysis to save best configuration..."
+# Step 3: Final Analysis
+echo "📈 3. Running final analysis..."
+CMD_ANA="python run_sweep.py --analyze '$SWEEP_ID' --project '$HPO_NAME'"
+echo "Analyze command: $CMD_ANA"
+
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
-    $CONTAINER bash -c "cd /workspace && \
-    python run_sweep.py \
-        --analyze '$SWEEP_ID' \
-        --project '$HPO_NAME'" || {
+    $CONTAINER bash -c "cd /workspace && $CMD_ANA" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
