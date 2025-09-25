@@ -11,14 +11,13 @@
 
 # Dual-purpose W&B Sweep Script for HPO
 # Submit to SLURM
-#   sbatch sweep.slurm [config_file] [hpo_name]
+#   sbatch sweep.slurm [config_file] [hpo_name] [checkpoint_path] [resume_strategy]
 # Run directly in container
-#     bash sweep.slurm [config_file] [hpo_name]
+#     bash sweep.slurm [config_file] [hpo_name] [checkpoint_path] [resume_strategy]
 
 # Set defaults
 CONFIG_FILE=${1:-"sweep.yaml"}
 HPO_NAME=${2:-"HPO"}
-# Optional: checkpoint and resume strategy
 CHECKPOINT_PATH=${3:-}
 RESUME_STRATEGY=${4:-}
 
@@ -59,7 +58,7 @@ echo "🚀 Starting W&B sweep initialization..."
 # Step 1: Initialize Sweep
 echo "📋 Initializing W&B Sweep..."
 
-# Build optional flags as a safely escaped string (avoids missing-arg issues)
+# Build optional flags
 INIT_FLAGS_STR=""
 if [ -n "$CHECKPOINT_PATH" ]; then
   printf -v CKPT_ESC '%q' "$CHECKPOINT_PATH"

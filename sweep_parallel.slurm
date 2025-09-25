@@ -1,5 +1,6 @@
 #!/bin/bash
-#SBATCH -J HPO_Array               # Job name
+#SBATCH -J HPO_Parallel            # Job name
+#SBATCH --array=1-4                # Launch 4 array jobs (agents)
 #SBATCH -t 08:00:00                # Time limit (HH:MM:SS)
 #SBATCH --ntasks=1                 # One task per array job
 #SBATCH --gpus=1                   # Request 1 GPU per node/task
@@ -8,14 +9,13 @@
 #SBATCH -e slurm_logs/%x-%A_%a.err # Stderr
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
-#SBATCH --array=1-4                 # Launch 4 array jobs (agents)
 
-# Usage: sbatch sweep_array.slurm [config_file] [project_name]
+# Slurm script to run W&B Sweep with multiple agents on multiple GPUs (parallel)
+# Usage: sbatch sweep_parallel.slurm [config_file] [project_name] [checkpoint_path] [resume_strategy]
 
 # Arguments
 CONFIG_FILE=${1:-"sweep.yaml"}
 HPO_NAME=${2:-"HPO"}
-# Optional: checkpoint and resume strategy
 CHECKPOINT_PATH=${3:-}
 RESUME_STRATEGY=${4:-}
 
@@ -38,27 +38,26 @@ mkdir -p slurm_logs $WANDB_CACHE_DIR $WANDB_CONFIG_DIR
 # Sweep initialization only by the first array job
 if [ "$SLURM_ARRAY_TASK_ID" -eq 1 ]; then
     echo "🚀 Initializing sweep..."
-    # Build optional flags
-    INIT_FLAGS=( )
+    # Build optional flags as safely escaped string
+    INIT_FLAGS_STR=""
     if [ -n "$CHECKPOINT_PATH" ]; then
-        INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+        printf -v CKPT_ESC '%q' "$CHECKPOINT_PATH"
+        INIT_FLAGS_STR+=" --checkpoint ${CKPT_ESC}"
     fi
     if [ -n "$RESUME_STRATEGY" ]; then
-        INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+        printf -v RES_ESC '%q' "$RESUME_STRATEGY"
+        INIT_FLAGS_STR+=" --resume-strategy ${RES_ESC}"
     fi
+
+    CMD_INIT="python run_sweep.py --init --config '$CONFIG_FILE' --project '$HPO_NAME' --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml'${INIT_FLAGS_STR}"
+    echo "Init command: $CMD_INIT"
 
     apptainer exec --nv \
         --bind $DATA_DIR:/data \
         --bind $PROJECT_DIR:/workspace \
         --env WANDB_API_KEY=$WANDB_API_KEY \
         --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
-        $CONTAINER bash -c "cd /workspace && \
-        python run_sweep.py \
-            --init \
-            --config '$CONFIG_FILE' \
-            --project '$HPO_NAME' \
-            --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml' \
-            ${INIT_FLAGS[@]}"
+        $CONTAINER bash -c "cd /workspace && $CMD_INIT"
     if [ $? -ne 0 ]; then
         echo "❌ Sweep initialization failed!"
         exit 1

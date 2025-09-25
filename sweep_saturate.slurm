@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J HPO_Agents              # Job name
+#SBATCH -J HPO_Agent               # Job name
 #SBATCH -t 08:00:00                # Time limit (HH:MM:SS)
 #SBATCH --ntasks=1                 # Number of tasks
 #SBATCH --gpus=1                   # Request 1 GPU
@@ -9,20 +9,17 @@
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=rabia.bashir.9649@student.uu.se
 
-# Coordinated W&B Agents SLURM Script for GenomeDiffusion HPO (saturate one GPU)
+# Slurm script to run W&B Sweep with multiple agents on one GPU (saturate one GPU)
 # Usage: sbatch sweep_saturate.slurm [config_file] [num_agents] [project_name] [checkpoint_or_artifact] [weights|trainer]
 
 # Arguments
 CONFIG_FILE=${1:-"sweep.yaml"}
 NUM_AGENTS=${2:-3}
 HPO_NAME=${3:-"HPO"}
-# Optional: checkpoint path or W&B artifact, and resume strategy
 CHECKPOINT_PATH=${4:-}
 RESUME_STRATEGY=${5:-}
 
-echo "Config: $CONFIG_FILE | Agents: $NUM_AGENTS | Project: $HPO_NAME"
-
-# Create logs directory if it doesn't exist
+# Create logs dir
 mkdir -p slurm_logs
 
 # Paths
@@ -52,27 +49,26 @@ mkdir -p $WANDB_CACHE_DIR $WANDB_CONFIG_DIR
 
 echo "================================"
 echo "🚀 Initializing sweep inside container..."
-# Build optional flags for initialization
-INIT_FLAGS=( )
+# Build optional flags as a safely escaped string
+INIT_FLAGS_STR=""
 if [ -n "$CHECKPOINT_PATH" ]; then
-  INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+  printf -v CKPT_ESC '%q' "$CHECKPOINT_PATH"
+  INIT_FLAGS_STR+=" --checkpoint ${CKPT_ESC}"
 fi
 if [ -n "$RESUME_STRATEGY" ]; then
-  INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+  printf -v RES_ESC '%q' "$RESUME_STRATEGY"
+  INIT_FLAGS_STR+=" --resume-strategy ${RES_ESC}"
 fi
+
+CMD_INIT="python run_sweep.py --init --config '$CONFIG_FILE' --project '$HPO_NAME' --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml'${INIT_FLAGS_STR}"
+echo "Init command: $CMD_INIT"
 
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
-    $CONTAINER bash -c "cd /workspace && \
-    python run_sweep.py \
-        --init \
-        --config '$CONFIG_FILE' \
-        --project '$HPO_NAME' \
-        --save-sweep-id 'sweep_${SLURM_JOB_ID}.yaml' \
-        ${INIT_FLAGS[@]}"
+    $CONTAINER bash -c "cd /workspace && $CMD_INIT"
 
 if [ $? -ne 0 ]; then
     echo "❌ Sweep initialization failed!"
