@@ -12,7 +12,7 @@ data:
   num_workers: 4               # Number of workers for DataLoader class
   datasplit: [1867, 150, 50]   # Data split, we can set 0 for test dataset
   missing_value: 9             # None, to not handle missing values
-  normalize: true              # Normalizing/map data to [0.0, 0.5, 1.0]
+  normalize: true              # Normalizing data to [0.0, 0.5, 1.0] range
   staircase: false             # Force data to have staircase structure
   flip_staircase: false        # Flip staircase pattern on odd-indexed samples
   staircase_pattern:           # Staircase pattern for staircase structure
@@ -26,6 +26,7 @@ data:
     - [3, 7, 0.5]
     - [7, 10, 1.0]
   mixing_interval: 10
+  zero_centering: false        # Centering data to [-0.5, 0.0, 0.5] range
   scaling: true                # Scale data further using a scale_factor
   scale_factor: 0.5            # Factor to scale data
 

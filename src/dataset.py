@@ -101,6 +101,7 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     # 4-5. Handle augmentation gating
     # Priority: staircase -> mixing -> flipped mixing
     if data_config.get("staircase", False):
+        # 4. Handle staircase structure
         logger.info("Applying staircase structure")
 
         # Get pattern configuration for augmentation
@@ -122,7 +123,7 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
         data = staircase_data(data, staircase_pattern)
         logger.info(f"Uniques values: {np.unique(data)}")
 
-        # 5a. Optionally flip the injected staircase pattern only for odd-indexed samples
+        # 4.1. Optionally flip the injected staircase pattern only for odd-indexed samples
         if data_config.get("flip_staircase", False):
             logger.info(
                 "Applying flipped staircase on odd-indexed samples (post-staircase)"
@@ -135,6 +136,7 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
     else:
         mixing_enabled = data_config.get("mixing", False)
         if mixing_enabled:
+            # 5 Handle pattern mixing
             logger.info("Applying pattern mixing (original values for all samples)")
             mixing_pattern = data_config.get("mixing_pattern", [])
             mixing_interval = data_config.get("mixing_interval", 100)
@@ -154,7 +156,7 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
             data = mix_data(data, mixing_pattern, mixing_interval)
             logger.info(f"Uniques values: {np.unique(data)}")
 
-            # 5a. Optionally flip the injected pattern only for odd-indexed samples
+            # 5.1 Optionally flip the injected pattern only for odd-indexed samples
             if data_config.get("flip_mixing", False):
                 logger.info(
                     "Applying flipped mixing on odd-indexed samples (post-mixing)"
@@ -167,7 +169,14 @@ def load_data(config: Dict[str, Any]) -> torch.Tensor:
                 data = mix_data_flip_odd(data, mixing_pattern, mixing_interval)
                 logger.info(f"Uniques values after flipped mixing: {np.unique(data)}")
 
-    # 6. Handle scaling (always last)
+    # 6. Handle zero-centering (apply AFTER any augmentation and BEFORE scaling)
+    if data_config.get("zero_centering", False):
+        logger.info("Centering data to [-0.5, 0.0, 0.5] range")
+        logger.info(f"Mapping: 0 → -0.5, 1 → 0.0, 2 → 0.5")
+        data = centered_normalize_data(data)
+        logger.info(f"Uniques values after centering: {np.unique(data)}")
+
+    # 7. Handle scaling (always last)
     if data_config.get("scaling", False):
         scale_factor = data_config.get("scale_factor")
         logger.info(f"Scaling data by factor {scale_factor}")
@@ -250,6 +259,16 @@ def normalize_data(data: np.ndarray) -> np.ndarray:
     result[data == 2] = 1.0
 
     return result
+
+
+# Centered (signed) normalize data
+def centered_normalize_data(data: np.ndarray) -> np.ndarray:
+    """Shift normalized/augmented data by -0.5 to obtain a signed zero-centered mapping.
+
+    Assumes input is already in [0.0, 0.5, 1.0] (after normalize_data and any augmentation).
+    Output will be in [-0.5, 0.0, 0.5].
+    """
+    return data.astype(np.float32) - 0.5
 
 
 # Scale data
