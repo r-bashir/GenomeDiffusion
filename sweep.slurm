@@ -22,8 +22,6 @@ HPO_NAME=${2:-"HPO"}
 CHECKPOINT_PATH=${3:-}
 RESUME_STRATEGY=${4:-}
 
-echo "Config: $CONFIG_FILE | Project: $HPO_NAME"
-
 # Create logs dir
 mkdir -p slurm_logs
 
@@ -57,34 +55,29 @@ mkdir -p $WANDB_CACHE_DIR
 mkdir -p $WANDB_CONFIG_DIR
 
 echo "🚀 Starting W&B sweep initialization..."
-echo "Config: $CONFIG_FILE"
-echo "Project: $HPO_NAME"
-echo "================================"
 
 # Step 1: Initialize Sweep
 echo "📋 Initializing W&B Sweep..."
 
-# Build optional flags
-INIT_FLAGS=( )
+# Build optional flags as a safely escaped string (avoids missing-arg issues)
+INIT_FLAGS_STR=""
 if [ -n "$CHECKPOINT_PATH" ]; then
-  INIT_FLAGS+=("--checkpoint" "$CHECKPOINT_PATH")
+  printf -v CKPT_ESC '%q' "$CHECKPOINT_PATH"
+  INIT_FLAGS_STR+=" --checkpoint ${CKPT_ESC}"
 fi
 if [ -n "$RESUME_STRATEGY" ]; then
-  INIT_FLAGS+=("--resume-strategy" "$RESUME_STRATEGY")
+  printf -v RES_ESC '%q' "$RESUME_STRATEGY"
+  INIT_FLAGS_STR+=" --resume-strategy ${RES_ESC}"
 fi
 
+CMD_INIT="python run_sweep.py --init --config '$CONFIG_FILE' --project '$HPO_NAME' --save-sweep-id 'sweep_${JOB_ID}.yaml'${INIT_FLAGS_STR}"
+echo "Init command: $CMD_INIT"
 apptainer exec --nv \
     --bind $DATA_DIR:/data \
     --bind $PROJECT_DIR:/workspace \
     --env WANDB_API_KEY=$WANDB_API_KEY \
     --env CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES \
-    $CONTAINER bash -c "cd /workspace && \
-    python run_sweep.py \
-        --init \
-        --config '$CONFIG_FILE' \
-        --project '$HPO_NAME' \
-        --save-sweep-id 'sweep_${JOB_ID}.yaml' \
-        ${INIT_FLAGS[@]}" || {
+    $CONTAINER bash -c "cd /workspace && $CMD_INIT" || {
     echo "Error: Apptainer execution failed!" >&2
     exit 1
 }
