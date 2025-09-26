@@ -254,7 +254,7 @@ def main():
         raise RuntimeError(f"Failed to initialize model: {e}")
 
     # Set up loggers
-    train_logger = setup_logger(config, args.resume)
+    train_logger = setup_logger(config, args.checkpoint)
 
     # Set up callbacks
     callbacks = setup_callbacks(config)
