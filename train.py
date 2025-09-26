@@ -65,7 +65,7 @@ def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[str]
 
 
 def setup_logger(
-    config: Dict, resume_from_checkpoint: Optional[str]
+    config: Dict, checkpoint_path: Optional[str], resume_strategy: Optional[str]
 ) -> Union[TensorBoardLogger, WandbLogger, CSVLogger]:
     """Setup logger based on configuration.
 
@@ -84,8 +84,8 @@ def setup_logger(
     # Get project name
     project_name = config.get("project_name", "GenDiff")
 
-    # Get version from checkpoint if resuming
-    version = get_version_from_checkpoint(resume_from_checkpoint)
+    # Get version from checkpoint if resuming (used for tb/csv dir naming)
+    version = get_version_from_checkpoint(checkpoint_path)
 
     # Common params (only for tb and csv)
     logger_params = {
@@ -110,12 +110,18 @@ def setup_logger(
                     "2. Change logger type in config.yaml to 'tb' or 'csv'"
                 )
 
+            # Only resume the W&B run when doing full trainer resume. For weights-only,
+            # we want a NEW run so tuned optimizer/scheduler are logged to a fresh run.
+            wb_resume = (
+                "allow" if (checkpoint_path and resume_strategy == "trainer") else None
+            )
+
             wandb_logger = WandbLogger(
                 save_dir=project_logs_dir,
                 version=version,
                 project=project_name,  # WandB project name
                 config=config,
-                resume="allow" if resume_from_checkpoint else None,
+                resume=wb_resume,
             )
             return wandb_logger
 
@@ -254,7 +260,7 @@ def main():
         raise RuntimeError(f"Failed to initialize model: {e}")
 
     # Set up loggers
-    train_logger = setup_logger(config, args.checkpoint)
+    train_logger = setup_logger(config, args.checkpoint, args.resume_strategy)
 
     # Set up callbacks
     callbacks = setup_callbacks(config)
