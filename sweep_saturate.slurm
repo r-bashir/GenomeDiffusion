@@ -13,8 +13,8 @@
 # Usage: sbatch sweep_saturate.slurm [config_file] [num_agents] [project_name] [checkpoint_or_artifact] [weights|trainer]
 
 # Arguments
-CONFIG_FILE=${1:-"sweep.yaml"}
-NUM_AGENTS=${2:-3}
+CONFIG_FILE=${1:-"sweep_unet.yaml"}
+NUM_AGENTS=${2:-4}
 HPO_NAME=${3:-"HPO"}
 CHECKPOINT_PATH=${4:-}
 RESUME_STRATEGY=${5:-}

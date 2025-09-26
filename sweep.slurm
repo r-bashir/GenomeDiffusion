@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J HPO                   # Job name
+#SBATCH -J GenHPO                # Job name
 #SBATCH -t 08:00:00              # Time limit (HH:MM:SS)
 #SBATCH --ntasks=1               # Number of tasks
 #SBATCH --gpus=1                 # Request 1 GPU
@@ -16,7 +16,7 @@
 #     bash sweep.slurm [config_file] [hpo_name] [checkpoint_path] [resume_strategy]
 
 # Set defaults
-CONFIG_FILE=${1:-"sweep.yaml"}
+CONFIG_FILE=${1:-"sweep_unet.yaml"}
 HPO_NAME=${2:-"HPO"}
 CHECKPOINT_PATH=${3:-}
 RESUME_STRATEGY=${4:-}
@@ -42,7 +42,7 @@ SECONDS=0
 JOB_ID=${SLURM_JOB_ID:-$$}
 
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
-echo "Using GPU: $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)"
+echo "Using GPU(s): $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader 2>/dev/null | tr '\n' ', ' | sed 's/, $//')"
 
 # W&B cache/config for cluster stability
 export WANDB_MODE=online
