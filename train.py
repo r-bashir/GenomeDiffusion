@@ -8,7 +8,7 @@ Examples:
     python train.py --config config.yaml
 
     # Resume training from a checkpoint
-    python train.py --config config.yaml --resume path/to/checkpoint.ckpt
+    python train.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --resume_strategy [trainer|weights]
 """
 
 import argparse
@@ -199,10 +199,20 @@ def parse_args():
         help="Path to configuration file",
     )
     parser.add_argument(
-        "--resume",
+        "--checkpoint",
         type=str,
         default=None,
         help="Path to checkpoint file to resume training from",
+    )
+    parser.add_argument(
+        "--resume-strategy",
+        type=str,
+        choices=["trainer", "weights"],
+        default="trainer",
+        help=(
+            "Resume strategy: 'trainer' resumes full trainer state (optimizer/scheduler/epoch), "
+            "'weights' loads model weights only and starts fresh with optimizer/scheduler from current config"
+        ),
     )
     return parser.parse_args()
 
@@ -277,10 +287,43 @@ def main():
     # Train model
     try:
         logger.info("Training is started...\n")
-        trainer.fit(
-            model,
-            ckpt_path=args.resume,
-        )
+
+        if args.checkpoint and args.resume_strategy == "weights":
+            # Load weights only into the freshly initialized model, then start training from step 0
+            try:
+                logger.info(
+                    f"Loading weights from checkpoint (weights-only): {args.checkpoint}"
+                )
+                ckpt = torch.load(args.checkpoint, map_location="cpu")
+                state_dict = ckpt.get("state_dict", ckpt)
+                missing, unexpected = model.load_state_dict(state_dict, strict=False)
+                if missing:
+                    logger.warning(
+                        f"Missing keys when loading state_dict: {len(missing)} keys"
+                    )
+                    logger.debug(f"Missing keys: {missing}")
+                if unexpected:
+                    logger.warning(
+                        f"Unexpected keys when loading state_dict: {len(unexpected)} keys"
+                    )
+                    logger.debug(f"Unexpected keys: {unexpected}")
+                logger.info(
+                    "Weights loaded. Starting training with optimizer/scheduler from current config (fresh Trainer state)."
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to load weights from checkpoint: {e}")
+
+            trainer.fit(model)
+
+        else:
+            # Default: resume full trainer state if a checkpoint is provided
+            ckpt_path = args.checkpoint if args.resume_strategy == "trainer" else None
+            if ckpt_path:
+                logger.info(f"Resuming full trainer state from checkpoint: {ckpt_path}")
+            trainer.fit(
+                model,
+                ckpt_path=ckpt_path,
+            )
         logger.info("Training is finished...\n")
 
         # Best checkpoint path

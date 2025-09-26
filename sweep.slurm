@@ -34,7 +34,7 @@ export WANDB_API_KEY="cd68c5a140d1346421e71ebad92df1921db1cc19"
 export CUDA_VISIBLE_DEVICES=0
 export CUDA_LAUNCH_BLOCKING=1
 
-# Start Time
+# Log Start Time
 START_TIME=$(date +"%Y-%m-%d %H:%M:%S")
 SECONDS=0
 
@@ -44,14 +44,11 @@ JOB_ID=${SLURM_JOB_ID:-$$}
 echo "Job $SLURM_JOB_ID started on $(hostname) at $START_TIME"
 echo "Using GPU: $(nvidia-smi --query-gpu=gpu_name --format=csv,noheader)"
 
-# Set W&B settings for cluster
+# W&B cache/config for cluster stability
 export WANDB_MODE=online
 export WANDB_CACHE_DIR=$PROJECT_ROOT/.wandb_cache
 export WANDB_CONFIG_DIR=$PROJECT_ROOT/.wandb_config
-
-# Create wandb directories
-mkdir -p $WANDB_CACHE_DIR
-mkdir -p $WANDB_CONFIG_DIR
+mkdir -p "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
 
 echo "🚀 Starting W&B sweep initialization..."
 
