@@ -8,7 +8,7 @@ Examples:
     python train.py --config config.yaml
 
     # Resume training from a checkpoint
-    python train.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --resume_strategy [trainer|weights]
+    python train.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --resume-strategy [trainer|weights]
 """
 
 import argparse
@@ -20,7 +20,7 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
-from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, WandbLogger
+from pytorch_lightning.loggers import TensorBoardLogger, WandbLogger
 
 from src import DiffusionModel
 from src.utils import load_config, set_seed, setup_logging
@@ -66,15 +66,32 @@ def get_version_from_checkpoint(checkpoint_path: Optional[str]) -> Optional[str]
 
 def setup_logger(
     config: Dict, checkpoint_path: Optional[str], resume_strategy: Optional[str]
-) -> Union[TensorBoardLogger, WandbLogger, CSVLogger]:
-    """Setup logger based on configuration.
+) -> Union[TensorBoardLogger, WandbLogger]:
+    """Create and configure the experiment logger (W&B or TensorBoard).
 
     Args:
         config: Configuration dictionary
-        resume_from_checkpoint: Path to checkpoint for resuming training
+        checkpoint_path: Path to checkpoint for resuming training
+        resume_strategy: 'trainer' to resume full state; 'weights' to load weights only
 
     Returns:
-        Logger instance (TensorBoardLogger, WandbLogger, or CSVLogger)
+        Logger instance (TensorBoardLogger or WandbLogger)
+
+    Behavior
+    - Fresh training (no checkpoint):
+        * WandB: starts a new run with a new run ID
+        * TensorBoard: creates a new version directory under `outputs/lightning_logs/<project_name>/`
+    - Trainer resume (checkpoint provided and resume_strategy == 'trainer'):
+        * WandB: resumes the exact same run by setting `id=<version_from_checkpoint>` and `resume='allow'`
+        * TensorBoard: reuses the same version directory as the checkpoint
+    - Weights resume (checkpoint provided and resume_strategy == 'weights'):
+        * WandB: starts a NEW run (no `id`, no `resume`), so you can compare against the original run
+        * TensorBoard: creates a NEW version directory (does not reuse the prior version)
+
+    Notes
+    - `get_version_from_checkpoint()` infers the version/run identifier from the checkpoint path. For
+      TensorBoard it is typically `version_X`; for W&B it can be the run's random ID string.
+    - We never set a W&B run `id` in weights-resume, which guarantees a fresh run.
     """
     # Get base directory for logs
     base_dir = pathlib.Path(config.get("output_path", "outputs"))
@@ -84,14 +101,20 @@ def setup_logger(
     # Get project name
     project_name = config.get("project_name", "GenDiff")
 
-    # Get version from checkpoint if resuming (used for tb/csv dir naming)
+    # Get version from checkpoint if resuming.
+    # - TensorBoard: controls the versioned folder name.
+    # - WandB: only mapped to run `id` when doing a full trainer resume.
+    #   For weights-only resume, we explicitly avoid reusing the same id so a new run is created.
     version = get_version_from_checkpoint(checkpoint_path)
 
-    # Common params (only for tb and csv)
+    # TensorBoard params.
+    # - Trainer resume: reuse the same version directory derived from the checkpoint path.
+    # - Weights/Fresh: let Lightning create a new version directory by leaving `version=None`.
+    tb_version = version if (checkpoint_path and resume_strategy == "trainer") else None
     logger_params = {
         "save_dir": project_logs_dir,
-        "name": project_name,  # project directory name for tb/csv
-        "version": version,
+        "name": project_name,  # project directory name for TensorBoard
+        "version": tb_version,
     }
 
     # Select logger type from config
@@ -107,21 +130,25 @@ def setup_logger(
                     "WANDB_API_KEY not found in environment variables and no API key configured.\n"
                     "Please either:\n"
                     "1. Set WANDB_API_KEY environment variable, or\n"
-                    "2. Change logger type in config.yaml to 'tb' or 'csv'"
+                    "2. Change logger type in config.yaml to 'tb'"
                 )
 
-            # Only resume the W&B run when doing full trainer resume. For weights-only,
-            # we want a NEW run so tuned optimizer/scheduler are logged to a fresh run.
-            wb_resume = (
-                "allow" if (checkpoint_path and resume_strategy == "trainer") else None
-            )
+            # WandB behavior:
+            # - Trainer resume: resume the exact same run (id=<version>, resume='allow').
+            # - Weights/Fresh: start a NEW run (no id, no resume).
+            wb_full_resume = bool(checkpoint_path and resume_strategy == "trainer")
+            wb_resume = "allow" if wb_full_resume else None
+
+            # Map version -> id ONLY for full trainer resume.
+            # For weights-only we leave id unset so W&B creates a brand-new run with its own id.
+            wandb_id = version if wb_full_resume else None
 
             wandb_logger = WandbLogger(
                 save_dir=project_logs_dir,
-                version=version,
                 project=project_name,  # WandB project name
                 config=config,
                 resume=wb_resume,
+                id=wandb_id,
             )
             return wandb_logger
 
@@ -135,13 +162,8 @@ def setup_logger(
     elif logger_type == "tb":
         return TensorBoardLogger(**logger_params)
 
-    elif logger_type == "csv":
-        return CSVLogger(**logger_params)
-
     else:
-        raise ValueError(
-            f"Logger '{logger_type}' not recognized. Use 'wandb', 'tb', or 'csv'."
-        )
+        raise ValueError(f"Logger '{logger_type}' not recognized. Use 'wandb' or 'tb'.")
 
 
 def setup_callbacks(config: Dict) -> List[pl.Callback]:

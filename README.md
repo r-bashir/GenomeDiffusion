@@ -18,8 +18,12 @@ python train.py --config config.yaml
 ```
 
 ```shell
-# resume training if disrupted, required --config and --resume flags
-python train.py --config config.yaml --resume path/to/checkpoint.ckpt
+# resume training from a checkpoint
+# use --resume-strategy trainer to fully resume the same run (optimizer/scheduler/epoch)
+python train.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --resume-strategy trainer
+
+# or load weights only and start a fresh run (new optimizer/scheduler/version)
+python train.py --config config.yaml --checkpoint path/to/checkpoint.ckpt --resume-strategy weights
 ```
 
 ```shell
