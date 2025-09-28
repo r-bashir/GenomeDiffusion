@@ -374,38 +374,45 @@ class NetworkBase(pl.LightningModule):
         )
 
         # 2) Scheduler
-        scheduler_type = self.hparams["scheduler"]["type"]
-        scheduler_dict = None
+        if getattr(self, "trainer", None) is not None:
+            # Prefer Trainer-aware calculations (DDP, limits, accumulation).
+            total_epochs = int(self.trainer.max_epochs)
+            batches_per_epoch = max(1, int(self.trainer.num_training_batches))
+            accumulate = int(self.trainer.accumulate_grad_batches)
+            steps_per_epoch = max(1, math.ceil(batches_per_epoch / max(1, accumulate)))
+            total_steps = int(self.trainer.estimated_stepping_batches)
 
-        # Total steps for schedulers
-        total_steps = getattr(self.trainer, "estimated_stepping_batches", None)
-        if (
-            total_steps is None
-        ):  # fallback to manual calc for unit tests / no-trainer calls
-
+        else:
+            # Manual fallback (single process, full dataset, static accumulation)
             train_split = int(self.hparams["data"]["datasplit"][0])
             batch_size = int(self.hparams["data"]["batch_size"])
             total_epochs = int(self.hparams["training"]["epochs"])
             accumulate = int(self.hparams["training"].get("accumulate_grad_batches", 1))
+            batches_per_epoch = max(1, math.ceil(train_split / batch_size))
+            steps_per_epoch = max(1, math.ceil(batches_per_epoch / max(1, accumulate)))
+            total_steps = steps_per_epoch * total_epochs
 
-            steps_per_epoch = max(1, math.ceil(train_split / batch_size))
-            optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accumulate))
-            total_steps = optimizer_steps_per_epoch * total_epochs
+        print(
+            f"Total steps: {total_steps} | Steps per epoch: {steps_per_epoch} | Accumulate: {accumulate} | Batches per epoch: {batches_per_epoch}"
+        )
 
         # Select scheduler type
+        scheduler_dict = None
+        scheduler_type = self.hparams["scheduler"]["type"]
+
         if scheduler_type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
                 T_max=total_steps,
-                eta_min=float(self.hparams["scheduler"]["eta_min"]),
+                eta_min=float(self.hparams["scheduler"].get("eta_min", 0.0)),
             )
             scheduler_dict = {"scheduler": scheduler, "interval": "step"}
 
         elif scheduler_type == "warmup_cosine":
             warmup_epochs = int(self.hparams["scheduler"].get("warmup_epochs", 0))
             warmup_steps = warmup_epochs * steps_per_epoch
-            eta_min = float(self.hparams["scheduler"].get("eta_min", 0.0))
             base_lr = float(self.hparams["optimizer"]["lr"])
+            eta_min = float(self.hparams["scheduler"].get("eta_min", 0.0))
 
             def lr_lambda(step):
                 if step < warmup_steps:
