@@ -354,11 +354,6 @@ class NetworkBase(pl.LightningModule):
                 - LR increases to max_lr, then decreases to min_lr over total steps.
                 - interval="step".
 
-        Notes:
-            - Do NOT implement warmup manually via on_before_optimizer_step(); conflicts with scheduler.
-            - steps_per_epoch computed directly from config: ceil(train_split / batch_size).
-            - total_steps accounts for gradient accumulation: ceil(steps_per_epoch / accumulate_grad_batches) * epochs.
-
         Returns:
             dict: {"optimizer": optimizer, "lr_scheduler": scheduler_dict}
         """
@@ -375,12 +370,12 @@ class NetworkBase(pl.LightningModule):
 
         # 2) Scheduler
         if getattr(self, "trainer", None) is not None:
-            # Prefer Trainer-aware calculations (DDP, limits, accumulation).
+            # Trainer-aware calculations (DDP, limits, accumulation)
             total_epochs = int(self.trainer.max_epochs)
-            batches_per_epoch = max(1, int(self.trainer.num_training_batches))
-            accumulate = int(self.trainer.accumulate_grad_batches)
-            steps_per_epoch = max(1, math.ceil(batches_per_epoch / max(1, accumulate)))
             total_steps = int(self.trainer.estimated_stepping_batches)
+            steps_per_epoch = max(1, math.ceil(total_steps / max(1, total_epochs)))
+            accumulate = int(self.trainer.accumulate_grad_batches)
+            batches_per_epoch = max(1, steps_per_epoch * max(1, accumulate))
 
         else:
             # Manual fallback (single process, full dataset, static accumulation)
@@ -391,10 +386,6 @@ class NetworkBase(pl.LightningModule):
             batches_per_epoch = max(1, math.ceil(train_split / batch_size))
             steps_per_epoch = max(1, math.ceil(batches_per_epoch / max(1, accumulate)))
             total_steps = steps_per_epoch * total_epochs
-
-        print(
-            f"Total steps: {total_steps} | Steps per epoch: {steps_per_epoch} | Accumulate: {accumulate} | Batches per epoch: {batches_per_epoch}"
-        )
 
         # Select scheduler type
         scheduler_dict = None
