@@ -91,15 +91,17 @@ optimizer:
 
 # LR Schedulers
 scheduler:
-  type: "reduce"               # type:"cosine", "warmup_cosine", "reduce", or "onecycle"
-  eta_min: 1e-5                # cosine: floor or min lr
+  type: "onecycle"             # types: "cosine", "warmup_cosine", "reduce", "onecycle"
+  eta_min: 1e-5                # cosine: minimum learning rate
   warmup_epochs: 10            # warmup_cosine: number of warmup epochs
-  mode: "min"                  # reduce: "min" or "max" (use "min" for val_loss)
-  factor: 0.3                  # reduce: LR reduction factor
-  patience: 20                 # reduce: Patience for ReduceLROnPlateau
-  threshold: 1e-5              # reduce: Minimum improvement threshold
-  min_lr: 1e-5                 # reduce: Lower LR bound for ReduceLROnPlateau
-  max_lr: 0.01                 # onecycle: Peak LR for OneCycleLR
-  pct_start: 0.3               # onecycle: Fraction of total steps to increase LR
-  anneal_strategy: "cos"       # onecycle: "cos" or "linear"
-  final_div_factor: 100        # onecycle: Final LR = max_lr / final_div_factor
+  mode: "min"                  # reduce: metric mode ("min" for val_loss, "max" for accuracy)
+  factor: 0.3                  # reduce: multiply LR by this factor on plateau
+  patience: 20                 # reduce: epochs to wait before reducing LR
+  threshold: 1e-5              # reduce: minimum change to qualify as improvement
+  min_lr: 1e-5                 # reduce: lower bound for learning rate
+  max_lr: 0.001                # onecycle: peak LR during warmup (0.0001 - 0.001)
+  pct_start: 0.3               # onecycle: fraction of steps in warmup phase (0.2 - 0.4)
+  anneal_strategy: "cos"       # onecycle: LR decay strategy ("cos" or "linear")
+  div_factor: 25.0             # onecycle: initial_lr = max_lr / div_factor (10 - 25)
+  final_div_factor: 100        # onecycle: final_lr = max_lr / final_div_factor (50 - 100)
+  cycle_momentum: false        # onecycle: must be false for AdamW

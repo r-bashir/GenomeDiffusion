@@ -377,18 +377,22 @@ class NetworkBase(pl.LightningModule):
         scheduler_type = self.hparams["scheduler"]["type"]
         scheduler_dict = None
 
-        # Steps for step-based schedulers - computed directly from config
-        train_split = int(self.hparams["data"]["datasplit"][0])
-        batch_size = int(self.hparams["data"]["batch_size"])
-        total_epochs = int(self.hparams["training"]["epochs"])
-        accumulate = int(self.hparams["training"].get("accumulate_grad_batches", 1))
+        # Total steps for schedulers
+        total_steps = getattr(self.trainer, "estimated_stepping_batches", None)
+        if (
+            total_steps is None
+        ):  # fallback to manual calc for unit tests / no-trainer calls
 
-        # Calculate steps per epoch from config
-        steps_per_epoch = max(1, math.ceil(train_split / batch_size))
-        # Account for gradient accumulation (optimizer steps = dataloader steps / accumulate)
-        optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accumulate))
-        total_steps = optimizer_steps_per_epoch * total_epochs
+            train_split = int(self.hparams["data"]["datasplit"][0])
+            batch_size = int(self.hparams["data"]["batch_size"])
+            total_epochs = int(self.hparams["training"]["epochs"])
+            accumulate = int(self.hparams["training"].get("accumulate_grad_batches", 1))
 
+            steps_per_epoch = max(1, math.ceil(train_split / batch_size))
+            optimizer_steps_per_epoch = max(1, math.ceil(steps_per_epoch / accumulate))
+            total_steps = optimizer_steps_per_epoch * total_epochs
+
+        # Select scheduler type
         if scheduler_type == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
@@ -440,9 +444,11 @@ class NetworkBase(pl.LightningModule):
                 total_steps=total_steps,
                 pct_start=float(self.hparams["scheduler"].get("pct_start", 0.3)),
                 anneal_strategy=self.hparams["scheduler"].get("anneal_strategy", "cos"),
+                div_factor=float(self.hparams["scheduler"].get("div_factor", 25.0)),
                 final_div_factor=float(
                     self.hparams["scheduler"].get("final_div_factor", 100)
                 ),
+                cycle_momentum=self.hparams["scheduler"].get("cycle_momentum", False),
             )
             scheduler_dict = {"scheduler": scheduler, "interval": "step"}
 
