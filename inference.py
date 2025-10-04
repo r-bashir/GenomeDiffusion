@@ -108,32 +108,30 @@ def main():
     model.setup("test")
     test_loader = model.test_dataloader()
 
+    # Collect a test batch
+    logger.info("Preparing a batch of test data...")
+    test_batch = next(iter(test_loader)).to(device)
+    logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
+
+    # Prepare test batch: [B, L] to [B, C, L]
+    logger.info("Add C dimension to the shape [B, L]: [B, C, L]")
+    real_samples = test_batch.unsqueeze(1)
+    num_samples = test_batch.shape[0]
+    logger.info(f"The {num_samples} real samples from test dataset...")
+
     # Collect all test batches
-    real_samples = []
-    logger.info("Loading all test batches...")
-    with torch.no_grad():
-        for batch in test_loader:
-            # Move batch to device
-            batch = batch.to(device)
-            real_samples.append(batch)
-    real_samples = torch.cat(real_samples, dim=0)
-
-    # Select samples to use
-    if args.num_samples is None:
-        num_samples_to_use = len(real_samples)
-        logger.info(f"Using all {num_samples_to_use} real samples from test dataset...")
-    else:
-        num_samples_to_use = args.num_samples
-        if num_samples_to_use > len(real_samples):
-            num_samples_to_use = len(real_samples)
-        logger.info(f"Selecting {num_samples_to_use} real samples from test dataset...")
-
-    # Select samples and ensure shape [num_samples, 1, L]
-    real_samples = real_samples[:num_samples_to_use].unsqueeze(1)
-    logger.info(f"Real sample shape: {real_samples.shape}")
+    # logger.info("Loading all test batches...")
+    # with torch.no_grad():
+    #    real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=1)
+    # Select number of samples
+    # num_samples = len(real_samples) if args.num_samples is None else min(args.num_samples, len(real_samples))
+    # logger.info(f"Using {num_samples} real samples from test dataset...")
+    # Ensure shape [num_samples, 1, L]
+    # real_samples = real_samples[:num_samples].unsqueeze(1)
+    # logger.info(f"Real sample shape: {real_samples.shape}")
 
     # Generate samples from model
-    logger.info(f"Getting {num_samples_to_use} generated samples from model...")
+    logger.info(f"Getting {num_samples} generated samples from model...")
 
     timestep = config["diffusion"]["timesteps"]
     logger.info(f"Starting at denoising from T={timestep}")
@@ -159,7 +157,7 @@ def main():
             logger.info("Generating samples WITH imputation...")
             generated_samples = generate_samples(
                 model,
-                num_samples=num_samples_to_use,
+                num_samples=num_samples,
                 start_timestep=timestep,
                 discretize=args.discretize,
                 true_x0=real_samples,
@@ -235,7 +233,7 @@ def main():
         with torch.no_grad():
             generated_samples_no_imputation = generate_samples(
                 model,
-                num_samples=num_samples_to_use,
+                num_samples=num_samples,
                 start_timestep=timestep,
                 discretize=args.discretize,
                 true_x0=None,
@@ -262,7 +260,7 @@ def main():
         with torch.no_grad():
             generated_samples = generate_samples(
                 model,
-                num_samples=num_samples_to_use,
+                num_samples=num_samples,
                 start_timestep=timestep,
                 discretize=args.discretize,
             )
