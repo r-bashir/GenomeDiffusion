@@ -108,31 +108,30 @@ def main():
     model.setup("test")
     test_loader = model.test_dataloader()
 
-    # Collect a test batch
-    logger.info("Preparing a batch of test data...")
-    test_batch = next(iter(test_loader)).to(device)
-    logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
+    # Collect single/all test batches
+    logger.info("Collecting batches...")
+    with torch.no_grad():
+        real_samples = next(iter(test_loader)).to(device)
+        # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
 
-    # Prepare test batch: [B, L] to [B, C, L]
-    logger.info("Add C dimension to the shape [B, L]: [B, C, L]")
-    real_samples = test_batch.unsqueeze(1)
-    num_samples = test_batch.shape[0]
-    logger.info(f"The {num_samples} real samples from test dataset...")
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
-    # Collect all test batches
-    # logger.info("Loading all test batches...")
-    # with torch.no_grad():
-    #    real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=1)
     # Select number of samples
-    # num_samples = len(real_samples) if args.num_samples is None else min(args.num_samples, len(real_samples))
-    # logger.info(f"Using {num_samples} real samples from test dataset...")
-    # Ensure shape [num_samples, 1, L]
-    # real_samples = real_samples[:num_samples].unsqueeze(1)
-    # logger.info(f"Real sample shape: {real_samples.shape}")
+    num_samples = (
+        len(real_samples)
+        if args.num_samples is None
+        else min(args.num_samples, len(real_samples))
+    )
+    logger.info(f"Selecting {num_samples} samples/examples...")
+    logger.info(
+        f"Inference is using {num_samples} samples for real and generated categories..."
+    )
 
-    # Generate samples from model
-    logger.info(f"Getting {num_samples} generated samples from model...")
+    # Add channel dimension: [B, L] to [B, C, L]
+    logger.info("Add C dimension to the shape [B, L]: [B, C, L]")
+    real_samples = real_samples[:num_samples].unsqueeze(1)
 
+    logger.info("Starting inference...")
     timestep = config["diffusion"]["timesteps"]
     logger.info(f"Starting at denoising from T={timestep}")
 
