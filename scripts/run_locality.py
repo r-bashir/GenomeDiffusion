@@ -32,6 +32,18 @@ def parse_args():
     parser.add_argument(
         "--checkpoint", type=str, required=True, help="Path to model checkpoint"
     )
+    parser.add_argument(
+        "--num_samples",
+        type=int,
+        default=None,
+        help="Number of samples to denoise",
+    )
+    parser.add_argument(
+        "--sample_idx",
+        type=int,
+        default=0,
+        help="Use this sample index from the batch",
+    )
     return parser.parse_args()
 
 
@@ -57,7 +69,7 @@ def main():
         raise RuntimeError(f"Failed to load model from checkpoint: {e}")
 
     # Output directory
-    output_dir = Path(args.checkpoint).parent.parent / "locality_test"
+    output_dir = Path(args.checkpoint).parent.parent / "locality"
     output_dir.mkdir(exist_ok=True)
 
     # Load Dataset (Test)
@@ -65,20 +77,36 @@ def main():
     model.setup("test")
     test_loader = model.test_dataloader()
 
-    # Prepare Batch
-    logger.info("Preparing a batch of test data...")
-    test_batch = next(iter(test_loader)).to(device)
-    logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
+    # Collect single/all test batches
+    logger.info("Collecting batches...")
+    with torch.no_grad():
+        # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
+        real_samples = next(iter(test_loader)).to(device)
 
-    # Select a single sample and ensure shape [1, 1, seq_len]
-    logger.info("Adding channel dim, and selecting single sample")
-    sample_idx = 0
-    x0 = test_batch[sample_idx : sample_idx + 1].unsqueeze(1)
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
+
+    # Select number of samples
+    num_samples = (
+        len(real_samples)
+        if args.num_samples is None
+        else min(args.num_samples, len(real_samples))
+    )
+
+    logger.info(f"Selecting {num_samples} for inference...")
+
+    # Add channel dimension: [B, L] to [B, C, L]
+    logger.info("Add channel dimension to the shape [B, L] to [B, C, L]")
+    real_samples = real_samples[:num_samples].unsqueeze(1)
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
+
+    # Select a single sample
+    logger.info("Selecting a single sample")
+    x0 = real_samples[args.sample_idx : args.sample_idx + 1].unsqueeze(1)
     logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")
     logger.info(f"x0 unique values: {torch.unique(x0)}")
 
     # === BEGIN: Locality Experiment ===
-    logger.info("Running SNP locality experiment (varying SNP 60)...")
+    logger.info("Starting locality experiment...")
     batch_size = 1
     snp_index = 59
     true_noise_values = np.round(np.arange(0, 0.51, 0.01), 2)

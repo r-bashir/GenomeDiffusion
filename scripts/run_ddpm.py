@@ -39,10 +39,16 @@ def parse_args():
         "--checkpoint", type=str, required=False, help="Path to model checkpoint"
     )
     parser.add_argument(
-        "--sample_idx",
+        "--num_samples",
         type=int,
         default=None,
-        help="Optional: if provided, only plot this sample index from the batch; otherwise plot all",
+        help="Number of samples to denoise",
+    )
+    parser.add_argument(
+        "--sample_idx",
+        type=int,
+        default=0,
+        help="Use this sample index from the batch",
     )
     parser.add_argument(
         "--test_imputation",
@@ -88,20 +94,35 @@ def main():
     model.setup("test")
     test_loader = model.test_dataloader()
 
-    # Prepare Batch
-    logger.info("Preparing a batch of test data...")
-    test_batch = next(iter(test_loader)).to(device)
-    logger.info(f"Batch shape: {test_batch.shape}, and dim: {test_batch.dim()}")
+    # Collect single/all test batches
+    logger.info("Collecting batches...")
+    with torch.no_grad():
+        # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
+        real_samples = next(iter(test_loader)).to(device)
 
-    # Use entire batch and add channel dim -> [B, 1, L]
-    logger.info("Adding channel dim and keeping entire batch for denoising")
-    x_0 = test_batch.unsqueeze(1)
-    B, C, L = x_0.shape
-    logger.info(f"x_0 shape: {x_0.shape} (B={B}, C={C}, L={L}) and dim: {x_0.dim()}")
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
+
+    # Select number of samples
+    num_samples = (
+        len(real_samples)
+        if args.num_samples is None
+        else min(args.num_samples, len(real_samples))
+    )
+
+    logger.info(f"Selecting {num_samples} for inference...")
+
+    # Add channel dimension: [B, L] to [B, C, L]
+    logger.info("Add channel dimension to the shape [B, L] to [B, C, L]")
+    real_samples = real_samples[:num_samples].unsqueeze(1)
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
     # === BEGIN: Reverse Diffusion ===
-    logger.info("Running Markov reverse process from x_t at t=T...")
+    logger.info("Starting denoising process...")
     diffusion_steps = 10
+    logger.info(f"Starting at denoising from T={timestep}")
+
+    # Get real batch x_0
+    x_0 = real_samples
 
     # Generate noisy batch x_t at t=T
     x_t = get_noisy_sample(model, x_0, diffusion_steps)

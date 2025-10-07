@@ -1,23 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-"""Script for generating and analyzing samples from trained SNP diffusion models.
-
-This script uses the utility functions from inference_utils.py to:
-1. Generate samples from diffusion models
-2. Analyze MAF distributions
-3. Create visualizations of real vs. generated data
-4. Compute genomic metrics
+"""Script to perform inference on SNP diffusion models.
 
 Examples:
-    # Generate samples and analyze
-    python inference_new.py --checkpoint path/to/checkpoint.ckpt
+    # Run inference on test dataset
+    python inference.py --checkpoint path/to/checkpoint.ckpt
 
-    # Generate specific number of samples
-    python inference_new.py --checkpoint path/to/checkpoint.ckpt --num_samples 100
-
-    # Generate discretized samples (0, 0.5, 1.0)
-    python inference_new.py --checkpoint path/to/checkpoint.ckpt --discretize
+    # Run inference on test dataset with specific number of samples
+    python inference.py --checkpoint path/to/checkpoint.ckpt --num_samples 100
 """
 
 import argparse
@@ -42,9 +33,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Generate and analyze samples from SNP diffusion models"
-    )
+    parser = argparse.ArgumentParser(description="Inference")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -111,8 +100,8 @@ def main():
     # Collect single/all test batches
     logger.info("Collecting batches...")
     with torch.no_grad():
-        real_samples = next(iter(test_loader)).to(device)
         # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
+        real_samples = next(iter(test_loader)).to(device)
 
     logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
@@ -122,18 +111,17 @@ def main():
         if args.num_samples is None
         else min(args.num_samples, len(real_samples))
     )
-    logger.info(f"Selecting {num_samples} samples/examples...")
-    logger.info(
-        f"Inference is using {num_samples} samples for real and generated categories..."
-    )
+
+    logger.info(f"Selecting {num_samples} for inference...")
 
     # Add channel dimension: [B, L] to [B, C, L]
-    logger.info("Add C dimension to the shape [B, L]: [B, C, L]")
+    logger.info("Add channel dimension to the shape [B, L] to [B, C, L]")
     real_samples = real_samples[:num_samples].unsqueeze(1)
+    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
     logger.info("Starting inference...")
     timestep = config["diffusion"]["timesteps"]
-    logger.info(f"Starting at denoising from T={timestep}")
+    logger.info(f"Starting denoising from T={timestep}")
 
     # Test imputation if requested
     if args.test_imputation:
