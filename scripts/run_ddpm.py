@@ -114,19 +114,19 @@ def main():
     # Add channel dimension: [B, L] to [B, C, L]
     logger.info("Adding channel dimension ([B, L] to [B, C, L])...")
     real_samples = real_samples[:num_samples].unsqueeze(1)
-    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
+    B, C, L = real_samples.shape
+    logger.info(
+        f"Sample shape: {real_samples.shape} (B={B}, C={C}, L={L}) and dim: {real_samples.dim()}"
+    )
 
     # === BEGIN: Reverse Diffusion ===
-    logger.info("Starting denoising process...")
     diffusion_timestep = 10  # config["diffusion"]["timesteps"]
-    logger.info(f"Starting at denoising from T={diffusion_timestep}")
+    logger.info(f"Starting denoising from T={diffusion_timestep}")
 
     # Get real batch x_0
     x_0 = real_samples
-    B, C, L = x_0.shape
-    logger.info(f"x_0 shape: {x_0.shape} (B={B}, C={C}, L={L}) and dim: {x_0.dim()}")
 
-    # Generate noisy batch x_t at t=T
+    # Get noisy batch x_t at t=T
     x_t = get_noisy_sample(model, x_0, diffusion_timestep)
     # x_t = x_0
 

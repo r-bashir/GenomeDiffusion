@@ -115,9 +115,12 @@ def main():
     logger.info(f"Selecting {num_samples} for inference...")
 
     # Add channel dimension: [B, L] to [B, C, L]
-    logger.info("Add channel dimension to the shape [B, L] to [B, C, L]")
+    logger.info("Adding channel dimension ([B, L] to [B, C, L])...")
     real_samples = real_samples[:num_samples].unsqueeze(1)
-    logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
+    B, C, L = real_samples.shape
+    logger.info(
+        f"Sample shape: {real_samples.shape} (B={B}, C={C}, L={L}) and dim: {real_samples.dim()}"
+    )
 
     logger.info("Starting inference...")
     timestep = config["diffusion"]["timesteps"]
