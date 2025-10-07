@@ -101,17 +101,7 @@ def main():
     logger.info("Collecting batches...")
     with torch.no_grad():
         # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
-        batch = next(iter(test_loader))
-        logger.info(f"DEBUG: batch type = {type(batch)}")
-        if isinstance(batch, tuple):
-            logger.info(f"DEBUG: batch is tuple with {len(batch)} elements")
-            logger.info(
-                f"DEBUG: batch[0] type = {type(batch[0])}, shape = {batch[0].shape if hasattr(batch[0], 'shape') else 'no shape'}"
-            )
-            real_samples = batch[0].to(device)
-        else:
-            logger.info(f"DEBUG: batch is not tuple, type = {type(batch)}")
-            real_samples = batch.to(device)
+        real_samples = next(iter(test_loader)).to(device)
 
     logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
