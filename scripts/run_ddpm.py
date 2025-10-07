@@ -118,14 +118,14 @@ def main():
 
     # === BEGIN: Reverse Diffusion ===
     logger.info("Starting denoising process...")
-    diffusion_steps = 10
-    logger.info(f"Starting at denoising from T={timestep}")
+    diffusion_timestep = 10  # config["diffusion"]["timesteps"]
+    logger.info(f"Starting at denoising from T={diffusion_timestep}")
 
     # Get real batch x_0
     x_0 = real_samples
 
     # Generate noisy batch x_t at t=T
-    x_t = get_noisy_sample(model, x_0, diffusion_steps)
+    x_t = get_noisy_sample(model, x_0, diffusion_timestep)
     # x_t = x_0
 
     # Test imputation if requested
@@ -174,7 +174,7 @@ def main():
         model,
         x_0,
         x_t,
-        diffusion_steps,
+        diffusion_timestep,
         device,
         return_all_steps=True,
         print_mse=True,
@@ -195,7 +195,7 @@ def main():
                 x0_i,
                 xt_i,
                 samples_i[0],
-                diffusion_steps,
+                diffusion_timestep,
                 output_dir,
                 filename_suffix=f"_sample{i}",
             )
@@ -203,7 +203,7 @@ def main():
                 x0_i,
                 xt_i,
                 samples_i,
-                diffusion_steps,
+                diffusion_timestep,
                 output_dir,
                 filename_suffix=f"_sample{i}",
                 print_step_metrics=True,
@@ -224,7 +224,7 @@ def main():
             x0_i,
             xt_i,
             samples_i[0],
-            diffusion_steps,
+            diffusion_timestep,
             output_dir,
             filename_suffix=f"_sample{sample_idx}",
         )
@@ -232,7 +232,7 @@ def main():
             x0_i,
             xt_i,
             samples_i,
-            diffusion_steps,
+            diffusion_timestep,
             output_dir,
             filename_suffix=f"_sample{sample_idx}",
             print_step_metrics=True,

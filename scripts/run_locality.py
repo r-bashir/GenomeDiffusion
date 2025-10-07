@@ -54,7 +54,7 @@ def main():
 
     # Setup logging
     logger = setup_logging(name="locality")
-    logger.info("Starting run_locality_test script.")
+    logger.info("Starting run_locality script.")
 
     # Set global seed
     set_seed(seed=42)
@@ -81,7 +81,17 @@ def main():
     logger.info("Collecting batches...")
     with torch.no_grad():
         # real_samples = torch.cat([batch.to(device) for batch in test_loader], dim=0)
-        real_samples = next(iter(test_loader)).to(device)
+        batch = next(iter(test_loader))
+        logger.info(f"DEBUG: batch type = {type(batch)}")
+        if isinstance(batch, tuple):
+            logger.info(f"DEBUG: batch is tuple with {len(batch)} elements")
+            logger.info(
+                f"DEBUG: batch[0] type = {type(batch[0])}, shape = {batch[0].shape if hasattr(batch[0], 'shape') else 'no shape'}"
+            )
+            real_samples = batch[0].to(device)
+        else:
+            logger.info(f"DEBUG: batch is not tuple, type = {type(batch)}")
+            real_samples = batch.to(device)
 
     logger.info(f"Sample shape: {real_samples.shape}, and dim: {real_samples.dim()}")
 
@@ -101,7 +111,7 @@ def main():
 
     # Select a single sample
     logger.info("Selecting a single sample")
-    x0 = real_samples[args.sample_idx : args.sample_idx + 1].unsqueeze(1)
+    x0 = real_samples[args.sample_idx : args.sample_idx + 1]
     logger.info(f"x0 shape: {x0.shape} and dim: {x0.dim()}")
     logger.info(f"x0 unique values: {torch.unique(x0)}")
 
