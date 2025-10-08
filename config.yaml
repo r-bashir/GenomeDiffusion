@@ -50,6 +50,7 @@ unet:
   embedding_dim: 128           # Embedding dimension, will be projected to time_dim=128
   dim_mults: [1, 2, 4, 8]      # Control model complexity as [1, 2, 4, 8]
   channels: 1                  # Channel dimension, always 1 for 1D SNPs
+  in_channels: 1               # Input channels: 1=single-channel, 2=dual-channel (xt + xt/sqrt(alpha_bar_t))
   with_time_emb: true          # On/off sinusoidal time embeddings
   time_dim: 128                # Projected time embedding dimension used inside ResnetBlocks
   with_pos_emb: true           # On/off sinusoidal position embeddings

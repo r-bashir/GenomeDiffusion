@@ -315,7 +315,9 @@ class UNet1D(nn.Module):
 
     A time-conditional U-Net architecture designed for denoising genomic
     sequences in diffusion-based generative models. Processes SNP data
-    as 1D sequences with shape [B, C, L] where C is always equal to 1.
+    as 1D sequences with shape [B, C, L]. By default C=1, but the model
+    can accept multiple input channels (e.g., concatenated conditioning)
+    while still producing a single-channel output.
     """
 
     def __init__(
@@ -323,6 +325,7 @@ class UNet1D(nn.Module):
         emb_dim=512,
         dim_mults=(1, 2, 4, 8),
         channels=1,
+        in_channels=None,
         with_time_emb=True,
         time_dim=128,
         with_pos_emb=True,
@@ -345,7 +348,10 @@ class UNet1D(nn.Module):
         # Base parameters
         self.emb_dim = emb_dim
         self.dim_mults = dim_mults
-        self.channels = channels
+        # Support separate input/output channels. Backwards compatible with
+        # previous signature where `channels` was both input and output.
+        self.in_channels = channels if in_channels is None else in_channels
+        self.out_channels = channels
         self.with_time_emb = with_time_emb
         self.time_dim = time_dim
         self.with_pos_emb = with_pos_emb
@@ -367,8 +373,8 @@ class UNet1D(nn.Module):
         kernel_size = 7
         padding = (kernel_size - 1) // 2
         self.init_conv = nn.Conv1d(
-            channels, init_dim, kernel_size=kernel_size, padding=padding
-        )  # input: [B, 1, L] → output: [B, init_dim, L]
+            self.in_channels, init_dim, kernel_size=kernel_size, padding=padding
+        )  # input: [B, C_in, L] → output: [B, init_dim, L]
 
         # STANDARD FEATURE DIMENSIONS
         # dims shape: [16, 16, 32, 64, 128]
@@ -512,7 +518,7 @@ class UNet1D(nn.Module):
             )
 
         # OUTPUT
-        self.out_dim = channels
+        self.out_dim = self.out_channels
         self.final_res_block = resnet_block(
             dims[0] * 2, dims[0], time_dim=self.time_dim
         )
@@ -567,12 +573,17 @@ class UNet1D(nn.Module):
         # INPUT
         assert (
             x.dim() == 3
-        ), f"UNet1D expects input shape of [B, C=1, L], got {tuple(x.shape)}"
+        ), f"UNet1D expects input shape of [B, C, L], got {tuple(x.shape)}"
         B, C, L = x.shape
-        assert C == self.channels, f"Expected {self.channels} channels, got {C}"
+        assert (
+            C == self.in_channels
+        ), f"Expected {self.in_channels} input channels, got {C}"
 
-        # Original x
-        original_x = x
+        # Handle residual connection
+        if self.in_channels == 1:
+            original_x = x  # [B, 1, L] - original single channel behavior
+        else:
+            original_x = x[:, 0:1, :]  # [B, 1, L] - new two channel behavior
 
         # POSITIONAL EMBEDDING (post-stem): Positional embedding injection
         # happens after stem conv to avoid 1-channel bottleneck (Moved).
@@ -681,4 +692,6 @@ class UNet1D(nn.Module):
         x = self._resize_to_length(x, r.size(-1))
         x = torch.cat((x, r), dim=1)
         x = self.final_res_block(x, t)
+
+        # Output with residual connection
         return original_x - self.final_conv(x)

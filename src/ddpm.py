@@ -81,6 +81,7 @@ class DiffusionModel(NetworkBase):
             emb_dim=hparams["unet"]["embedding_dim"],
             dim_mults=hparams["unet"]["dim_mults"],
             channels=hparams["unet"]["channels"],
+            in_channels=hparams["unet"]["in_channels"],
             with_time_emb=hparams["unet"]["with_time_emb"],
             time_dim=hparams["unet"]["time_dim"],
             with_pos_emb=hparams["unet"]["with_pos_emb"],
@@ -105,6 +106,7 @@ class DiffusionModel(NetworkBase):
             self._data_shape,
             denoise_step=hparams["diffusion"]["denoise_step"],
             discretize=hparams["diffusion"]["discretize"],
+            in_channels=hparams["unet"]["in_channels"],
         )
 
         # Testing: Zero noise predictor (zero out model params)
@@ -153,8 +155,20 @@ class DiffusionModel(NetworkBase):
         xt = self._prepare_batch(xt)
         t = tensor_to_device(t, device)
 
-        # Pass through the noise predictor to predict noise
-        return self.noise_predictor(xt, t)
+        # Build second channel: xt / sqrt(alpha_bar_t)
+        alpha_bar_t = self.forward_diffusion.alpha_bar(t)  # [B, L]
+        alpha_bar_t = bcast_right(alpha_bar_t, xt.ndim)  # [B, C, L]
+
+        # numerical stability
+        denom = torch.sqrt(alpha_bar_t + 1e-8)
+        xt_scaled = xt / denom
+
+        # Concatenate along channel dim -> [B, 2, L]
+        xt_2ch = torch.cat([xt, xt_scaled], dim=1)
+
+        # UNet now outputs x0_hat; convert to epsilon prediction: ε_hat = xt - x0_hat
+        x0_hat = self.noise_predictor(xt_2ch, t)
+        return xt - x0_hat
 
     def compute_loss(self, x0: torch.Tensor) -> torch.Tensor:
         """
@@ -226,20 +240,21 @@ class DiffusionModel(NetworkBase):
         # This does not alter the target used in the loss.
         aug_prob = float(self.hparams["data"]["augment_prob"])
         if self.training and aug_prob > 0.0:
-            # Determine genotype values to sample from
-            geno_vals = self.hparams["data"]["genotype_values"]
+
+            # Get valid genotype values from config
+            geno_vals = self.hparams["data"]["genotype_values"]  # [0.25, 0.0, 0.5]
             geno_tensor = torch.tensor(geno_vals, device=device, dtype=x0.dtype)
 
-            # Bernoulli mask indicating which positions to replace
+            # Create random mask for positions to replace
             replace_mask = torch.rand_like(x0, device=device) < aug_prob
 
-            # Sample random genotype indices for all positions, then apply mask
+            # Sample random genotype values for replacement
             rand_idx = torch.randint(
                 low=0, high=geno_tensor.numel(), size=x0.shape, device=device
             )
             rand_genos = geno_tensor[rand_idx]
 
-            # Create augmented x0 used only for the forward diffusion step
+            # Create augmented version: x0_aug
             x0_aug = torch.where(replace_mask, rand_genos, x0)
 
             # Log the realized augmentation fraction

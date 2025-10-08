@@ -50,12 +50,14 @@ class ReverseDiffusion:
         data_shape,
         denoise_step=10,
         discretize=False,
+        in_channels=1,
     ):
         self.forward_diffusion = forward_diffusion
         self.noise_predictor = noise_predictor
         self.data_shape = data_shape
         self.denoise_step = denoise_step
         self.discretize = discretize
+        self.in_channels = in_channels
 
     def reverse_diffusion_step_Ho(self, xt, t, return_all=False):
         """
@@ -277,8 +279,22 @@ class ReverseDiffusion:
         alpha_bar_t = bcast_right(alpha_bar_t, ndim)
 
         # === Step 1: Predict x0 using noise predictor ===
-        epsilon_theta = self.noise_predictor(xt, t)
-        pred_x0 = xt - epsilon_theta
+        if self.in_channels == 1:
+            # Single-channel mode: direct noise prediction
+            epsilon_theta = self.noise_predictor(xt, t)
+            pred_x0 = xt - epsilon_theta
+        else:
+            # Multi-channel mode: dual-channel input (xt + xt/sqrt(alpha_bar_t))
+            alpha_bar_t_s = self.forward_diffusion.alpha_bar(t)  # shape [B, L]
+            alpha_bar_t_s = bcast_right(alpha_bar_t_s, xt.ndim)
+            denom = torch.sqrt(alpha_bar_t_s + 1e-8)
+            xt_scaled = xt / denom
+            xt_2ch = torch.cat([xt, xt_scaled], dim=1)
+            x0_hat = self.noise_predictor(xt_2ch, t)
+
+            # For completeness, epsilon prediction if needed
+            epsilon_theta = xt - x0_hat
+            pred_x0 = x0_hat
 
         # === Step 1b: Imputation overwrite ===
         if true_x0 is not None and imputation_mask is not None:
