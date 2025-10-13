@@ -120,7 +120,9 @@ def main():
         x0_test = x0.clone()
         x0_test[..., snp_index] = val
         with torch.no_grad():
-            eps_theta = model.noise_predictor(
+            # Use predict_added_noise instead of calling noise_predictor directly
+            # This handles both 1-channel and 2-channel cases properly
+            eps_theta = model.predict_added_noise(
                 x0_test, torch.zeros(batch_size, device=device)
             )
 
